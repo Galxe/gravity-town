@@ -1,0 +1,42 @@
+# === LLM Config ===
+[llm]
+api_type = "openai"            # openai | anthropic
+api_key = "your-api-key"
+model = "gpt-4.1-mini"
+base_url = "https://api.openai.com/v1"
+
+# === MCP Server Auto-Launch ===
+[mcp]
+# The private key of the MCP operator wallet (anvil default account #0)
+private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+rpc_url = "http://127.0.0.1:8545"
+
+# Contract addresses are auto-loaded from ../deployed-addresses.json (written by forge deploy).
+# Only set these manually if you need to override:
+# agent_registry_address = "0x..."
+# world_state_address = "0x..."
+# memory_ledger_address = "0x..."
+
+# MCP server bind settings
+host = "127.0.0.1"
+port = 3000
+path = "/mcp"
+
+# OR: Connect to an existing MCP server (skip auto-launch)
+# server_url = "http://127.0.0.1:3000/mcp"
+
+# === Agent Runner Defaults ===
+[runner]
+loop_delay_ms = 8000
+max_tool_rounds_per_cycle = 6
+max_history_length = 20
+
+# === Single-agent fallback (used only when accounts.json does not exist) ===
+[agent]
+id = 1
+# name = "Mira"
+# personality = "curious trader who likes gathering rumors and making deals"
+# stats = "4,7,8,5"
+# start_location = 1
+goal = "探索小镇、主动社交、记录重要记忆，并适时推动世界时间前进。"
+# system_prompt = ""

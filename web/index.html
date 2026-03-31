@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Town — On-Chain World</title>
+  <meta name="description" content="A fully on-chain AI town where agents live, work, socialize, and form memories.">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    :root {
+      --bg-primary: #0a0e1a;
+      --bg-secondary: #111827;
+      --bg-card: rgba(17, 24, 39, 0.7);
+      --bg-glass: rgba(255, 255, 255, 0.03);
+      --border-glass: rgba(255, 255, 255, 0.06);
+      --text-primary: #f0f4ff;
+      --text-secondary: #8b95b0;
+      --text-dim: #4a5568;
+      --accent-blue: #60a5fa;
+      --accent-purple: #a78bfa;
+      --accent-emerald: #34d399;
+      --accent-amber: #fbbf24;
+      --accent-rose: #fb7185;
+      --accent-cyan: #22d3ee;
+      --glow-blue: rgba(96, 165, 250, 0.15);
+      --glow-purple: rgba(167, 139, 250, 0.15);
+      --glow-emerald: rgba(52, 211, 153, 0.15);
+      --glow-amber: rgba(251, 191, 36, 0.15);
+      --radius: 16px;
+      --radius-sm: 10px;
+      --radius-xs: 6px;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Ambient background */
+    body::before {
+      content: '';
+      position: fixed;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: 
+        radial-gradient(ellipse at 20% 50%, rgba(96, 165, 250, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 20%, rgba(167, 139, 250, 0.06) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 80%, rgba(52, 211, 153, 0.04) 0%, transparent 50%);
+      animation: ambientDrift 20s ease-in-out infinite alternate;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    @keyframes ambientDrift {
+      0% { transform: translate(0, 0) rotate(0deg); }
+      100% { transform: translate(30px, -20px) rotate(3deg); }
+    }
+
+    /* Header */
+    .header {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 32px;
+      border-bottom: 1px solid var(--border-glass);
+      backdrop-filter: blur(20px);
+      background: rgba(10, 14, 26, 0.8);
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      box-shadow: 0 4px 20px rgba(96, 165, 250, 0.3);
+    }
+
+    .header-title {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, var(--text-primary) 0%, var(--accent-blue) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-subtitle {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-weight: 500;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .tick-badge {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      border-radius: 100px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent-cyan);
+    }
+
+    .tick-badge .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.4); }
+      50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(52, 211, 153, 0); }
+    }
+
+    .status-badge {
+      padding: 6px 14px;
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .status-connected {
+      background: rgba(52, 211, 153, 0.1);
+      color: var(--accent-emerald);
+      border: 1px solid rgba(52, 211, 153, 0.2);
+    }
+
+    .status-disconnected {
+      background: rgba(251, 113, 133, 0.1);
+      color: var(--accent-rose);
+      border: 1px solid rgba(251, 113, 133, 0.2);
+    }
+
+    /* Main Layout */
+    .main {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      gap: 24px;
+      padding: 24px 32px;
+      max-width: 1600px;
+      margin: 0 auto;
+      min-height: calc(100vh - 90px);
+    }
+
+    .left-col {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .right-col {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* Card base */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-glass);
+      border-radius: var(--radius);
+      backdrop-filter: blur(12px);
+      overflow: hidden;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border-glass);
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+    }
+
+    .card-body {
+      padding: 20px 22px;
+    }
+
+    /* Town Map - ISO 3D OVERHAUL */
+    .town-map {
+      flex: 1;
+      height: 500px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .iso-wrapper {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: radial-gradient(circle at center, rgba(34, 211, 238, 0.05) 0%, transparent 70%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      perspective: 1200px;
+    }
+
+    .iso-wrapper::before {
+      content: '';
+      position: absolute;
+      width: 200%;
+      height: 200%;
+      background-image: 
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 40px 40px;
+      transform: rotateX(60deg) rotateZ(-45deg);
+      pointer-events: none;
+    }
+
+    .iso-board {
+      position: relative;
+      width: 400px;
+      height: 400px;
+      transform-style: preserve-3d;
+      /* Rotate into isometric perspective */
+      transform: rotateX(60deg) rotateZ(-45deg);
+      transition: transform 0.5s ease;
+    }
+
+    .iso-block {
+      position: absolute;
+      width: 140px;
+      height: 140px;
+      transform-style: preserve-3d;
+      transition: all 0.3s ease;
+    }
+
+    .iso-block:hover {
+      transform: translateZ(15px);
+    }
+
+    .iso-face {
+      position: absolute;
+      box-sizing: border-box;
+      /* Solid backing to avoid ugly overlapping wireframes */
+      background: rgba(10, 15, 30, 0.9);
+      border: 2px solid rgba(var(--block-color), 0.6);
+    }
+
+    .iso-top {
+      width: 140px;
+      height: 140px;
+      /* Glowing radiant top face */
+      background: linear-gradient(135deg, rgba(var(--block-color), 0.3) 0%, rgba(10, 15, 30, 0.9) 100%);
+      transform: translateZ(40px);
+      box-shadow: inset 0 0 30px rgba(var(--block-color), 0.4), 0 0 20px rgba(var(--block-color), 0.3);
+      /* CRITICAL: preserve-3d allows nested holograms to stand up! */
+      transform-style: preserve-3d; 
+    }
+
+    .iso-top::after {
+      content: '';
+      position: absolute;
+      inset: 8px;
+      border: 1px dashed rgba(var(--block-color), 0.5);
+    }
+
+    .iso-left {
+      width: 140px;
+      height: 40px;
+      background: linear-gradient(to bottom, rgba(var(--block-color), 0.2), rgba(10, 15, 30, 0.9));
+      transform: rotateX(-90deg) translateZ(20px) translateY(20px);
+    }
+
+    .iso-right {
+      width: 40px;
+      height: 140px;
+      background: linear-gradient(to bottom, rgba(var(--block-color), 0.1), rgba(10, 15, 30, 0.9));
+      transform: rotateY(90deg) translateZ(120px) translateX(-20px);
+    }
+
+    .iso-hologram {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      /* Counter rotate to face camera (undoes board rotation) */
+      transform: translate(-50%, -50%) rotateZ(45deg) rotateX(-60deg) translateY(-80px) scale(1.5);
+      text-align: center;
+      pointer-events: none;
+      transform-style: preserve-3d; /* Ensure icon shadow works */
+    }
+
+    .iso-icon {
+      font-size: 24px;
+      filter: drop-shadow(0 0 10px rgba(var(--block-color), 1));
+      animation: float 3s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+
+    .iso-name {
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #fff;
+      text-transform: uppercase;
+      margin-top: 4px;
+      text-shadow: 0 0 5px rgba(var(--block-color), 1), 0 0 10px rgba(var(--block-color), 0.8);
+      background: rgba(var(--block-color), 0.3);
+      padding: 3px 6px;
+      border-radius: 4px;
+      border: 1px solid rgba(var(--block-color), 0.6);
+      backdrop-filter: blur(4px);
+    }
+
+    .iso-agent {
+      position: absolute;
+      transform-style: preserve-3d;
+      transition: all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1);
+      cursor: pointer;
+      z-index: 100;
+      /* Agent anchors ONLY its 3D depth to the top of the 40px blocks */
+      transform: translateZ(40px);
+    }
+
+    .iso-agent-inner {
+      position: absolute;
+      /* Exactly undo the board rotation relative to the anchor */
+      transform: rotateZ(45deg) rotateX(-60deg) translate(-50%, -100%);
+      transform-origin: bottom center;
+      transform-style: preserve-3d;
+    }
+
+    .iso-agent.selected .agent-avatar {
+      box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.5), 0 0 20px rgba(96, 165, 250, 0.8);
+      transform: scale(1.2);
+    }
+
+    .iso-agent-name {
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%) translateY(-5px);
+      font-size: 10px;
+      font-weight: 700;
+      white-space: nowrap;
+      background: rgba(0,0,0,0.6);
+      padding: 2px 6px;
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+
+    .iso-agent:hover .iso-agent-name {
+      opacity: 1;
+    }
+
+    .agent-avatar {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: white;
+    }
+
+    .avatar-1 { background: linear-gradient(135deg, #f97316, #ef4444); }
+    .avatar-2 { background: linear-gradient(135deg, #3b82f6, #6366f1); }
+    .avatar-3 { background: linear-gradient(135deg, #10b981, #06b6d4); }
+    .avatar-4 { background: linear-gradient(135deg, #a855f7, #ec4899); }
+    .avatar-5 { background: linear-gradient(135deg, #eab308, #f97316); }
+    .avatar-6 { background: linear-gradient(135deg, #14b8a6, #3b82f6); }
+    .avatar-7 { background: linear-gradient(135deg, #f43f5e, #a855f7); }
+    .avatar-8 { background: linear-gradient(135deg, #22c55e, #eab308); }
+
+    /* Agent Detail Panel */
+    .agent-detail {
+      flex: 1;
+    }
+
+    .agent-detail .card-body {
+      padding: 0;
+    }
+
+    .agent-profile {
+      padding: 24px 22px;
+      border-bottom: 1px solid var(--border-glass);
+    }
+
+    .agent-profile-top {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 14px;
+    }
+
+    .agent-profile-avatar {
+      width: 52px;
+      height: 52px;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 800;
+      color: white;
+    }
+
+    .agent-profile-name {
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: -0.3px;
+    }
+
+    .agent-profile-id {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .agent-personality {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      font-style: italic;
+      padding: 10px 14px;
+      background: var(--bg-glass);
+      border-radius: var(--radius-xs);
+      border: 1px solid var(--border-glass);
+      margin-bottom: 16px;
+    }
+
+    .agent-stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .stat-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: var(--radius-xs);
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+    }
+
+    .stat-icon {
+      font-size: 16px;
+    }
+
+    .stat-info {
+      flex: 1;
+    }
+
+    .stat-label {
+      font-size: 10px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 600;
+    }
+
+    .stat-bar-bg {
+      width: 100%;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255, 255, 255, 0.06);
+      margin-top: 4px;
+      overflow: hidden;
+    }
+
+    .stat-bar {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .stat-str .stat-bar { background: linear-gradient(90deg, #ef4444, #f97316); }
+    .stat-wis .stat-bar { background: linear-gradient(90deg, #3b82f6, #6366f1); }
+    .stat-cha .stat-bar { background: linear-gradient(90deg, #ec4899, #a855f7); }
+    .stat-luk .stat-bar { background: linear-gradient(90deg, #eab308, #22c55e); }
+
+    .agent-meta {
+      display: flex;
+      gap: 12px;
+      margin-top: 14px;
+    }
+
+    .meta-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 100px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+    }
+
+    .gold-amount {
+      color: var(--accent-amber);
+    }
+
+    .location-label {
+      color: var(--accent-cyan);
+    }
+
+    /* Memory Section */
+    .memory-section {
+      padding: 18px 22px;
+    }
+
+    .memory-section-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 14px;
+    }
+
+    .memory-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 340px;
+      overflow-y: auto;
+    }
+
+    .memory-list::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .memory-list::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .memory-list::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 2px;
+    }
+
+    .memory-item {
+      padding: 12px 14px;
+      border-radius: var(--radius-xs);
+      background: var(--bg-glass);
+      border: 1px solid var(--border-glass);
+      transition: all 0.2s;
+      animation: fadeSlideIn 0.3s ease-out;
+    }
+
+    .memory-item:hover {
+      border-color: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .memory-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .memory-category {
+      padding: 2px 8px;
+      border-radius: 100px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .cat-social { background: rgba(236, 72, 153, 0.12); color: #f472b6; }
+    .cat-discovery { background: rgba(96, 165, 250, 0.12); color: #60a5fa; }
+    .cat-trade { background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
+    .cat-event { background: rgba(167, 139, 250, 0.12); color: #a78bfa; }
+    .cat-reflection { background: rgba(52, 211, 153, 0.12); color: #34d399; }
+
+    .memory-importance {
+      display: flex;
+      gap: 2px;
+    }
+
+    .importance-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .importance-dot.filled {
+      background: var(--accent-amber);
+    }
+
+    .memory-content {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .memory-time {
+      font-size: 10px;
+      color: var(--text-dim);
+      margin-top: 6px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Activity Log */
+    .activity-log {
+      max-height: 260px;
+    }
+
+    .activity-log .card-body {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .activity-log .card-body::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .activity-log .card-body::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 2px;
+    }
+
+    .log-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-glass);
+      animation: fadeSlideIn 0.3s ease-out;
+    }
+
+    .log-item:last-child {
+      border-bottom: none;
+    }
+
+    .log-agent-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: white;
+      flex-shrink: 0;
+    }
+
+    .log-content {
+      flex: 1;
+    }
+
+    .log-action {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .log-result {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+    }
+
+    .log-time {
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+      white-space: nowrap;
+    }
+
+    /* Empty state */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 48px 24px;
+      color: var(--text-dim);
+      text-align: center;
+    }
+
+    .empty-state-icon {
+      font-size: 48px;
+      margin-bottom: 12px;
+      opacity: 0.5;
+    }
+
+    .empty-state-text {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .empty-state-hint {
+      font-size: 12px;
+      margin-top: 4px;
+      color: var(--text-dim);
+    }
+
+    /* Loading shimmer */
+    .shimmer {
+      background: linear-gradient(90deg, var(--bg-glass) 25%, rgba(255,255,255,0.05) 50%, var(--bg-glass) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: var(--radius-xs);
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* Responsive */
+    @media (max-width: 1100px) {
+      .main {
+        grid-template-columns: 1fr;
+        padding: 16px;
+      }
+      .header {
+        padding: 16px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .locations-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Refresh button */
+    .refresh-btn {
+      padding: 8px 16px;
+      border-radius: 100px;
+      border: 1px solid var(--border-glass);
+      background: var(--bg-glass);
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .refresh-btn:hover {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-primary);
+    }
+
+    .refresh-btn.spinning .refresh-icon {
+      animation: spin 0.8s linear;
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">🏘️</div>
+      <div>
+        <div class="header-title">AI Town</div>
+        <div class="header-subtitle">On-Chain World</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="tick-badge">
+        <span class="dot"></span>
+        <span>Tick <span id="tickCount">—</span></span>
+      </div>
+      <button class="refresh-btn" id="refreshBtn" onclick="refreshAll()">
+        <span class="refresh-icon">↻</span> Refresh
+      </button>
+      <div id="statusBadge" class="status-badge status-disconnected">Connecting…</div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main class="main">
+    <div class="left-col">
+      <!-- Town Map -->
+      <div class="card town-map">
+        <div class="card-header">
+          <span class="card-title">🗺️ Cyber Isometric Map</span>
+          <span style="font-size:12px; color:var(--text-dim);" id="agentCountLabel">0 agents</span>
+        </div>
+        <div class="card-body" style="padding: 0; display: flex; flex-direction: column;">
+          <div class="iso-wrapper">
+            <div class="iso-board" id="isoBoard">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Activity Log -->
+      <div class="card activity-log">
+        <div class="card-header">
+          <span class="card-title">📜 Activity Log</span>
+        </div>
+        <div class="card-body" id="activityLog">
+          <div class="empty-state">
+            <div class="empty-state-text">No activity yet</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="right-col">
+      <!-- Agent Detail -->
+      <div class="card agent-detail">
+        <div class="card-header">
+          <span class="card-title">👤 Agent Detail</span>
+        </div>
+        <div class="card-body" id="agentDetail">
+          <div class="empty-state">
+            <div class="empty-state-icon">🧑</div>
+            <div class="empty-state-text">Select an agent</div>
+            <div class="empty-state-hint">Click an agent chip on the map</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // ========== CONFIG ==========
+    const RPC_URL = 'http://127.0.0.1:8545';
+    const REGISTRY_ADDR = '0x5FbDB2315678afecb367f032d93F642f64180aa3';
+    const WORLD_ADDR    = '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512';
+    const MEMORY_ADDR   = '0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0';
+
+    const REGISTRY_ABI = [
+      'function getAgent(uint256 agentId) view returns (string name, string personality, uint8[4] stats, uint256 location, uint256 gold, uint256 createdAt)',
+      'function getAgentCount() view returns (uint256)',
+      'function getAllAgentIds() view returns (uint256[])',
+    ];
+
+    const WORLD_ABI = [
+      'function getLocation(uint256 locationId) view returns (string name, string description, string[] availableActions)',
+      'function getAllLocationIds() view returns (uint256[])',
+      'function getAgentsAtLocation(uint256 locationId) view returns (uint256[])',
+      'function getRecentGlobalActions(uint256 count) view returns (tuple(uint256 agentId, uint256 locationId, string action, string result, uint256 timestamp)[])',
+      'function currentTick() view returns (uint256)',
+    ];
+
+    const MEMORY_ABI = [
+      'function getRecentMemories(uint256 agentId, uint256 count) view returns (tuple(uint256 id, uint256 agentId, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)[])',
+      'function memoryCount(uint256) view returns (uint256)',
+    ];
+
+    // ========== STATE ==========
+    let provider, registry, world, memoryContract;
+    let agents = {};
+    let locations = {};
+    let selectedAgentId = null;
+
+    const LOC_COORDS = {
+      1: { x: 0, y: 0, color: '251, 146, 60', icon: '🍺' },
+      2: { x: 1, y: 0, color: '96, 165, 250', icon: '⛏️' },
+      3: { x: 0, y: 1, color: '34, 211, 238', icon: '🏪' },
+      4: { x: 1, y: 1, color: '52, 211, 153', icon: '🌾' },
+    };
+    const LOC_COORD_DEFAULT = { x: 0, y: 0, color: '251, 146, 60', icon: '📍' };
+    const ISO_GRID_SIZE = 160;
+
+    // ========== INIT ==========
+    async function init() {
+      try {
+        provider = new ethers.providers.JsonRpcProvider(RPC_URL);
+        await provider.getBlockNumber();
+        registry = new ethers.Contract(REGISTRY_ADDR, REGISTRY_ABI, provider);
+        world = new ethers.Contract(WORLD_ADDR, WORLD_ABI, provider);
+        memoryContract = new ethers.Contract(MEMORY_ADDR, MEMORY_ABI, provider);
+
+        document.getElementById('statusBadge').className = 'status-badge status-connected';
+        document.getElementById('statusBadge').textContent = 'Connected';
+
+        await refreshAll();
+      } catch (e) {
+        console.error('Init failed:', e);
+        document.getElementById('statusBadge').className = 'status-badge status-disconnected';
+        document.getElementById('statusBadge').textContent = 'Disconnected';
+      }
+    }
+
+    async function refreshAll() {
+      const btn = document.getElementById('refreshBtn');
+      btn.classList.add('spinning');
+
+      try {
+        await Promise.all([loadTick(), loadLocations(), loadAgents()]);
+        renderMap();
+        await loadActivity();
+        if (selectedAgentId) await selectAgent(selectedAgentId);
+      } catch (e) {
+        console.error('Refresh error:', e);
+      }
+
+      setTimeout(() => btn.classList.remove('spinning'), 800);
+    }
+
+    async function loadTick() {
+      const tick = await world.currentTick();
+      document.getElementById('tickCount').textContent = tick.toString();
+    }
+
+    async function loadLocations() {
+      const ids = await world.getAllLocationIds();
+      for (const id of ids) {
+        const [name, description, availableActions] = await world.getLocation(id);
+        const agentIds = await world.getAgentsAtLocation(id);
+        locations[id.toString()] = {
+          id: id.toNumber(),
+          name,
+          description,
+          availableActions,
+          agentIds: agentIds.map(a => a.toNumber()),
+        };
+      }
+    }
+
+    async function loadAgents() {
+      const ids = await registry.getAllAgentIds();
+      document.getElementById('agentCountLabel').textContent = `${ids.length} agent${ids.length !== 1 ? 's' : ''}`;
+      for (const id of ids) {
+        const [name, personality, stats, location, gold, createdAt] = await registry.getAgent(id);
+        agents[id.toString()] = {
+          id: id.toNumber(),
+          name,
+          personality,
+          stats: stats.map(s => s),
+          location: location.toNumber(),
+          gold: gold.toNumber(),
+          createdAt: createdAt.toNumber(),
+        };
+      }
+    }
+
+    async function loadActivity() {
+      try {
+        const logs = await world.getRecentGlobalActions(20);
+        const container = document.getElementById('activityLog');
+        if (logs.length === 0) {
+          container.innerHTML = '<div class="empty-state"><div class="empty-state-text">No activity yet</div></div>';
+          return;
+        }
+        container.innerHTML = logs.slice().reverse().map(log => {
+          const agent = agents[log.agentId.toString()];
+          const agentName = agent ? agent.name : `Agent #${log.agentId}`;
+          const locName = locations[log.locationId.toString()]?.name || `Location ${log.locationId}`;
+          const time = new Date(log.timestamp.toNumber() * 1000).toLocaleTimeString();
+          const avatarCls = `avatar-${(log.agentId.toNumber() % 8) + 1}`;
+          return `
+            <div class="log-item">
+              <div class="log-agent-avatar ${avatarCls}">${agentName.charAt(0)}</div>
+              <div class="log-content">
+                <div class="log-action">${agentName} — ${log.action} @ ${locName}</div>
+                <div class="log-result">${log.result}</div>
+              </div>
+              <span class="log-time">${time}</span>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        console.error('Activity load error:', e);
+      }
+    }
+
+    function renderMap() {
+      const board = document.getElementById('isoBoard');
+      const sortedIds = Object.keys(locations).sort((a, b) => Number(a) - Number(b));
+      
+      let blocksHtml = '';
+      let agentsHtml = '';
+
+      sortedIds.forEach(id => {
+        const loc = locations[id];
+        const data = LOC_COORDS[loc.id] || LOC_COORD_DEFAULT;
+        
+        const left = data.x * ISO_GRID_SIZE;
+        const top = data.y * ISO_GRID_SIZE;
+        
+        blocksHtml += `
+          <div class="iso-block" style="left: ${left}px; top: ${top}px; --block-color: ${data.color};">
+            <div class="iso-face iso-top">
+              <div class="iso-hologram">
+                <div class="iso-icon">${data.icon}</div>
+                <div class="iso-name">${loc.name}</div>
+              </div>
+            </div>
+            <div class="iso-face iso-left"></div>
+            <div class="iso-face iso-right"></div>
+          </div>
+        `;
+        
+        loc.agentIds.forEach((aid, index) => {
+          const agent = agents[aid.toString()];
+          if (!agent) return;
+          const avatarCls = `avatar-${(aid % 8) + 1}`;
+          const selected = selectedAgentId === aid ? 'selected' : '';
+          
+          const padding = 40;
+          const numCols = 3;
+          const cellSpacing = 30;
+          const offsetX = padding + (index % numCols) * cellSpacing;
+          const offsetY = padding + Math.floor(index / numCols) * cellSpacing;
+          
+          agentsHtml += `
+            <div class="iso-agent ${selected}" style="left: ${left + offsetX}px; top: ${top + offsetY}px;" onclick="selectAgent(${aid})">
+              <div class="iso-agent-inner">
+                <div class="iso-agent-name">${agent.name}</div>
+                <div class="agent-avatar ${avatarCls}">${agent.name.charAt(0)}</div>
+              </div>
+            </div>
+          `;
+        });
+      });
+
+      board.innerHTML = blocksHtml + agentsHtml;
+    }
+
+    async function selectAgent(agentId) {
+      selectedAgentId = agentId;
+      renderMap(); // update selection highlight
+
+      const agent = agents[agentId.toString()];
+      if (!agent) return;
+
+      const avatarCls = `avatar-${(agentId % 8) + 1}`;
+      const locName = Object.values(locations).find(l => l.id === agent.location)?.name || 'Unknown';
+      const statNames = [
+        { key: 'str', icon: '⚔️', label: 'Strength' },
+        { key: 'wis', icon: '📖', label: 'Wisdom' },
+        { key: 'cha', icon: '💬', label: 'Charisma' },
+        { key: 'luk', icon: '🍀', label: 'Luck' },
+      ];
+
+      // Load memories
+      let memoriesHtml = '';
+      try {
+        const memCount = await memoryContract.memoryCount(agentId);
+        const count = Math.min(memCount.toNumber(), 20);
+        if (count > 0) {
+          const memories = await memoryContract.getRecentMemories(agentId, count);
+          memoriesHtml = memories.slice().reverse().map(m => {
+            const catCls = `cat-${m.category}`;
+            const importanceDots = Array.from({length: 10}, (_, i) =>
+              `<span class="importance-dot ${i < m.importance ? 'filled' : ''}"></span>`
+            ).join('');
+            const time = new Date(m.timestamp.toNumber() * 1000).toLocaleString();
+            const related = m.relatedAgents.length > 0
+              ? m.relatedAgents.map(r => {
+                  const ra = agents[r.toString()];
+                  return ra ? ra.name : `#${r}`;
+                }).join(', ')
+              : '';
+            return `
+              <div class="memory-item">
+                <div class="memory-top">
+                  <span class="memory-category ${catCls}">${m.category}</span>
+                  <div class="memory-importance">${importanceDots}</div>
+                </div>
+                <div class="memory-content">${m.content}</div>
+                ${related ? `<div class="memory-time">with ${related}</div>` : ''}
+                <div class="memory-time">${time}</div>
+              </div>
+            `;
+          }).join('');
+        }
+      } catch (e) {
+        console.error('Memory load error:', e);
+      }
+
+      document.getElementById('agentDetail').innerHTML = `
+        <div class="agent-profile">
+          <div class="agent-profile-top">
+            <div class="agent-profile-avatar ${avatarCls}">${agent.name.charAt(0)}</div>
+            <div>
+              <div class="agent-profile-name">${agent.name}</div>
+              <div class="agent-profile-id">Agent #${agentId}</div>
+            </div>
+          </div>
+          <div class="agent-personality">"${agent.personality}"</div>
+          <div class="agent-stats-grid">
+            ${statNames.map((s, i) => `
+              <div class="stat-item stat-${s.key}">
+                <span class="stat-icon">${s.icon}</span>
+                <div class="stat-info">
+                  <div class="stat-label">${s.label} — ${agent.stats[i]}</div>
+                  <div class="stat-bar-bg">
+                    <div class="stat-bar" style="width: ${agent.stats[i] * 10}%"></div>
+                  </div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="agent-meta">
+            <div class="meta-badge">
+              <span>💰</span>
+              <span class="gold-amount">${agent.gold} gold</span>
+            </div>
+            <div class="meta-badge">
+              <span>📍</span>
+              <span class="location-label">${locName}</span>
+            </div>
+          </div>
+        </div>
+        <div class="memory-section">
+          <div class="memory-section-title">🧠 Memories</div>
+          <div class="memory-list">
+            ${memoriesHtml || '<div class="empty-state"><div class="empty-state-text" style="font-size:13px">No memories yet</div></div>'}
+          </div>
+        </div>
+      `;
+    }
+
+    // Auto-refresh every 10 seconds
+    setInterval(async () => {
+      try {
+        await refreshAll();
+      } catch (e) {}
+    }, 10000);
+
+    init();
+  </script>
+</body>
+</html>

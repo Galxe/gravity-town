@@ -1,0 +1,49 @@
+# ============================================================
+# Sensitive / local config — DO NOT COMMIT
+# ============================================================
+agent-runner/config.toml
+
+# ============================================================
+# Dependencies
+# ============================================================
+node_modules/
+
+# ============================================================
+# Frontend (Next.js)
+# ============================================================
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.vercel
+frontend/*.tsbuildinfo
+frontend/next-env.d.ts
+
+# ============================================================
+# Contracts (Foundry)
+# ============================================================
+contracts/lib/
+contracts/out/
+contracts/cache/
+# Keep run-latest.json, ignore timestamped run files
+contracts/broadcast/**/*
+!contracts/broadcast/**/run-latest.json
+
+# ============================================================
+# MCP server build
+# ============================================================
+mcp-server/dist/
+
+# ============================================================
+# Agent runner build
+# ============================================================
+agent-runner/dist/
+
+# ============================================================
+# Misc
+# ============================================================
+.DS_Store
+*.pem
+*.env*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
