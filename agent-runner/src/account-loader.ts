@@ -141,7 +141,14 @@ export function loadGlobalConfig(): GlobalConfig {
     throw new Error("mcp.server_url required in config.toml (or set mcp.private_key + contract addresses for auto-launch)");
   }
 
-  const llmApiType = (cfg.llm?.api_type || "openai") as "openai" | "anthropic";
+  let llmApiType: "openai" | "anthropic";
+  if (cfg.llm?.api_type) {
+    llmApiType = cfg.llm.api_type as "openai" | "anthropic";
+  } else if (cfg.llm?.api_key?.startsWith("sk-ant-")) {
+    llmApiType = "anthropic";
+  } else {
+    llmApiType = "openai";
+  }
 
   if (!cfg.llm?.api_key) {
     throw new Error("llm.api_key required in config.toml");

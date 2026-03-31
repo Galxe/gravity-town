@@ -126,6 +126,10 @@ export class RoleRunner {
    */
   private async maybeCompressMemories(): Promise<void> {
     const usage = await getMemoryUsage(this.client, this.agentId);
+    if (!usage || typeof usage.count !== "number" || typeof usage.capacity !== "number" || usage.capacity === 0) {
+      this.log("get_memory_usage returned invalid data — skipping compression");
+      return;
+    }
     const ratio = usage.count / usage.capacity;
 
     if (ratio < COMPRESS_THRESHOLD) return;
@@ -135,9 +139,15 @@ export class RoleRunner {
 
     // Fetch the oldest memories that will be compressed
     const batchSize = Math.min(COMPRESS_BATCH_SIZE, usage.count - 1); // keep at least 1
-    const oldestMemories = parseToolJson(
+    const parsed = parseToolJson(
       await callMcpTool(this.client, "recall_memories", { agent_id: this.agentId, count: usage.count })
-    ) as any[];
+    );
+    const oldestMemories: any[] = Array.isArray(parsed) ? parsed : [];
+
+    if (oldestMemories.length === 0) {
+      this.log("recall_memories returned no usable array — skipping compression");
+      return;
+    }
 
     // Take the oldest N from the full list (recall returns oldest-first)
     const toCompress = oldestMemories.slice(0, batchSize);

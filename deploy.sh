@@ -81,9 +81,12 @@ echo "=== [4/6] Install Node dependencies ==="
 
 # -- [5] Deploy contracts ------------------------------------------------------
 echo "=== [5/6] Deploy contracts to $RPC_URL ==="
-(cd "$GAME_DIR/contracts" && forge script script/Deploy.s.sol \
+OPERATOR_ADDR=$(cast wallet address "$DEPLOY_PK")
+(cd "$GAME_DIR/contracts" && \
+  PRIVATE_KEY="$DEPLOY_PK" \
+  OPERATOR_ADDRESS="$OPERATOR_ADDR" \
+  forge script script/Deploy.s.sol \
   --rpc-url "$RPC_URL" \
-  --private-key "$DEPLOY_PK" \
   --broadcast)
 
 echo ""

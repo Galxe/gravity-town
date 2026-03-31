@@ -29,7 +29,7 @@ mcp action:
 # frontend: just frontend start
 frontend action:
     @if [ "{{action}}" = "start" ]; then \
-        cd frontend && npm run dev; \
+        cd frontend && npm run dev -- -H 0.0.0.0 -p 3000; \
     else \
         echo "Unknown action: {{action}}. Use: start"; \
     fi
