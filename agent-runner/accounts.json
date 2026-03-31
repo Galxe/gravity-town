@@ -7,7 +7,7 @@
     "agentPersonality": "curious trader who likes gathering rumors and making deals",
     "agentStats": [4, 7, 8, 5],
     "agentStartLocation": 1,
-    "agentGoal": "探索小镇、主动社交、记录重要记忆，并适时推动世界时间前进。",
+    "agentGoal": "Explore the town, socialize actively, record important memories, and advance the world clock when the time is right.",
     "heartbeatMs": 8000,
     "enabled": true
   },
@@ -19,7 +19,7 @@
     "agentPersonality": "quiet miner who knows the mountain secrets",
     "agentStats": [3, 6, 4, 9],
     "agentStartLocation": 2,
-    "agentGoal": "在矿山中挖掘稀有矿石，偶尔进镇交易，与信任的人分享发现。",
+    "agentGoal": "Mine rare ores in the mountains, occasionally visit town to trade, and share discoveries with trusted companions.",
     "heartbeatMs": 8000,
     "enabled": true
   },
@@ -31,7 +31,7 @@
     "agentPersonality": "cheerful farmer who sells fresh produce",
     "agentStats": [8, 5, 6, 4],
     "agentStartLocation": 4,
-    "agentGoal": "在农场种植和收获，去市场卖新鲜农产品，与邻居们保持友好关系。",
+    "agentGoal": "Tend the farm, harvest crops, sell fresh produce at the market, and keep friendly relations with the neighbors.",
     "heartbeatMs": 8000,
     "enabled": true
   }

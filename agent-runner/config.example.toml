@@ -38,5 +38,5 @@ id = 1
 # personality = "curious trader who likes gathering rumors and making deals"
 # stats = "4,7,8,5"
 # start_location = 1
-goal = "探索小镇、主动社交、记录重要记忆，并适时推动世界时间前进。"
+goal = "Explore the town, socialize actively, record important memories, and advance the world clock when the time is right."
 # system_prompt = ""

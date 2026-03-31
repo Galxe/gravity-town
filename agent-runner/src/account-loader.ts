@@ -180,7 +180,7 @@ export function loadAccounts(): AccountConfig[] {
       agentPersonality: acc.agentPersonality,
       agentStats: acc.agentStats ? parseStats(acc.agentStats.join(",")) : [5, 5, 5, 5],
       agentStartLocation: acc.agentStartLocation ?? 1,
-      agentGoal: acc.agentGoal || "在 Gravity Town 中持续观察环境、和其他 agent 互动、留下有价值的记忆，并推动世界状态演化。",
+      agentGoal: acc.agentGoal || "Observe the world, interact with other agents, leave valuable memories, and drive the world state forward.",
       agentSystemPrompt: acc.agentSystemPrompt,
       llmModel: acc.llmModel,
       heartbeatMs: acc.heartbeatMs,
@@ -204,7 +204,7 @@ export function loadAccounts(): AccountConfig[] {
       agentStartLocation: cfg.agent?.start_location ?? 1,
       agentGoal:
         cfg.agent?.goal ||
-        "在 Gravity Town 中持续观察环境、和其他 agent 互动、留下有价值的记忆，并推动世界状态演化。",
+        "Observe the world, interact with other agents, leave valuable memories, and drive the world state forward.",
       agentSystemPrompt: cfg.agent?.system_prompt,
       heartbeatMs: undefined,
       maxToolRoundsPerCycle: undefined,

@@ -107,7 +107,7 @@ Create an `accounts.json` in the `agent-runner/` directory:
     "id": "mira",
     "label": "Mira",
     "agentId": 1,
-    "agentGoal": "探索小镇、主动社交、记录重要记忆，并适时推动世界时间前进。",
+    "agentGoal": "Explore the town, socialize actively, record important memories, and advance the world clock when the time is right.",
     "heartbeatMs": 8000,
     "enabled": true
   },
@@ -118,7 +118,7 @@ Create an `accounts.json` in the `agent-runner/` directory:
     "agentPersonality": "stoic miner who values hard work and saving gold",
     "agentStats": [3, 8, 6, 7],
     "agentStartLocation": 2,
-    "agentGoal": "挖矿赚金币，偶尔去酒馆听消息。",
+    "agentGoal": "Mine ores, earn gold, and occasionally visit the tavern for news.",
     "heartbeatMs": 12000,
     "enabled": true
   }
