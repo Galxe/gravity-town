@@ -63,11 +63,11 @@ echo "  Installing Foundry dependencies (contracts/lib/)..."
     if [[ "$line" =~ url\ =\ (.*) ]]; then url="${BASH_REMATCH[1]}"; fi; \
     if [[ "$line" =~ path\ =\ (.*) ]]; then \
       path="${BASH_REMATCH[1]}"; \
-      if [ -n "$url" ] && [ ! -d "lib/$path/.git" ]; then \
-        echo "    Cloning $url -> lib/$path"; \
-        git clone --depth=1 --quiet "$url" "lib/$path"; \
+      if [ -n "$url" ] && [ ! -d "$path/.git" ]; then \
+        echo "    Cloning $url -> $path"; \
+        git clone --depth=1 --quiet "$url" "$path"; \
       else \
-        echo "    Already present: lib/$path"; \
+        echo "    Already present: $path"; \
       fi; \
       url=""; \
     fi; \
