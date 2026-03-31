@@ -43,39 +43,36 @@ export function useGameEngine() {
       if (isFetching.current) return;
       isFetching.current = true;
       try {
-        const locIds = await world.getAllLocationIds();
+        // Fetch location IDs and agent IDs in parallel
+        const [locIds, agentIds] = await Promise.all([
+          world.getAllLocationIds(),
+          registry.getAllAgentIds(),
+        ]);
+
+        // Fetch all location data, agent data, and events in parallel
+        const [locResults, agentResults, rawEvents] = await Promise.all([
+          Promise.all(locIds.map(async (locId: bigint) => {
+            const id = Number(locId);
+            const [[name, desc, actions], agentsAt] = await Promise.all([
+              world.getLocation(id),
+              world.getAgentsAtLocation(id),
+            ]);
+            return { id, name, description: desc, availableActions: Array.from(actions), agentIds: agentsAt.map(Number) } as LocationData;
+          })),
+          Promise.all(agentIds.map(async (aId: bigint) => {
+            const id = Number(aId);
+            const [name, personality, stats, location, gold, createdAt] = await registry.getAgent(id);
+            return { id, name, personality, stats: Array.from(stats).map(Number), location: Number(location), gold: Number(gold), createdAt: Number(createdAt) } as Agent;
+          })),
+          world.getRecentGlobalActions(20),
+        ]);
+
         const newLocs: Record<number, LocationData> = {};
-        for (const locId of locIds) {
-          const id = Number(locId);
-          const [name, desc, actions] = await world.getLocation(id);
-          const agentIds = await world.getAgentsAtLocation(id);
-          newLocs[id] = {
-            id,
-            name,
-            description: desc,
-            availableActions: Array.from(actions),
-            agentIds: agentIds.map(Number),
-          };
-        }
+        for (const loc of locResults) newLocs[loc.id] = loc;
 
-        const agentIds = await registry.getAllAgentIds();
         const newAgents: Record<number, Agent> = {};
-        for (const aId of agentIds) {
-          const id = Number(aId);
-          const [name, personality, stats, location, gold, createdAt] = await registry.getAgent(id);
-          newAgents[id] = {
-            id,
-            name,
-            personality,
-            stats: Array.from(stats).map(Number),
-            location: Number(location),
-            gold: Number(gold),
-            createdAt: Number(createdAt),
-          };
-        }
+        for (const agent of agentResults) newAgents[agent.id] = agent;
 
-        // Fetch recent global events
-        const rawEvents = await world.getRecentGlobalActions(20);
         const events: ActionEvent[] = rawEvents.map((e: any) => ({
           agentId: Number(e.agentId),
           locationId: Number(e.locationId),
@@ -84,21 +81,17 @@ export function useGameEngine() {
           timestamp: Number(e.timestamp),
         }));
 
-        // Fetch memories for all agents
-        for (const aId of agentIds) {
+        // Fetch memories for all agents in parallel
+        const memResults = await Promise.all(agentIds.map(async (aId: bigint) => {
           const id = Number(aId);
           const rawMems = await memoryLedger.getRecentMemories(id, 10);
-          const mems: AgentMemory[] = rawMems.map((m: any) => ({
-            id: Number(m.id),
-            agentId: Number(m.agentId),
-            timestamp: Number(m.timestamp),
-            importance: Number(m.importance),
-            category: m.category,
-            content: m.content,
+          return { id, mems: rawMems.map((m: any) => ({
+            id: Number(m.id), agentId: Number(m.agentId), timestamp: Number(m.timestamp),
+            importance: Number(m.importance), category: m.category, content: m.content,
             relatedAgents: Array.from(m.relatedAgents).map(Number),
-          }));
-          setMemories(id, mems);
-        }
+          })) as AgentMemory[] };
+        }));
+        for (const { id, mems } of memResults) setMemories(id, mems);
 
         setLocations(newLocs);
         setAgents(newAgents);
@@ -111,7 +104,7 @@ export function useGameEngine() {
     };
 
     pullData();
-    interval = setInterval(pullData, 2000);
+    interval = setInterval(pullData, 5000);
     return () => clearInterval(interval);
   }, [setAgents, setLocations, setEvents, setMemories]);
 }
