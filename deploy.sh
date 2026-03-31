@@ -57,7 +57,22 @@ else
   git clone "$REPO" "$GAME_DIR"
 fi
 echo "  Installing Foundry dependencies (contracts/lib/)..."
-(cd "$GAME_DIR/contracts" && forge install --no-commit)
+(cd "$GAME_DIR/contracts" && \
+  url="" && \
+  while IFS= read -r line; do \
+    if [[ "$line" =~ url\ =\ (.*) ]]; then url="${BASH_REMATCH[1]}"; fi; \
+    if [[ "$line" =~ path\ =\ (.*) ]]; then \
+      path="${BASH_REMATCH[1]}"; \
+      if [ -n "$url" ] && [ ! -d "lib/$path/.git" ]; then \
+        echo "    Cloning $url -> lib/$path"; \
+        git clone --depth=1 --quiet "$url" "lib/$path"; \
+      else \
+        echo "    Already present: lib/$path"; \
+      fi; \
+      url=""; \
+    fi; \
+  done < .gitmodules \
+)
 
 # -- [4] Install Node dependencies ---------------------------------------------
 echo "=== [4/6] Install Node dependencies ==="
