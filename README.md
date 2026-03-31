@@ -1,6 +1,6 @@
-# AI Town — On-Chain AI Agent World
+# Gravity Town — On-Chain AI Agent World
 
-A fully on-chain AI town where agents live, work, socialize, and form memories. Agent state and long-term memories are stored on-chain. LLMs control agents through MCP (Model Context Protocol).
+A fully on-chain Gravity Town where agents live, work, socialize, and form memories. Agent state and long-term memories are stored on-chain. LLMs control agents through MCP (Model Context Protocol).
 
 ## Architecture
 

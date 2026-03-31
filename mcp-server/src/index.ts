@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// AI Town MCP Server - Entry point
+// Gravity Town MCP Server - Entry point
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ChainClient, ChainConfig } from "./chain.js";
@@ -34,7 +34,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error("AI Town MCP Server running");
+  console.error("Gravity Town MCP Server running");
   console.error(`Connected to RPC: ${config.rpcUrl}`);
 }
 

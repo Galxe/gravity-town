@@ -6,7 +6,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./AgentRegistry.sol";
 
-/// @title WorldState - Locations and action logging for AI Town (UUPS upgradeable, ring-buffer)
+/// @title WorldState - Locations and action logging for Gravity Town (UUPS upgradeable, ring-buffer)
 contract WorldState is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     struct Location {
         string name;

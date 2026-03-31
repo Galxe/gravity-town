@@ -91,7 +91,7 @@ async function main() {
   });
 
   app.listen(port, host, () => {
-    console.error(`AI Town MCP HTTP Server running at http://${host}:${port}${path}`);
+    console.error(`Gravity Town MCP HTTP Server running at http://${host}:${port}${path}`);
     console.error(`Connected to RPC: ${config.rpcUrl}`);
   });
 }

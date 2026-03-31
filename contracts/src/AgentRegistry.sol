@@ -5,7 +5,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
-/// @title AgentRegistry - AI Town Agent ownership and attributes (UUPS upgradeable)
+/// @title AgentRegistry - Gravity Town Agent ownership and attributes (UUPS upgradeable)
 /// @notice Each Agent is an on-chain entity with personality, stats, location, and gold balance
 contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     struct Agent {

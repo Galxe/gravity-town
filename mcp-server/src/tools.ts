@@ -1,4 +1,4 @@
-// MCP Tool definitions for AI Town
+// MCP Tool definitions for Gravity Town
 import { z } from "zod";
 import { ChainClient } from "./chain.js";
 

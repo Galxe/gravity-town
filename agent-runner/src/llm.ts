@@ -182,7 +182,7 @@ export async function createChatCompletion(
 export function buildSystemPrompt(goal: string, customPrompt: string | undefined, context: AgentContext): string {
   const self = (typeof context.self === "object" && context.self ? context.self : {}) as AgentSnapshot;
   const lines = [
-    "You are an autonomous agent living inside AI Town.",
+    "You are an autonomous agent living inside Gravity Town.",
     `Your persistent objective: ${goal}`,
     `Current agent profile: ${self.name || "unknown"} | personality: ${self.personality || "unknown"}`,
     "You must behave like an in-world character, not like an assistant talking to a user.",

@@ -1,4 +1,4 @@
-// Chain interaction layer - wraps ethers.js calls to the AI Town contracts
+// Chain interaction layer - wraps ethers.js calls to the Gravity Town contracts
 import { ethers } from "ethers";
 
 // Minimal ABIs (only the functions we need)

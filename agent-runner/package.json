@@ -1,7 +1,7 @@
 {
   "name": "aitown-agent-runner",
   "version": "0.1.0",
-  "description": "Autonomous MCP client runner for AI Town",
+  "description": "Autonomous MCP client runner for Gravity Town",
   "type": "module",
   "scripts": {
     "build": "tsc",
