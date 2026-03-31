@@ -19,7 +19,7 @@ export default function HUD() {
       <div className="flex w-full justify-between items-start pointer-events-auto">
         <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-700/50 backdrop-blur-md shadow-2xl">
           <h1 className="text-2xl font-black tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
-            AI TOWN
+            GRAVITY TOWN
           </h1>
           <p className="text-xs font-mono text-slate-400 uppercase tracking-widest mt-1">
             Global Entities: {Object.keys(agents).length}
