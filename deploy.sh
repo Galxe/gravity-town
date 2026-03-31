@@ -6,8 +6,12 @@ set -euo pipefail
 
 REPO="https://github.com/Galxe/gravity-town.git"
 GAME_DIR="$HOME/game"
-ANVIL_PK="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 RPC_URL="http://127.0.0.1:8545"
+
+# Prompt for operator private key (never stored to disk)
+read -r -s -p "Enter operator private key (0x...): " DEPLOY_PK
+echo
+[[ "$DEPLOY_PK" == 0x* ]] || { echo "❌ Private key must start with 0x"; exit 1; }
 
 echo "=== [1/7] Install Node.js 20 ==="
 if ! command -v node &>/dev/null || [[ $(node -v | cut -d. -f1 | tr -d v) -lt 20 ]]; then
@@ -46,7 +50,7 @@ fi
 
 (cd "$GAME_DIR/contracts" && forge script script/Deploy.s.sol \
   --rpc-url "$RPC_URL" \
-  --private-key "$ANVIL_PK" \
+  --private-key "$DEPLOY_PK" \
   --broadcast --silent)
 
 echo "Contract addresses:"
