@@ -13,7 +13,7 @@ async function main() {
   console.log(`[${nowIso()}] model=${globalConfig.llmModel} baseUrl=${globalConfig.llmBaseUrl}`);
 
   // Auto-launch MCP server if configured
-  let mcpChild: ChildProcess | undefined;
+  let mcpChild: ChildProcess | null | undefined;
   if (globalConfig.mcpServer) {
     mcpChild = await launchMcpServer(globalConfig.mcpServer);
   }

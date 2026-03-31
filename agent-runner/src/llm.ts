@@ -165,6 +165,8 @@ async function callAnthropic(
 
 // ──────────────────── Public API ────────────────────
 
+let _resolvedApiType: "openai" | "anthropic" | undefined;
+
 export async function createChatCompletion(
   apiKey: string,
   baseUrl: string,
@@ -173,10 +175,43 @@ export async function createChatCompletion(
   tools: ToolDefinition[],
   apiType: LlmApiType = "openai"
 ): Promise<ChatCompletionResponse> {
-  if (apiType === "anthropic") {
-    return callAnthropic(apiKey, baseUrl, model, messages, tools);
+  if (apiType !== "auto") {
+    return apiType === "anthropic"
+      ? callAnthropic(apiKey, baseUrl, model, messages, tools)
+      : callOpenAI(apiKey, baseUrl, model, messages, tools);
   }
-  return callOpenAI(apiKey, baseUrl, model, messages, tools);
+
+  // Auto-detect: use cached result if already resolved
+  if (_resolvedApiType) {
+    return _resolvedApiType === "anthropic"
+      ? callAnthropic(apiKey, baseUrl, model, messages, tools)
+      : callOpenAI(apiKey, baseUrl, model, messages, tools);
+  }
+
+  // Try openai first, then anthropic
+  // If user didn't set a custom base_url, use each provider's default
+  const hasCustomBase = baseUrl !== "https://api.openai.com/v1";
+  const openaiBase = baseUrl;
+  const anthropicBase = hasCustomBase ? baseUrl : "https://api.anthropic.com";
+
+  try {
+    const result = await callOpenAI(apiKey, openaiBase, model, messages, tools);
+    _resolvedApiType = "openai";
+    console.log("[LLM] auto-detected api_type=openai");
+    return result;
+  } catch {
+    try {
+      const result = await callAnthropic(apiKey, anthropicBase, model, messages, tools);
+      _resolvedApiType = "anthropic";
+      console.log("[LLM] auto-detected api_type=anthropic");
+      return result;
+    } catch (err) {
+      throw new Error(
+        `[LLM] auto-detect failed: neither openai nor anthropic API accepted the request. ` +
+        `Set api_type explicitly in config.toml. Last error: ${err}`
+      );
+    }
+  }
 }
 
 export function buildSystemPrompt(goal: string, customPrompt: string | undefined, context: AgentContext): string {

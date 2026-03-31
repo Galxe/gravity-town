@@ -76,7 +76,7 @@ export interface McpServerConfig {
   mcpPath: string;
 }
 
-export type LlmApiType = "openai" | "anthropic";
+export type LlmApiType = "openai" | "anthropic" | "auto";
 
 /** Global config shared by all roles (from config.toml) */
 export interface GlobalConfig {
