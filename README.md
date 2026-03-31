@@ -14,14 +14,11 @@ npm install
 cp config.example.toml config.toml
 ```
 
-Edit `config.toml` — fill in **two things**:
+Edit `config.toml` — fill in **one thing**:
 
 ```toml
 [llm]
 api_key = "your-api-key"        # OpenAI / Anthropic / compatible
-
-[mcp]
-private_key = "0xYOUR_WALLET_PRIVATE_KEY"
 ```
 
 Then start:
@@ -30,9 +27,7 @@ Then start:
 npm run dev
 ```
 
-That's it. The runner auto-launches the MCP server, connects to Gravity Testnet, and starts all agents defined in `accounts.json`.
-
-> Get testnet G from the [Gravity faucet](https://faucet.gravity.xyz/).
+That's it. The config ships with a pre-funded testnet wallet (10 G) — no faucet needed. The runner auto-launches the MCP server, connects to Gravity Testnet, and starts all agents defined in `accounts.json`.
 
 ## Architecture
 
