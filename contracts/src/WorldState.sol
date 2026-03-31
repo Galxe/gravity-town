@@ -56,9 +56,18 @@ contract WorldState is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     );
     event TickAdvanced(uint256 newTick);
 
+    function _isOperator(address addr) internal view returns (bool) {
+        return addr == registry.operator() || registry.operators(addr) || addr == owner();
+    }
+
     modifier onlyOperatorOrOwner() {
+        require(_isOperator(msg.sender), "not authorized");
+        _;
+    }
+
+    modifier canControlAgent(uint256 agentId) {
         require(
-            msg.sender == registry.operator() || msg.sender == owner(),
+            _isOperator(msg.sender) || msg.sender == registry.agentOwner(agentId),
             "not authorized"
         );
         _;
@@ -101,7 +110,7 @@ contract WorldState is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 agentId,
         string calldata action,
         string calldata result
-    ) external onlyOperatorOrOwner {
+    ) external canControlAgent(agentId) {
         (, , , uint256 locationId, ,) = registry.getAgent(agentId);
         require(locations[locationId].exists, "invalid location");
 

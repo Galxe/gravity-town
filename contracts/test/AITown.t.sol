@@ -15,6 +15,7 @@ contract AITownTest is Test {
     address deployer = address(this);
     address operator = address(0xBEEF);
     address player1 = address(0x1);
+    address player2 = address(0x2);
 
     function setUp() public {
         // Deploy through UUPS proxies (same as production deploy)
@@ -139,11 +140,30 @@ contract AITownTest is Test {
         vm.stopPrank();
     }
 
-    function test_OnlyOperatorCanCreate() public {
+    function test_AnyoneCanCreateAgent() public {
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
         vm.prank(player1);
+        uint256 agentId = registry.createAgent("Player Agent", "friendly", stats, 1, player1);
+        assertEq(registry.agentOwner(agentId), player1);
+    }
+
+    function test_AgentOwnerCanControl() public {
+        uint8[4] memory stats = [uint8(5), 5, 5, 5];
+        vm.prank(player1);
+        uint256 agentId = registry.createAgent("Owned", "test", stats, 1, player1);
+        // Owner can move their agent
+        vm.prank(player1);
+        registry.moveAgent(agentId, 2);
+    }
+
+    function test_NonOwnerCannotControl() public {
+        uint8[4] memory stats = [uint8(5), 5, 5, 5];
+        vm.prank(player1);
+        uint256 agentId = registry.createAgent("Owned", "test", stats, 1, player1);
+        // player2 cannot move player1's agent
+        vm.prank(player2);
         vm.expectRevert("not authorized");
-        registry.createAgent("Rogue", "bad", stats, 1, player1);
+        registry.moveAgent(agentId, 2);
     }
 
     // ============ WorldState Tests ============

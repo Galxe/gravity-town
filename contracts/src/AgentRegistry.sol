@@ -18,20 +18,36 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 createdAt;
     }
 
-    address public operator; // MCP server address
+    address public operator; // legacy single operator (kept for storage layout)
 
     uint256 public nextAgentId;
     mapping(uint256 => Agent) public agents;
     mapping(uint256 => address) public agentOwner;
     uint256[] public allAgentIds;
 
+    // --- V2 storage (appended for UUPS safety) ---
+    mapping(address => bool) public operators;
+
     event AgentCreated(uint256 indexed agentId, string name, address indexed owner);
+    event AgentRemoved(uint256 indexed agentId);
     event AgentMoved(uint256 indexed agentId, uint256 fromLocation, uint256 toLocation);
     event GoldTransferred(uint256 indexed fromAgent, uint256 indexed toAgent, uint256 amount);
     event StatsUpdated(uint256 indexed agentId, uint8[4] newStats);
 
+    function _isOperator(address addr) internal view returns (bool) {
+        return addr == operator || operators[addr] || addr == owner();
+    }
+
     modifier onlyOperatorOrOwner() {
-        require(msg.sender == operator || msg.sender == owner(), "not authorized");
+        require(_isOperator(msg.sender), "not authorized");
+        _;
+    }
+
+    modifier canControlAgent(uint256 agentId) {
+        require(
+            _isOperator(msg.sender) || msg.sender == agentOwner[agentId],
+            "not authorized"
+        );
         _;
     }
 
@@ -58,6 +74,14 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         operator = _operator;
     }
 
+    function addOperator(address _operator) external onlyOwner {
+        operators[_operator] = true;
+    }
+
+    function removeOperator(address _operator) external onlyOwner {
+        operators[_operator] = false;
+    }
+
     /// @notice Mint a new Agent
     function createAgent(
         string calldata name,
@@ -65,7 +89,7 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint8[4] calldata stats,
         uint256 location,
         address agentOwnerAddr
-    ) external onlyOperatorOrOwner returns (uint256 agentId) {
+    ) external returns (uint256 agentId) {
         agentId = nextAgentId++;
         agents[agentId] = Agent({
             name: name,
@@ -79,6 +103,20 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         agentOwner[agentId] = agentOwnerAddr;
         allAgentIds.push(agentId);
         emit AgentCreated(agentId, name, agentOwnerAddr);
+    }
+
+    /// @notice Remove an agent (owner of the agent, operator, or contract owner)
+    function removeAgent(uint256 agentId) external canControlAgent(agentId) agentExists(agentId) {
+        agents[agentId].alive = false;
+        // Remove from allAgentIds array
+        for (uint256 i = 0; i < allAgentIds.length; i++) {
+            if (allAgentIds[i] == agentId) {
+                allAgentIds[i] = allAgentIds[allAgentIds.length - 1];
+                allAgentIds.pop();
+                break;
+            }
+        }
+        emit AgentRemoved(agentId);
     }
 
     /// @notice Get full agent data
@@ -95,7 +133,7 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     /// @notice Move agent to a new location
-    function moveAgent(uint256 agentId, uint256 toLocation) external onlyOperatorOrOwner agentExists(agentId) {
+    function moveAgent(uint256 agentId, uint256 toLocation) external canControlAgent(agentId) agentExists(agentId) {
         uint256 from = agents[agentId].location;
         agents[agentId].location = toLocation;
         emit AgentMoved(agentId, from, toLocation);
@@ -104,7 +142,7 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice Transfer gold between agents
     function transferGold(uint256 fromAgent, uint256 toAgent, uint256 amount)
         external
-        onlyOperatorOrOwner
+        canControlAgent(fromAgent)
         agentExists(fromAgent)
         agentExists(toAgent)
     {
@@ -115,14 +153,14 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     /// @notice Add gold to an agent (reward from actions)
-    function addGold(uint256 agentId, uint256 amount) external onlyOperatorOrOwner agentExists(agentId) {
+    function addGold(uint256 agentId, uint256 amount) external canControlAgent(agentId) agentExists(agentId) {
         agents[agentId].gold += amount;
     }
 
     /// @notice Update agent stats
     function updateStats(uint256 agentId, uint8[4] calldata newStats)
         external
-        onlyOperatorOrOwner
+        canControlAgent(agentId)
         agentExists(agentId)
     {
         agents[agentId].stats = newStats;
