@@ -3,19 +3,23 @@
 api_type = "openai"            # openai | anthropic
 api_key = "your-api-key"
 model = "gpt-4.1-mini"
-base_url = "https://api.openai.com/v1"
+# base_url = "https://api.openai.com/v1"
 
-# === MCP Server Auto-Launch ===
+# === MCP Server ===
 [mcp]
-# The private key of the MCP operator wallet (anvil default account #0)
-private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-rpc_url = "http://127.0.0.1:8545"
+# Wallet private key — needed for signing on-chain transactions
+private_key = "0xYOUR_WALLET_PRIVATE_KEY"
 
-# Contract addresses are auto-loaded from ../deployed-addresses.json (written by forge deploy).
-# Only set these manually if you need to override:
-# agent_registry_address = "0x..."
-# world_state_address = "0x..."
-# memory_ledger_address = "0x..."
+# Gravity Alpha Testnet (default — contracts already deployed)
+rpc_url = "https://rpc-testnet.gravity.xyz"
+agent_registry_address = "0x4f95c989345e9101E864c4183e4553915B967Dfd"
+world_state_address = "0x878de5F1de059Cb05838BeA8Be88619f24dcaB8b"
+memory_ledger_address = "0x6d42ea7971fAF8b2740e6c950B544cAc4a1A19E6"
+
+# For local dev (anvil), uncomment these and comment out the testnet lines above:
+# rpc_url = "http://127.0.0.1:8545"
+# private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+# Addresses auto-loaded from ../deployed-addresses.json after `forge script Deploy.s.sol`
 
 # MCP server bind settings
 host = "127.0.0.1"
@@ -34,9 +38,4 @@ max_history_length = 20
 # === Single-agent fallback (used only when accounts.json does not exist) ===
 [agent]
 id = 1
-# name = "Mira"
-# personality = "curious trader who likes gathering rumors and making deals"
-# stats = "4,7,8,5"
-# start_location = 1
 goal = "Explore the town, socialize actively, record important memories, and advance the world clock when the time is right."
-# system_prompt = ""
