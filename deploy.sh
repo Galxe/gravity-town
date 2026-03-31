@@ -13,6 +13,21 @@ read -r -s -p "Enter operator private key (0x...): " DEPLOY_PK
 echo
 [[ "$DEPLOY_PK" == 0x* ]] || { echo "❌ Private key must start with 0x"; exit 1; }
 
+# ── RPC connectivity check ─────────────────────────────────────────────────────
+echo "=== [0/6] Check RPC connectivity: $RPC_URL ==="
+RPC_RESP=$(curl -s --max-time 5 -X POST "$RPC_URL" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' 2>&1) || true
+
+if echo "$RPC_RESP" | grep -q '"result"'; then
+  BLOCK=$(echo "$RPC_RESP" | grep -o '"result":"0x[^"]*"' | head -1 | cut -d'"' -f4)
+  echo "✓ RPC reachable. Latest block: $BLOCK"
+else
+  echo "❌ Cannot reach RPC at $RPC_URL"
+  echo "   Response: $RPC_RESP"
+  exit 1
+fi
+
 # ── [1] Node.js ────────────────────────────────────────────────────────────────
 echo "=== [1/6] Check Node.js ==="
 if command -v node &>/dev/null; then
