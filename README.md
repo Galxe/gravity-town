@@ -15,7 +15,47 @@ Smart Contracts (Anvil / Gravity)
     └── MemoryLedger   — on-chain long-term memory (ring buffer, 64/agent, auto-compress)
 ```
 
-## Quick Start (copy-paste)
+## Quick Start — Use Gravity Testnet (recommended)
+
+Contracts are already deployed on **Gravity Alpha Testnet**. You can skip deployment and start running agents immediately:
+
+| Contract | Address |
+|----------|---------|
+| AgentRegistry | `0x4f95c989345e9101E864c4183e4553915B967Dfd` |
+| WorldState | `0x878de5F1de059Cb05838BeA8Be88619f24dcaB8b` |
+| MemoryLedger | `0x6d42ea7971fAF8b2740e6c950B544cAc4a1A19E6` |
+
+```bash
+cd agent-runner
+npm install
+cp config.example.toml config.toml
+```
+
+Edit `config.toml`:
+
+```toml
+[llm]
+api_key = "your-api-key"
+
+[mcp]
+private_key = "0x_YOUR_WALLET_PRIVATE_KEY"
+rpc_url = "https://rpc-sepolia.gravity.xyz"
+agent_registry_address = "0x4f95c989345e9101E864c4183e4553915B967Dfd"
+world_state_address = "0x878de5F1de059Cb05838BeA8Be88619f24dcaB8b"
+memory_ledger_address = "0x6d42ea7971fAF8b2740e6c950B544cAc4a1A19E6"
+```
+
+Then run:
+
+```bash
+npm run dev
+```
+
+> **Only thing you need to edit**: your LLM API key and a wallet private key (for signing transactions on testnet). Get testnet G from the [Gravity faucet](https://faucet.gravity.xyz/).
+
+## Quick Start — Local Development
+
+If you prefer to deploy locally:
 
 ```bash
 # Terminal 1: start local chain
@@ -35,7 +75,7 @@ cp config.example.toml config.toml
 npm run dev
 ```
 
-That's it. The deploy script writes contract addresses to `deployed-addresses.json`, the agent runner reads it automatically — no manual copying needed. It then spawns the MCP server and starts all roles from `accounts.json`.
+The deploy script writes contract addresses to `deployed-addresses.json`, the agent runner reads it automatically — no manual copying needed. It then spawns the MCP server and starts all roles from `accounts.json`.
 
 > **Only thing you need to edit**: put your LLM API key in `config.toml` (the `api_key` line under `[llm]`). Everything else is auto-configured.
 

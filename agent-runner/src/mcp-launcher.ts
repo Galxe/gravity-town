@@ -29,6 +29,9 @@ export async function launchMcpServer(config: McpServerConfig): Promise<ChildPro
     MCP_PATH: config.mcpPath,
   };
 
+  // Kill any stale process occupying the port before starting
+  await killProcessOnPort(config.mcpPort);
+
   log(`launching MCP server: ${entryPoint}`);
   log(`bind: http://${config.mcpHost}:${config.mcpPort}${config.mcpPath}`);
 
@@ -56,8 +59,10 @@ export async function launchMcpServer(config: McpServerConfig): Promise<ChildPro
     log(`[mcp-server] exited with code=${code} signal=${signal}`, code !== 0);
   });
 
-  // Wait for the server to become ready
+  // Wait for the child to actually start listening (not a stale process)
   const url = `http://${config.mcpHost}:${config.mcpPort}${config.mcpPath}`;
+  // Small delay to let the child process initialize before polling
+  await new Promise((r) => setTimeout(r, 1000));
   await waitForReady(url, child);
 
   log("MCP server is ready");
@@ -87,6 +92,23 @@ async function waitForReady(url: string, child: ChildProcess): Promise<void> {
   }
 
   throw new Error(`MCP server did not become ready within ${MAX_WAIT_MS}ms`);
+}
+
+async function killProcessOnPort(port: number): Promise<void> {
+  try {
+    const { execSync } = await import("node:child_process");
+    const out = execSync(`lsof -ti :${port}`, { encoding: "utf-8" }).trim();
+    if (out) {
+      for (const pid of out.split("\n")) {
+        log(`killing stale process ${pid} on port ${port}`);
+        process.kill(Number(pid), "SIGTERM");
+      }
+      // Brief wait for process to release port
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  } catch {
+    // lsof returns exit 1 when no process found — that's fine
+  }
 }
 
 function log(msg: string, isError = false): void {
