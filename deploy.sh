@@ -56,6 +56,8 @@ if [ -d "$GAME_DIR/.git" ]; then
 else
   git clone "$REPO" "$GAME_DIR"
 fi
+echo "  Initializing submodules (contracts/lib/)..."
+git -C "$GAME_DIR" submodule update --init --recursive
 
 # -- [4] Install Node dependencies ---------------------------------------------
 echo "=== [4/6] Install Node dependencies ==="
