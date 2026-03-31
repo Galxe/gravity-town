@@ -141,14 +141,7 @@ export function loadGlobalConfig(): GlobalConfig {
     throw new Error("mcp.server_url required in config.toml (or set mcp.private_key + contract addresses for auto-launch)");
   }
 
-  let llmApiType: "openai" | "anthropic";
-  if (cfg.llm?.api_type) {
-    llmApiType = cfg.llm.api_type as "openai" | "anthropic";
-  } else if (cfg.llm?.api_key?.startsWith("sk-ant-")) {
-    llmApiType = "anthropic";
-  } else {
-    llmApiType = "openai";
-  }
+  const llmApiType = (cfg.llm?.api_type || "auto") as "openai" | "anthropic" | "auto";
 
   if (!cfg.llm?.api_key) {
     throw new Error("llm.api_key required in config.toml");
@@ -160,7 +153,7 @@ export function loadGlobalConfig(): GlobalConfig {
   return {
     llmApiType,
     llmApiKey: cfg.llm.api_key,
-    llmBaseUrl: (cfg.llm.base_url || (llmApiType === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1")).replace(/\/$/, ""),
+    llmBaseUrl: (cfg.llm.base_url || (llmApiType === "anthropic" ? "https://api.anthropic.com" : llmApiType === "auto" ? "https://api.openai.com/v1" : "https://api.openai.com/v1")).replace(/\/$/, ""),
     llmModel: cfg.llm.model,
     mcpServerUrl,
     defaultLoopDelayMs: cfg.runner?.loop_delay_ms ?? 8000,

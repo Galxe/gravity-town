@@ -1,6 +1,7 @@
 # === LLM Config ===
 [llm]
-# api_type auto-detected from key prefix (sk-ant-* = anthropic, otherwise openai)
+# api_type auto-detected by trying both providers. Set explicitly if auto-detect fails:
+# api_type = "openai"       # openai | anthropic
 api_key = "your-api-key"
 model = "gpt-4.1-mini"
 # base_url = "https://api.openai.com/v1"
@@ -23,7 +24,7 @@ memory_ledger_address = "0x6d42ea7971fAF8b2740e6c950B544cAc4a1A19E6"
 
 # MCP server bind settings
 host = "127.0.0.1"
-port = 3000
+port = 3005
 path = "/mcp"
 
 # OR: Connect to an existing MCP server (skip auto-launch)
