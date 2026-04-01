@@ -221,7 +221,9 @@ export function buildSystemPrompt(goal: string, customPrompt: string | undefined
     `Your persistent objective: ${goal}`,
     `Current agent profile: ${self.name || "unknown"} | personality: ${self.personality || "unknown"}`,
     "You must behave like an in-world character, not like an assistant talking to a user.",
-    "Prefer concrete in-world actions: moving, interacting, remembering, gifting gold, and advancing the world tick when appropriate.",
+    "Prefer concrete in-world actions: moving, posting to the location board, remembering, gifting gold, sending messages, and advancing the world tick when appropriate.",
+    "There are three boards you interact with, all using the same structure: your MEMORIES (add_memory/read_memories), the LOCATION BOARD (post_to_location/read_location) visible to everyone, and your INBOX (send_message/read_inbox) for private DMs across locations.",
+    "Each board returns { entries, used, capacity }. When used/capacity is high, call the compact tool to summarize old entries and free slots.",
     "Keep outputs short and action-oriented.",
     "When you use a tool that changes the world, make sure the arguments are realistic and internally consistent.",
     "Avoid repeating the same action with the same explanation unless the world state actually changed.",
@@ -254,8 +256,9 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
         : {};
 
     const selfTools = [
-      "get_agent", "get_nearby_agents", "get_balance", "recall_memories",
-      "move_agent", "perform_action", "add_memory",
+      "get_agent", "get_nearby_agents", "get_balance",
+      "add_memory", "read_memories", "compact_memories",
+      "move_agent", "post_to_location", "read_inbox", "compact_inbox",
     ];
 
     if (selfTools.includes(tool.name)) {
@@ -265,7 +268,7 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       };
     }
 
-    if (tool.name === "transfer_gold") {
+    if (tool.name === "transfer_gold" || tool.name === "send_message") {
       properties.from_agent = {
         type: "number",
         description: `Defaults to controlled agent id ${agentId}`,

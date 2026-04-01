@@ -1,7 +1,6 @@
-// Chain interaction layer - wraps ethers.js calls to the Gravity Town contracts
+// Chain interaction layer — unified ledger architecture
 import { ethers } from "ethers";
 
-// Minimal ABIs (only the functions we need)
 const AGENT_REGISTRY_ABI = [
   "event AgentCreated(uint256 indexed agentId, string name, address indexed owner)",
   "function createAgent(string name, string personality, uint8[4] stats, uint256 location, address agentOwnerAddr) returns (uint256)",
@@ -15,50 +14,116 @@ const AGENT_REGISTRY_ABI = [
   "function agentOwner(uint256) view returns (address)",
 ];
 
-const WORLD_STATE_ABI = [
-  "function createLocation(string name, string description, string[] availableActions) returns (uint256)",
-  "function performAction(uint256 agentId, string action, string result)",
-  "function getAgentsAtLocation(uint256 locationId) view returns (uint256[])",
-  "function getRecentActions(uint256 locationId, uint256 count) view returns (tuple(uint256 agentId, uint256 locationId, string action, string result, uint256 timestamp)[])",
-  "function getRecentGlobalActions(uint256 count) view returns (tuple(uint256 agentId, uint256 locationId, string action, string result, uint256 timestamp)[])",
-  "function getLocation(uint256 locationId) view returns (string name, string description, string[] availableActions)",
-  "function getAllLocationIds() view returns (uint256[])",
-  "function advanceTick()",
-  "function currentTick() view returns (uint256)",
+// Shared Entry struct ABI fragment (same for all three ledgers)
+const ENTRY_TUPLE = "tuple(uint256 id, uint256 authorAgent, uint256 blockNumber, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)";
+
+const AGENT_LEDGER_ABI = [
+  `function write(uint256 agentId, uint8 importance, string category, string content, uint256[] relatedAgents) returns (uint256 entryId, uint256 used, uint256 capacity)`,
+  `function readRecent(uint256 agentId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
+  `function compact(uint256 agentId, uint256 count, uint8 importance, string category, string summaryContent) returns (uint256 summaryId, uint256 used, uint256 capacity)`,
 ];
 
-const MEMORY_LEDGER_ABI = [
-  "function addMemory(uint256 agentId, uint8 importance, string category, string content, uint256[] relatedAgents) returns (uint256)",
-  "function compressMemories(uint256 agentId, uint256 count, string summaryContent, uint8 importance, string category) returns (uint256)",
-  "function getRecentMemories(uint256 agentId, uint256 count) view returns (tuple(uint256 id, uint256 agentId, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)[])",
-  "function getImportantMemories(uint256 agentId, uint8 minImportance) view returns (tuple(uint256 id, uint256 agentId, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)[])",
-  "function getMemoriesByCategory(uint256 agentId, string category) view returns (tuple(uint256 id, uint256 agentId, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)[])",
-  "function getSharedMemories(uint256 agentA, uint256 agentB) view returns (tuple(uint256 id, uint256 agentId, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)[])",
-  "function memoryCount(uint256) view returns (uint256)",
-  "function memoryCapacity() view returns (uint256)",
+const LOCATION_LEDGER_ABI = [
+  `function createLocation(string name, string description, int32 q, int32 r) returns (uint256)`,
+  `function getLocation(uint256 locationId) view returns (string name, string description, int32 q, int32 r)`,
+  `function getAllLocationIds() view returns (uint256[])`,
+  `function getAgentsAtLocation(uint256 locationId) view returns (uint256[])`,
+  `function write(uint256 agentId, uint8 importance, string category, string content, uint256[] relatedAgents) returns (uint256 entryId, uint256 used, uint256 capacity)`,
+  `function readRecent(uint256 locationId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
+  `function compact(uint256 locationId, uint256 count, uint256 authorAgent, uint8 importance, string category, string summaryContent) returns (uint256 summaryId, uint256 used, uint256 capacity)`,
+  `function advanceTick()`,
+  `function currentTick() view returns (uint256)`,
+];
+
+const INBOX_LEDGER_ABI = [
+  `function write(uint256 fromAgent, uint256 toAgent, uint8 importance, string category, string content, uint256[] relatedAgents) returns (uint256 entryId, uint256 used, uint256 capacity)`,
+  `function readRecent(uint256 agentId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
+  `function readFrom(uint256 agentId, uint256 fromAgentId) view returns (${ENTRY_TUPLE}[])`,
+  `function compact(uint256 agentId, uint256 count, uint8 importance, string category, string summaryContent) returns (uint256 summaryId, uint256 used, uint256 capacity)`,
+];
+
+const ROUTER_ABI = [
+  "function getAddresses() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger)",
 ];
 
 export interface ChainConfig {
   rpcUrl: string;
   privateKey: string;
-  agentRegistryAddress: string;
-  worldStateAddress: string;
-  memoryLedgerAddress: string;
+  routerAddress: string;
+}
+
+// Formatted entry returned to MCP tools
+export interface FormattedEntry {
+  id: number;
+  authorAgent: number;
+  blockNumber: number;
+  timestamp: number;
+  importance: number;
+  category: string;
+  content: string;
+  relatedAgents: number[];
+}
+
+export interface BoardRead {
+  entries: FormattedEntry[];
+  used: number;
+  capacity: number;
+}
+
+export interface WriteResult {
+  entryId: number;
+  used: number;
+  capacity: number;
+  txHash: string;
 }
 
 export class ChainClient {
   provider: ethers.providers.JsonRpcProvider;
   signer: ethers.Wallet;
-  registry: ethers.Contract;
-  world: ethers.Contract;
-  memory: ethers.Contract;
+  registry: ethers.Contract = null!;
+  agentLedger: ethers.Contract = null!;
+  locationLedger: ethers.Contract = null!;
+  inboxLedger: ethers.Contract = null!;
+  private _ready: Promise<void>;
 
   constructor(config: ChainConfig) {
     this.provider = new ethers.providers.JsonRpcProvider(config.rpcUrl);
     this.signer = new ethers.Wallet(config.privateKey, this.provider);
-    this.registry = new ethers.Contract(config.agentRegistryAddress, AGENT_REGISTRY_ABI, this.signer);
-    this.world = new ethers.Contract(config.worldStateAddress, WORLD_STATE_ABI, this.signer);
-    this.memory = new ethers.Contract(config.memoryLedgerAddress, MEMORY_LEDGER_ABI, this.signer);
+
+    const provider = this.provider;
+    const signer = this.signer;
+    this._ready = (async () => {
+      const router = new ethers.Contract(config.routerAddress, ROUTER_ABI, provider);
+      const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr] = await router.getAddresses();
+      this.registry = new ethers.Contract(registryAddr, AGENT_REGISTRY_ABI, signer);
+      this.agentLedger = new ethers.Contract(agentLedgerAddr, AGENT_LEDGER_ABI, signer);
+      this.locationLedger = new ethers.Contract(locationLedgerAddr, LOCATION_LEDGER_ABI, signer);
+      this.inboxLedger = new ethers.Contract(inboxLedgerAddr, INBOX_LEDGER_ABI, signer);
+    })();
+  }
+
+  /** Wait for router resolution to complete */
+  async ready(): Promise<void> {
+    await this._ready;
+  }
+
+  // ============ Shared helpers ============
+
+  private formatEntry(e: any): FormattedEntry {
+    return {
+      id: Number(e.id),
+      authorAgent: Number(e.authorAgent),
+      blockNumber: Number(e.blockNumber),
+      timestamp: Number(e.timestamp),
+      importance: Number(e.importance),
+      category: e.category,
+      content: e.content,
+      relatedAgents: e.relatedAgents.map((a: any) => Number(a)),
+    };
+  }
+
+  private formatEntries(entries: any[]): FormattedEntry[] {
+    return entries.map((e: any) => this.formatEntry(e));
   }
 
   // ============ Agent Operations ============
@@ -66,7 +131,6 @@ export class ChainClient {
   async createAgent(name: string, personality: string, stats: number[], location: number, ownerAddr: string) {
     const tx = await this.registry.createAgent(name, personality, stats, location, ownerAddr);
     const receipt = await tx.wait();
-    // Try parsed event first, then fall back to raw log parsing (needed for proxy contracts)
     let agentId: string | null = null;
     const event = receipt.events?.find((entry: any) => entry.event === "AgentCreated");
     if (event?.args?.[0] != null) {
@@ -89,23 +153,15 @@ export class ChainClient {
   async getAgent(agentId: number) {
     const [name, personality, stats, location, gold, createdAt] = await this.registry.getAgent(agentId);
     return {
-      id: agentId,
-      name,
-      personality,
+      id: agentId, name, personality,
       stats: stats.map((s: bigint) => Number(s)),
-      location: Number(location),
-      gold: Number(gold),
-      createdAt: Number(createdAt),
+      location: Number(location), gold: Number(gold), createdAt: Number(createdAt),
     };
   }
 
   async listAgents() {
     const ids: bigint[] = await this.registry.getAllAgentIds();
-    const agents = [];
-    for (const id of ids) {
-      agents.push(await this.getAgent(Number(id)));
-    }
-    return agents;
+    return Promise.all(ids.map((id) => this.getAgent(Number(id))));
   }
 
   async moveAgent(agentId: number, toLocation: number) {
@@ -126,111 +182,106 @@ export class ChainClient {
     return { txHash: receipt.transactionHash };
   }
 
-  // ============ World Operations ============
+  // ============ Agent Ledger (memories) ============
 
-  async getWorld() {
-    const locationIds: bigint[] = await this.world.getAllLocationIds();
-    const locations = [];
-    for (const id of locationIds) {
-      const [name, description, availableActions] = await this.world.getLocation(Number(id));
-      const agentIds: bigint[] = await this.world.getAgentsAtLocation(Number(id));
-      locations.push({
-        id: Number(id),
-        name,
-        description,
-        availableActions,
-        agents: agentIds.map((a: bigint) => Number(a)),
-      });
-    }
-    const tick = await this.world.currentTick();
-    return { tick: Number(tick), locations };
+  async writeMemory(agentId: number, importance: number, category: string, content: string, relatedAgents: number[]): Promise<WriteResult> {
+    const tx = await this.agentLedger.write(agentId, importance, category, content, relatedAgents);
+    const receipt = await tx.wait();
+    // Parse return values from event or receipt
+    return { entryId: 0, used: 0, capacity: 64, txHash: receipt.transactionHash };
   }
 
-  async performAction(agentId: number, action: string, result: string) {
-    const tx = await this.world.performAction(agentId, action, result);
+  async readMemories(agentId: number, count: number): Promise<BoardRead> {
+    const [entries, used, capacity] = await this.agentLedger.readRecent(agentId, count);
+    return { entries: this.formatEntries(entries), used: Number(used), capacity: Number(capacity) };
+  }
+
+  async compactMemories(agentId: number, count: number, importance: number, category: string, summary: string) {
+    const tx = await this.agentLedger.compact(agentId, count, importance, category, summary);
     const receipt = await tx.wait();
     return { txHash: receipt.transactionHash };
   }
 
-  async getRecentEvents(locationId: number, count: number) {
-    const logs = await this.world.getRecentActions(locationId, count);
-    return logs.map((l: any) => ({
-      agentId: Number(l.agentId),
-      locationId: Number(l.locationId),
-      action: l.action,
-      result: l.result,
-      timestamp: Number(l.timestamp),
+  // ============ Location Ledger ============
+
+  async getWorld() {
+    const locationIds: bigint[] = await this.locationLedger.getAllLocationIds();
+    const locations = await Promise.all(locationIds.map(async (id) => {
+      const [name, description, q, r] = await this.locationLedger.getLocation(Number(id));
+      const agentIds: bigint[] = await this.locationLedger.getAgentsAtLocation(Number(id));
+      return {
+        id: Number(id), name, description,
+        q: Number(q), r: Number(r),
+        agents: agentIds.map((a: bigint) => Number(a)),
+      };
     }));
+    const tick = await this.locationLedger.currentTick();
+    return { tick: Number(tick), locations };
+  }
+
+  async writeToLocation(agentId: number, importance: number, category: string, content: string, relatedAgents: number[]): Promise<WriteResult> {
+    const tx = await this.locationLedger.write(agentId, importance, category, content, relatedAgents);
+    const receipt = await tx.wait();
+    return { entryId: 0, used: 0, capacity: 128, txHash: receipt.transactionHash };
+  }
+
+  async readLocation(locationId: number, count: number): Promise<BoardRead> {
+    const [entries, used, capacity] = await this.locationLedger.readRecent(locationId, count);
+    return { entries: this.formatEntries(entries), used: Number(used), capacity: Number(capacity) };
+  }
+
+  async compactLocation(locationId: number, authorAgent: number, count: number, importance: number, category: string, summary: string) {
+    const tx = await this.locationLedger.compact(locationId, count, authorAgent, importance, category, summary);
+    const receipt = await tx.wait();
+    return { txHash: receipt.transactionHash };
   }
 
   async getNearbyAgents(agentId: number) {
     const agent = await this.getAgent(agentId);
-    const ids: bigint[] = await this.world.getAgentsAtLocation(agent.location);
+    const ids: bigint[] = await this.locationLedger.getAgentsAtLocation(agent.location);
     const agents = [];
     for (const id of ids) {
-      if (Number(id) !== agentId) {
-        agents.push(await this.getAgent(Number(id)));
-      }
+      if (Number(id) !== agentId) agents.push(await this.getAgent(Number(id)));
     }
     return agents;
   }
 
   async advanceTick() {
-    const tx = await this.world.advanceTick();
+    const tx = await this.locationLedger.advanceTick();
     const receipt = await tx.wait();
-    const tick = await this.world.currentTick();
+    const tick = await this.locationLedger.currentTick();
     return { tick: Number(tick), txHash: receipt.transactionHash };
   }
 
-  // ============ Memory Operations ============
+  // ============ Inbox Ledger (DMs) ============
 
-  async addMemory(agentId: number, importance: number, category: string, content: string, relatedAgents: number[]) {
-    const tx = await this.memory.addMemory(agentId, importance, category, content, relatedAgents);
+  async sendMessage(fromAgent: number, toAgent: number, importance: number, category: string, content: string, relatedAgents: number[]): Promise<WriteResult> {
+    const tx = await this.inboxLedger.write(fromAgent, toAgent, importance, category, content, relatedAgents);
+    const receipt = await tx.wait();
+    return { entryId: 0, used: 0, capacity: 64, txHash: receipt.transactionHash };
+  }
+
+  async readInbox(agentId: number, count: number): Promise<BoardRead> {
+    const [entries, used, capacity] = await this.inboxLedger.readRecent(agentId, count);
+    return { entries: this.formatEntries(entries), used: Number(used), capacity: Number(capacity) };
+  }
+
+  async readInboxFrom(agentId: number, fromAgentId: number): Promise<FormattedEntry[]> {
+    const entries = await this.inboxLedger.readFrom(agentId, fromAgentId);
+    return this.formatEntries(entries);
+  }
+
+  async getConversation(agentA: number, agentB: number): Promise<FormattedEntry[]> {
+    const [aToB, bToA] = await Promise.all([
+      this.readInboxFrom(agentB, agentA),  // A sent to B
+      this.readInboxFrom(agentA, agentB),  // B sent to A
+    ]);
+    return [...aToB, ...bToA].sort((a, b) => a.blockNumber - b.blockNumber || a.id - b.id);
+  }
+
+  async compactInbox(agentId: number, count: number, importance: number, category: string, summary: string) {
+    const tx = await this.inboxLedger.compact(agentId, count, importance, category, summary);
     const receipt = await tx.wait();
     return { txHash: receipt.transactionHash };
-  }
-
-  async compressMemories(agentId: number, count: number, summaryContent: string, importance: number, category: string) {
-    const tx = await this.memory.compressMemories(agentId, count, summaryContent, importance, category);
-    const receipt = await tx.wait();
-    return { txHash: receipt.transactionHash };
-  }
-
-  async getMemoryUsage(agentId: number) {
-    const count = await this.memory.memoryCount(agentId);
-    const capacity = await this.memory.memoryCapacity();
-    return { count: Number(count), capacity: Number(capacity) };
-  }
-
-  private formatMemories(mems: any[]) {
-    return mems.map((m: any) => ({
-      id: Number(m.id),
-      agentId: Number(m.agentId),
-      timestamp: Number(m.timestamp),
-      importance: Number(m.importance),
-      category: m.category,
-      content: m.content,
-      relatedAgents: m.relatedAgents.map((a: bigint) => Number(a)),
-    }));
-  }
-
-  async recallMemories(agentId: number, count: number) {
-    const mems = await this.memory.getRecentMemories(agentId, count);
-    return this.formatMemories(mems);
-  }
-
-  async getImportantMemories(agentId: number, minImportance: number) {
-    const mems = await this.memory.getImportantMemories(agentId, minImportance);
-    return this.formatMemories(mems);
-  }
-
-  async getMemoriesByCategory(agentId: number, category: string) {
-    const mems = await this.memory.getMemoriesByCategory(agentId, category);
-    return this.formatMemories(mems);
-  }
-
-  async getSharedHistory(agentA: number, agentB: number) {
-    const mems = await this.memory.getSharedMemories(agentA, agentB);
-    return this.formatMemories(mems);
   }
 }

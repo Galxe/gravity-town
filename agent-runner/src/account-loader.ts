@@ -6,10 +6,6 @@ import type { GlobalConfig, AccountConfig, McpServerConfig } from "./types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/* ------------------------------------------------------------------ */
-/*  TOML config loading                                                */
-/* ------------------------------------------------------------------ */
-
 interface TomlConfig {
   llm?: {
     api_type?: string;
@@ -24,9 +20,7 @@ interface TomlConfig {
     port?: number;
     path?: string;
     server_url?: string;
-    agent_registry_address?: string;
-    world_state_address?: string;
-    memory_ledger_address?: string;
+    router_address?: string;
   };
   runner?: {
     loop_delay_ms?: number;
@@ -46,9 +40,17 @@ interface TomlConfig {
 
 let _config: TomlConfig | undefined;
 
+function resolveConfigPath(): string {
+  const idx = process.argv.indexOf("--config");
+  if (idx !== -1 && process.argv[idx + 1]) {
+    return resolve(process.argv[idx + 1]);
+  }
+  return resolve(__dirname, "../config.toml");
+}
+
 function loadTomlConfig(): TomlConfig {
   if (_config) return _config;
-  const filePath = resolve(__dirname, "../config.toml");
+  const filePath = resolveConfigPath();
   if (!existsSync(filePath)) {
     throw new Error(`config.toml not found at ${filePath}`);
   }
@@ -56,30 +58,21 @@ function loadTomlConfig(): TomlConfig {
   return _config;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
 function parseStats(raw: string | undefined): number[] {
   const values = (raw ?? "5,5,5,5")
     .split(",")
     .map((part) => Number.parseInt(part.trim(), 10));
 
   if (values.length !== 4 || values.some((v) => Number.isNaN(v) || v < 1 || v > 10)) {
-    throw new Error("Stats must contain exactly 4 integers between 1 and 10, for example: 6,5,8,4");
+    throw new Error("Stats must contain exactly 4 integers between 1 and 10");
   }
   return values;
 }
 
 interface DeployedAddresses {
-  agentRegistryAddress: string;
-  worldStateAddress: string;
-  memoryLedgerAddress: string;
+  routerAddress?: string;
 }
 
-/**
- * Try to load contract addresses from deployed-addresses.json (written by forge deploy script).
- */
 function loadDeployedAddresses(): DeployedAddresses | undefined {
   const filePath = resolve(__dirname, "../../deployed-addresses.json");
   if (!existsSync(filePath)) return undefined;
@@ -87,26 +80,23 @@ function loadDeployedAddresses(): DeployedAddresses | undefined {
   const raw = readFileSync(filePath, "utf-8");
   const data = JSON.parse(raw) as DeployedAddresses;
 
-  if (data.agentRegistryAddress && data.worldStateAddress && data.memoryLedgerAddress) {
-    console.log(`[config] loaded contract addresses from deployed-addresses.json`);
+  if (data.routerAddress) {
+    console.log(`[config] loaded router address from deployed-addresses.json: ${data.routerAddress}`);
     return data;
   }
   return undefined;
 }
 
-/** Try to build MCP server auto-launch config from config.toml + deployed-addresses.json. */
 function loadMcpServerConfig(): McpServerConfig | undefined {
   const cfg = loadTomlConfig();
   const privateKey = cfg.mcp?.private_key;
   if (!privateKey) return undefined;
 
   const deployed = loadDeployedAddresses();
-  const agentRegistryAddress = cfg.mcp?.agent_registry_address || deployed?.agentRegistryAddress;
-  const worldStateAddress = cfg.mcp?.world_state_address || deployed?.worldStateAddress;
-  const memoryLedgerAddress = cfg.mcp?.memory_ledger_address || deployed?.memoryLedgerAddress;
+  const routerAddress = cfg.mcp?.router_address || deployed?.routerAddress;
 
-  if (!agentRegistryAddress || !worldStateAddress || !memoryLedgerAddress) {
-    console.warn("[config] mcp.private_key is set but contract addresses are missing. Need agent_registry_address, world_state_address, memory_ledger_address in config.toml or deployed-addresses.json");
+  if (!routerAddress) {
+    console.warn("[config] mcp.private_key is set but router_address is missing. Set it in config.toml or deploy contracts to generate deployed-addresses.json");
     return undefined;
   }
 
@@ -118,21 +108,17 @@ function loadMcpServerConfig(): McpServerConfig | undefined {
     mcpServerDir: resolve(__dirname, "../../mcp-server"),
     privateKey,
     rpcUrl: cfg.mcp?.rpc_url || "http://127.0.0.1:8545",
-    agentRegistryAddress,
-    worldStateAddress,
-    memoryLedgerAddress,
+    routerAddress,
     mcpHost,
     mcpPort,
     mcpPath,
   };
 }
 
-/** Load global config from config.toml */
 export function loadGlobalConfig(): GlobalConfig {
   const cfg = loadTomlConfig();
   const mcpServer = loadMcpServerConfig();
 
-  // If auto-launch is configured, derive mcpServerUrl from it (unless explicitly set)
   let mcpServerUrl = cfg.mcp?.server_url;
   if (!mcpServerUrl && mcpServer) {
     mcpServerUrl = `http://${mcpServer.mcpHost}:${mcpServer.mcpPort}${mcpServer.mcpPath}`;
@@ -143,12 +129,8 @@ export function loadGlobalConfig(): GlobalConfig {
 
   const llmApiType = (cfg.llm?.api_type || "auto") as "openai" | "anthropic" | "auto";
 
-  if (!cfg.llm?.api_key) {
-    throw new Error("llm.api_key required in config.toml");
-  }
-  if (!cfg.llm?.model) {
-    throw new Error("llm.model required in config.toml");
-  }
+  if (!cfg.llm?.api_key) throw new Error("llm.api_key required in config.toml");
+  if (!cfg.llm?.model) throw new Error("llm.model required in config.toml");
 
   return {
     llmApiType,
@@ -163,7 +145,6 @@ export function loadGlobalConfig(): GlobalConfig {
   };
 }
 
-/** Load accounts from accounts.json, fallback to config.toml single-agent config */
 export function loadAccounts(): AccountConfig[] {
   const filePath = resolve(__dirname, "../accounts.json");
 
@@ -171,7 +152,6 @@ export function loadAccounts(): AccountConfig[] {
     const raw = readFileSync(filePath, "utf-8");
     const accounts = JSON.parse(raw) as AccountConfig[];
 
-    // Validate and set defaults
     return accounts.map((acc, idx) => ({
       id: acc.id || `account-${idx}`,
       label: acc.label || `Agent ${idx + 1}`,
@@ -190,7 +170,6 @@ export function loadAccounts(): AccountConfig[] {
     }));
   }
 
-  // Fallback: build a single account from config.toml [agent] section
   const cfg = loadTomlConfig();
   const agentId = cfg.agent?.id;
   return [
@@ -202,9 +181,7 @@ export function loadAccounts(): AccountConfig[] {
       agentPersonality: cfg.agent?.personality,
       agentStats: parseStats(cfg.agent?.stats),
       agentStartLocation: cfg.agent?.start_location ?? 1,
-      agentGoal:
-        cfg.agent?.goal ||
-        "Observe the world, interact with other agents, leave valuable memories, and drive the world state forward.",
+      agentGoal: cfg.agent?.goal || "Observe the world, interact with other agents, leave valuable memories, and drive the world state forward.",
       agentSystemPrompt: cfg.agent?.system_prompt,
       heartbeatMs: undefined,
       maxToolRoundsPerCycle: undefined,

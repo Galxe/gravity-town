@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { GlobalConfig, AccountConfig, McpTool, Message, ToolDefinition } from "./types.js";
-import { collectContext, executeToolCall, getMemoryUsage, callMcpTool, parseToolJson } from "./mcp.js";
+import { collectContext, executeToolCall, callMcpTool, parseToolJson } from "./mcp.js";
 import {
   createChatCompletion,
   buildSystemPrompt,
@@ -68,13 +68,11 @@ export class RoleRunner {
     return this._cycle;
   }
 
-  /** Update heartbeat interval at runtime */
   setHeartbeat(ms: number): void {
     this.heartbeatMs = ms;
     this.log(`heartbeat updated to ${ms}ms`);
   }
 
-  /** Start the autonomous loop */
   start(): void {
     if (this._status !== "idle" && this._status !== "stopped") return;
     this._status = "idle";
@@ -82,7 +80,6 @@ export class RoleRunner {
     this.scheduleNext();
   }
 
-  /** Stop the loop gracefully */
   stop(): void {
     this._status = "stopped";
     if (this.timer) {
@@ -105,7 +102,7 @@ export class RoleRunner {
     this.log(`cycle ${this._cycle} start`);
 
     try {
-      // Check memory usage and compress if needed
+      // Check memory usage and auto-compress if needed
       await this.maybeCompressMemories();
       // Run the main decision cycle
       await this.runCycle();
@@ -120,45 +117,40 @@ export class RoleRunner {
 
   // ──────────────────── Memory compression ────────────────────
 
-  /**
-   * If on-chain memory is >= 75% full, ask the LLM to summarize the oldest
-   * memories and call compress_memories on-chain to free slots.
-   */
   private async maybeCompressMemories(): Promise<void> {
-    const usage = await getMemoryUsage(this.client, this.agentId);
-    if (!usage || typeof usage.count !== "number" || typeof usage.capacity !== "number" || usage.capacity === 0) {
-      this.log("get_memory_usage returned invalid data — skipping compression");
+    const result = parseToolJson(
+      await callMcpTool(this.client, "read_memories", { agent_id: this.agentId, count: 0 })
+    ) as { used?: number; capacity?: number } | null;
+
+    if (!result || typeof result.used !== "number" || typeof result.capacity !== "number" || result.capacity === 0) {
+      this.log("read_memories returned invalid usage — skipping compression check");
       return;
     }
-    const ratio = usage.count / usage.capacity;
 
+    const ratio = result.used / result.capacity;
     if (ratio < COMPRESS_THRESHOLD) return;
 
     this._status = "compressing";
-    this.log(`memory ${usage.count}/${usage.capacity} (${(ratio * 100).toFixed(0)}%) — triggering compression`);
+    this.log(`memory ${result.used}/${result.capacity} (${(ratio * 100).toFixed(0)}%) — triggering compression`);
 
-    // Fetch the oldest memories that will be compressed
-    const batchSize = Math.min(COMPRESS_BATCH_SIZE, usage.count - 1); // keep at least 1
-    const parsed = parseToolJson(
-      await callMcpTool(this.client, "recall_memories", { agent_id: this.agentId, count: usage.count })
-    );
-    const oldestMemories: any[] = Array.isArray(parsed) ? parsed : [];
+    // Fetch oldest memories for summarization
+    const batchSize = Math.min(COMPRESS_BATCH_SIZE, result.used - 1);
+    const fullRead = parseToolJson(
+      await callMcpTool(this.client, "read_memories", { agent_id: this.agentId, count: result.used })
+    ) as { entries?: any[] } | null;
+    const entries: any[] = fullRead?.entries && Array.isArray(fullRead.entries) ? fullRead.entries : [];
 
-    if (oldestMemories.length === 0) {
-      this.log("recall_memories returned no usable array — skipping compression");
+    if (entries.length === 0) {
+      this.log("read_memories returned no entries — skipping compression");
       return;
     }
 
-    // Take the oldest N from the full list (recall returns oldest-first)
-    const toCompress = oldestMemories.slice(0, batchSize);
-
-    // Find max importance among the batch
+    const toCompress = entries.slice(0, batchSize);
     let maxImportance = 1;
-    for (const m of toCompress) {
-      if (m.importance > maxImportance) maxImportance = m.importance;
+    for (const e of toCompress) {
+      if (e.importance > maxImportance) maxImportance = e.importance;
     }
 
-    // Ask LLM to generate a compressed summary
     const summaryPrompt = [
       "You are compressing old memories for an AI agent in a game world.",
       "Merge the following memories into ONE concise summary paragraph.",
@@ -166,8 +158,8 @@ export class RoleRunner {
       "Drop trivial details. Output ONLY the summary text, nothing else.",
       "",
       "Memories to compress:",
-      ...toCompress.map((m: any, i: number) =>
-        `${i + 1}. [${m.category}, importance=${m.importance}] ${m.content}`
+      ...toCompress.map((e: any, i: number) =>
+        `${i + 1}. [${e.category}, importance=${e.importance}] ${e.content}`
       ),
     ].join("\n");
 
@@ -177,7 +169,7 @@ export class RoleRunner {
       this.globalConfig.llmBaseUrl,
       model,
       [{ role: "user", content: summaryPrompt }],
-      [], // no tools needed for summarization
+      [],
       this.globalConfig.llmApiType
     );
 
@@ -187,13 +179,12 @@ export class RoleRunner {
       return;
     }
 
-    // Call on-chain compress
-    await callMcpTool(this.client, "compress_memories", {
+    await callMcpTool(this.client, "compact_memories", {
       agent_id: this.agentId,
       count: batchSize,
-      summary_content: summary,
+      summary,
       importance: maxImportance,
-      category: "reflection",
+      category: "summary",
     });
 
     this.log(`compressed ${batchSize} memories → "${summary.slice(0, 80)}..."`);
@@ -202,10 +193,8 @@ export class RoleRunner {
   // ──────────────────── Main cycle ────────────────────
 
   private async runCycle(): Promise<void> {
-    // 1. Collect fresh context from chain
     const context = await collectContext(this.client, this.agentId);
 
-    // 2. Build system prompt (always at position 0)
     const systemMessage: Message = {
       role: "system",
       content: buildSystemPrompt(
@@ -215,22 +204,19 @@ export class RoleRunner {
       ),
     };
 
-    // 3. Build user prompt with fresh world snapshot
     const userMessage: Message = {
       role: "user",
       content: buildUserPrompt(context),
     };
 
-    // 4. Assemble messages: system + trimmed history + new user prompt
     const messages: Message[] = [
       systemMessage,
       ...this.conversationHistory,
       userMessage,
     ];
 
-    // 5. LLM tool-calling loop
     const model = this.accountConfig.llmModel || this.globalConfig.llmModel;
-    const newMessages: Message[] = []; // track new messages this cycle
+    const newMessages: Message[] = [];
 
     for (let round = 1; round <= this.maxToolRoundsPerCycle; round += 1) {
       this._status = "thinking";
@@ -256,14 +242,12 @@ export class RoleRunner {
       messages.push(assistantMessage);
       newMessages.push(assistantMessage);
 
-      // No tool calls → cycle done
       if (!reply.tool_calls || reply.tool_calls.length === 0) {
         const summary = extractTextContent(reply.content).trim() || "cycle completed";
         this.log(`summary: ${summary}`);
         break;
       }
 
-      // Execute tool calls
       this._status = "acting";
       for (const toolCall of reply.tool_calls) {
         try {
@@ -296,12 +280,10 @@ export class RoleRunner {
       }
     }
 
-    // 6. Append new messages to persistent history + trim
     this.conversationHistory.push(userMessage, ...newMessages);
     this.trimHistory();
   }
 
-  /** Sliding window: keep the last N user/assistant/tool messages */
   private trimHistory(): void {
     if (this.conversationHistory.length > this.maxHistoryLength) {
       const excess = this.conversationHistory.length - this.maxHistoryLength;

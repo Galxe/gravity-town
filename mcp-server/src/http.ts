@@ -8,22 +8,18 @@ import { ChainClient, ChainConfig } from "./chain.js";
 function getConfig(): ChainConfig {
   const rpcUrl = process.env.RPC_URL || "http://127.0.0.1:8545";
   const privateKey = process.env.PRIVATE_KEY;
-  const agentRegistryAddress = process.env.AGENT_REGISTRY_ADDRESS;
-  const worldStateAddress = process.env.WORLD_STATE_ADDRESS;
-  const memoryLedgerAddress = process.env.MEMORY_LEDGER_ADDRESS;
+  const routerAddress = process.env.ROUTER_ADDRESS;
 
   if (!privateKey) throw new Error("PRIVATE_KEY env var required");
-  if (!agentRegistryAddress) throw new Error("AGENT_REGISTRY_ADDRESS env var required");
-  if (!worldStateAddress) throw new Error("WORLD_STATE_ADDRESS env var required");
-  if (!memoryLedgerAddress) throw new Error("MEMORY_LEDGER_ADDRESS env var required");
+  if (!routerAddress) throw new Error("ROUTER_ADDRESS env var required");
 
-  return { rpcUrl, privateKey, agentRegistryAddress, worldStateAddress, memoryLedgerAddress };
+  return { rpcUrl, privateKey, routerAddress };
 }
 
 function createServer(chain: ChainClient): McpServer {
   const server = new McpServer({
-    name: "aitown",
-    version: "0.1.0",
+    name: "gravity-town",
+    version: "0.2.0",
   });
 
   registerTools(server, chain);
@@ -33,6 +29,7 @@ function createServer(chain: ChainClient): McpServer {
 async function main() {
   const config = getConfig();
   const chain = new ChainClient(config);
+  await chain.ready();
   const app = createMcpExpressApp({ host: process.env.MCP_HOST || "127.0.0.1" });
   const host = process.env.MCP_HOST || "127.0.0.1";
   const port = Number.parseInt(process.env.MCP_PORT || "3000", 10);

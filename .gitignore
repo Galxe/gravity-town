@@ -1,7 +1,10 @@
 # ============================================================
 # Sensitive / local config — DO NOT COMMIT
 # ============================================================
-agent-runner/config.toml
+agent-runner/config/*.toml
+frontend/config/*.json
+!frontend/config/gravity.json
+!frontend/config/*.example.json
 
 # ============================================================
 # Dependencies
@@ -17,6 +20,7 @@ frontend/build/
 frontend/.vercel
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
+frontend/.env*
 
 # ============================================================
 # Contracts (Foundry)
@@ -43,7 +47,6 @@ agent-runner/dist/
 # ============================================================
 .DS_Store
 *.pem
-*.env*.local
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

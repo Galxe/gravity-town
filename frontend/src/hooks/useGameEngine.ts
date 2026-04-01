@@ -1,70 +1,121 @@
 import { useEffect, useRef } from 'react';
 import { JsonRpcProvider, Contract } from 'ethers';
-import { useGameStore, Agent, LocationData, ActionEvent, AgentMemory } from '../store/useGameStore';
+import { useGameStore, Agent, LocationData, Entry, BoardState } from '../store/useGameStore';
 
-const RPC_URL       = process.env.NEXT_PUBLIC_RPC_URL            || 'http://127.0.0.1:8545';
-const REGISTRY_ADDR = process.env.NEXT_PUBLIC_REGISTRY_ADDRESS   || '0xcf7ed3acca5a467e9e704c703e8d87f634fb0fc9';
-const WORLD_ADDR    = process.env.NEXT_PUBLIC_WORLD_ADDRESS      || '0xdc64a140aa3e981100a9beca4e685f962f0cf6c9';
-const MEMORY_ADDR   = process.env.NEXT_PUBLIC_MEMORY_ADDRESS     || '0x5fc8d32690cc91d4c39d9d3abcbd16989f875707';
+const RPC_URL        = process.env.NEXT_PUBLIC_RPC_URL        || 'http://127.0.0.1:8545';
+const ROUTER_ADDR    = process.env.NEXT_PUBLIC_ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000';
+
+const ROUTER_ABI = [
+  'function getAddresses() view returns (address, address, address, address)',
+];
 
 const REGISTRY_ABI = [
   'function getAgent(uint256) view returns (string, string, uint8[4], uint256, uint256, uint256)',
   'function getAllAgentIds() view returns (uint256[])',
 ];
 
-const WORLD_ABI = [
-  'function getLocation(uint256) view returns (string, string, string[])',
-  'function getAllLocationIds() view returns (uint256[])',
-  'function getAgentsAtLocation(uint256) view returns (uint256[])',
-  'function getRecentGlobalActions(uint256) view returns (tuple(uint256 agentId, uint256 locationId, string action, string result, uint256 timestamp)[])',
+const ENTRY_TUPLE = 'tuple(uint256 id, uint256 authorAgent, uint256 blockNumber, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)';
+
+const AGENT_LEDGER_ABI = [
+  `function readRecent(uint256 agentId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
 ];
 
-const MEMORY_ABI = [
-  'function getRecentMemories(uint256 agentId, uint256 count) view returns (tuple(uint256 id, uint256 agentId, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)[])',
+const LOCATION_LEDGER_ABI = [
+  `function getLocation(uint256) view returns (string, string, int32, int32)`,
+  `function getAllLocationIds() view returns (uint256[])`,
+  `function getAgentsAtLocation(uint256) view returns (uint256[])`,
+  `function readRecent(uint256 locationId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
 ];
+
+const INBOX_LEDGER_ABI = [
+  `function readRecent(uint256 agentId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
+];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseEntry(e: any): Entry {
+  return {
+    id: Number(e.id),
+    authorAgent: Number(e.authorAgent),
+    blockNumber: Number(e.blockNumber),
+    timestamp: Number(e.timestamp),
+    importance: Number(e.importance),
+    category: e.category,
+    content: e.content,
+    relatedAgents: Array.from(e.relatedAgents).map(Number),
+  };
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseBoardResult(raw: any): BoardState {
+  const [entries, used, capacity] = raw;
+  return {
+    entries: Array.from(entries).map(parseEntry),
+    used: Number(used),
+    capacity: Number(capacity),
+  };
+}
 
 export function useGameEngine() {
   const setAgents = useGameStore((state) => state.setAgents);
   const setLocations = useGameStore((state) => state.setLocations);
-  const setEvents = useGameStore((state) => state.setEvents);
   const setMemories = useGameStore((state) => state.setMemories);
+  const setLocationBoard = useGameStore((state) => state.setLocationBoard);
+  const setInbox = useGameStore((state) => state.setInbox);
 
-  // Ref to prevent overlapping fetches
   const isFetching = useRef(false);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
     const provider = new JsonRpcProvider(RPC_URL);
-    const registry = new Contract(REGISTRY_ADDR, REGISTRY_ABI, provider);
-    const world = new Contract(WORLD_ADDR, WORLD_ABI, provider);
-    const memoryLedger = new Contract(MEMORY_ADDR, MEMORY_ABI, provider);
+    let registry: Contract;
+    let agentLedger: Contract;
+    let locationLedger: Contract;
+    let inboxLedger: Contract;
+    let resolved = false;
+
+    const resolveContracts = async () => {
+      if (resolved) return;
+      const router = new Contract(ROUTER_ADDR, ROUTER_ABI, provider);
+      const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr] = await router.getAddresses();
+      registry = new Contract(registryAddr, REGISTRY_ABI, provider);
+      agentLedger = new Contract(agentLedgerAddr, AGENT_LEDGER_ABI, provider);
+      locationLedger = new Contract(locationLedgerAddr, LOCATION_LEDGER_ABI, provider);
+      inboxLedger = new Contract(inboxLedgerAddr, INBOX_LEDGER_ABI, provider);
+      resolved = true;
+    };
 
     const pullData = async () => {
       if (isFetching.current) return;
       isFetching.current = true;
       try {
-        // Fetch location IDs and agent IDs in parallel
+        await resolveContracts();
         const [locIds, agentIds] = await Promise.all([
-          world.getAllLocationIds(),
+          locationLedger.getAllLocationIds(),
           registry.getAllAgentIds(),
         ]);
 
-        // Fetch all location data, agent data, and events in parallel
-        const [locResults, agentResults, rawEvents] = await Promise.all([
+        // Fetch locations, agents in parallel
+        const [locResults, agentResults] = await Promise.all([
           Promise.all(locIds.map(async (locId: bigint) => {
             const id = Number(locId);
-            const [[name, desc, actions], agentsAt] = await Promise.all([
-              world.getLocation(id),
-              world.getAgentsAtLocation(id),
+            const [[name, desc, q, r], agentsAt] = await Promise.all([
+              locationLedger.getLocation(id),
+              locationLedger.getAgentsAtLocation(id),
             ]);
-            return { id, name, description: desc, availableActions: Array.from(actions), agentIds: agentsAt.map(Number) } as LocationData;
+            return {
+              id, name, description: desc,
+              agentIds: agentsAt.map(Number),
+              q: Number(q), r: Number(r),
+            } as LocationData;
           })),
           Promise.all(agentIds.map(async (aId: bigint) => {
             const id = Number(aId);
             const [name, personality, stats, location, gold, createdAt] = await registry.getAgent(id);
-            return { id, name, personality, stats: Array.from(stats).map(Number), location: Number(location), gold: Number(gold), createdAt: Number(createdAt) } as Agent;
+            return {
+              id, name, personality,
+              stats: Array.from(stats).map(Number),
+              location: Number(location), gold: Number(gold), createdAt: Number(createdAt),
+            } as Agent;
           })),
-          world.getRecentGlobalActions(20),
         ]);
 
         const newLocs: Record<number, LocationData> = {};
@@ -73,29 +124,30 @@ export function useGameEngine() {
         const newAgents: Record<number, Agent> = {};
         for (const agent of agentResults) newAgents[agent.id] = agent;
 
-        const events: ActionEvent[] = rawEvents.map((e: any) => ({
-          agentId: Number(e.agentId),
-          locationId: Number(e.locationId),
-          action: e.action,
-          result: e.result,
-          timestamp: Number(e.timestamp),
-        }));
-
-        // Fetch memories for all agents in parallel
-        const memResults = await Promise.all(agentIds.map(async (aId: bigint) => {
-          const id = Number(aId);
-          const rawMems = await memoryLedger.getRecentMemories(id, 10);
-          return { id, mems: rawMems.map((m: any) => ({
-            id: Number(m.id), agentId: Number(m.agentId), timestamp: Number(m.timestamp),
-            importance: Number(m.importance), category: m.category, content: m.content,
-            relatedAgents: Array.from(m.relatedAgents).map(Number),
-          })) as AgentMemory[] };
-        }));
-        for (const { id, mems } of memResults) setMemories(id, mems);
+        // Fetch all boards in parallel: memories, location boards, inboxes
+        await Promise.all([
+          // Agent memories
+          Promise.all(agentIds.map(async (aId: bigint) => {
+            const id = Number(aId);
+            const raw = await agentLedger.readRecent(id, 10);
+            setMemories(id, parseBoardResult(raw));
+          })),
+          // Location boards
+          Promise.all(locIds.map(async (locId: bigint) => {
+            const id = Number(locId);
+            const raw = await locationLedger.readRecent(id, 20);
+            setLocationBoard(id, parseBoardResult(raw));
+          })),
+          // Agent inboxes
+          Promise.all(agentIds.map(async (aId: bigint) => {
+            const id = Number(aId);
+            const raw = await inboxLedger.readRecent(id, 10);
+            setInbox(id, parseBoardResult(raw));
+          })),
+        ]);
 
         setLocations(newLocs);
         setAgents(newAgents);
-        setEvents(events);
       } catch (err) {
         console.error("RPC Error:", err);
       } finally {
@@ -104,7 +156,7 @@ export function useGameEngine() {
     };
 
     pullData();
-    interval = setInterval(pullData, 5000);
+    const interval = setInterval(pullData, 5000);
     return () => clearInterval(interval);
-  }, [setAgents, setLocations, setEvents, setMemories]);
+  }, [setAgents, setLocations, setMemories, setLocationBoard, setInbox]);
 }

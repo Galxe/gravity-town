@@ -24,7 +24,7 @@ export async function connectMcp(
   mcpServerUrl: string
 ): Promise<{ client: Client; transport: StreamableHTTPClientTransport; tools: McpTool[] }> {
   const client = new Client({
-    name: "aitown-agent-runner",
+    name: "gravity-town-runner",
     version: "0.2.0",
   });
 
@@ -68,7 +68,7 @@ export async function ensureAgent(
     stats: opts.agentStats,
     location: opts.agentStartLocation,
   });
-  console.log("[debug] create_agent response:", JSON.stringify(created)); 
+  console.log("[debug] create_agent response:", JSON.stringify(created));
   const parsed = parseToolJson(created) as { agentId?: string };
   if (!parsed?.agentId) {
     throw new Error("Agent creation succeeded but no agentId was returned");
@@ -89,14 +89,17 @@ export async function collectContext(
       ? Number((self as AgentSnapshot).location)
       : undefined;
 
-  const [world, nearbyAgents, memories, recentEvents] = await Promise.all([
+  const [world, nearbyAgents, memories, locationBoard, inbox] = await Promise.all([
     callMcpTool(client, "get_world").then(parseToolJson),
     callMcpTool(client, "get_nearby_agents", { agent_id: agentId }).then(parseToolJson),
-    callMcpTool(client, "recall_memories", { agent_id: agentId, count: 8 }).then(parseToolJson),
-    callMcpTool(client, "get_recent_events", { location_id: selfLocation, count: 8 }).then(parseToolJson),
+    callMcpTool(client, "read_memories", { agent_id: agentId, count: 10 }).then(parseToolJson),
+    selfLocation != null
+      ? callMcpTool(client, "read_location", { location_id: selfLocation, count: 10 }).then(parseToolJson)
+      : Promise.resolve(null),
+    callMcpTool(client, "read_inbox", { agent_id: agentId, count: 16 }).then(parseToolJson),
   ]);
 
-  return { self, world, nearbyAgents, memories, recentEvents };
+  return { self, world, nearbyAgents, memories, locationBoard, inbox };
 }
 
 export function parseArguments(toolCall: ToolCall): Record<string, unknown> {
@@ -115,17 +118,19 @@ export function applyAgentDefaults(
 ): Record<string, unknown> {
   const next = { ...args };
 
+  // Tools where agent_id defaults to self
   const selfTools = [
-    "get_agent", "get_nearby_agents", "get_balance", "recall_memories",
-    "move_agent", "perform_action", "add_memory",
-    "compress_memories", "get_memory_usage",
+    "get_agent", "get_nearby_agents", "get_balance",
+    "add_memory", "read_memories", "compact_memories",
+    "move_agent", "post_to_location", "read_inbox", "compact_inbox",
   ];
 
   if (selfTools.includes(toolName) && next.agent_id === undefined) {
     next.agent_id = agentId;
   }
 
-  if (toolName === "transfer_gold" && next.from_agent === undefined) {
+  // Tools where from_agent defaults to self
+  if ((toolName === "transfer_gold" || toolName === "send_message") && next.from_agent === undefined) {
     next.from_agent = agentId;
   }
 
@@ -141,16 +146,4 @@ export async function executeToolCall(
   const finalArgs = applyAgentDefaults(toolCall.function.name, agentId, args);
   const result = await callMcpTool(client, toolCall.function.name, finalArgs);
   return parseToolJson(result) ?? extractToolText(result);
-}
-
-export interface MemoryUsage {
-  count: number;
-  capacity: number;
-}
-
-export async function getMemoryUsage(client: Client, agentId: number): Promise<MemoryUsage> {
-  const result = parseToolJson(
-    await callMcpTool(client, "get_memory_usage", { agent_id: agentId })
-  ) as MemoryUsage;
-  return result;
 }
