@@ -13,19 +13,18 @@ const configPath = isPath
   ? resolve(configName)
   : resolve(__dirname, `config/${configName}.json`);
 
-if (!existsSync(configPath)) {
-  throw new Error(`Frontend config not found: ${configPath}`);
-}
+// If config file doesn't exist, fall back to localhost defaults
+const cfg = existsSync(configPath)
+  ? JSON.parse(readFileSync(configPath, 'utf-8'))
+  : { rpc_url: 'http://127.0.0.1:8545' };
 
-const cfg = JSON.parse(readFileSync(configPath, 'utf-8'));
-
-// For localhost, auto-load router address from deployed-addresses.json if not set
+// Auto-load router address from deployed-addresses.json if not in config
 let routerAddress = cfg.router_address;
 if (!routerAddress) {
   const deployedPath = resolve(__dirname, '../deployed-addresses.json');
   if (existsSync(deployedPath)) {
     const deployed = JSON.parse(readFileSync(deployedPath, 'utf-8'));
-    routerAddress = deployed.routerAddress || deployed.agentRegistryAddress || '0x0000000000000000000000000000000000000000';
+    routerAddress = deployed.routerAddress || '0x0000000000000000000000000000000000000000';
     console.log(`[next.config] loaded router address from deployed-addresses.json: ${routerAddress}`);
   } else {
     routerAddress = '0x0000000000000000000000000000000000000000';

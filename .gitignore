@@ -4,7 +4,6 @@
 agent-runner/config/*.toml
 frontend/config/*.json
 !frontend/config/gravity.json
-!frontend/config/localhost.json
 !frontend/config/*.example.json
 
 # ============================================================
