@@ -52,9 +52,18 @@ contract MemoryLedger is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 summaryMemoryId
     );
 
+    function _isOperator(address addr) internal view returns (bool) {
+        return addr == registry.operator() || registry.operators(addr) || addr == owner();
+    }
+
     modifier onlyOperatorOrOwner() {
+        require(_isOperator(msg.sender), "not authorized");
+        _;
+    }
+
+    modifier canControlAgent(uint256 agentId) {
         require(
-            msg.sender == registry.operator() || msg.sender == owner(),
+            _isOperator(msg.sender) || msg.sender == registry.agentOwner(agentId),
             "not authorized"
         );
         _;
@@ -83,7 +92,7 @@ contract MemoryLedger is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         string calldata category,
         string calldata content,
         uint256[] calldata relatedAgents
-    ) external onlyOperatorOrOwner returns (uint256 memoryId) {
+    ) external canControlAgent(agentId) returns (uint256 memoryId) {
         require(importance >= 1 && importance <= 10, "importance must be 1-10");
 
         memoryId = nextMemoryId++;
@@ -118,7 +127,7 @@ contract MemoryLedger is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         string calldata summaryContent,
         uint8 importance,
         string calldata category
-    ) external onlyOperatorOrOwner returns (uint256 summaryMemoryId) {
+    ) external canControlAgent(agentId) returns (uint256 summaryMemoryId) {
         require(count >= 2, "must compress at least 2");
         require(importance >= 1 && importance <= 10, "importance must be 1-10");
 
