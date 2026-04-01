@@ -13,9 +13,10 @@ private_key = "0x859b68e0eddb79598540a35dcd0f7cf4df7c7b8cad35151177439268566cbfa
 
 # Gravity Alpha Testnet (default — contracts already deployed)
 rpc_url = "https://rpc-testnet.gravity.xyz"
-agent_registry_address = "0x4f95c989345e9101E864c4183e4553915B967Dfd"
-world_state_address = "0x878de5F1de059Cb05838BeA8Be88619f24dcaB8b"
-memory_ledger_address = "0x6d42ea7971fAF8b2740e6c950B544cAc4a1A19E6"
+agent_registry_address = "0x0000000000000000000000000000000000000000"   # Update after deploy
+agent_ledger_address = "0x0000000000000000000000000000000000000000"     # Update after deploy
+location_ledger_address = "0x0000000000000000000000000000000000000000"  # Update after deploy
+inbox_ledger_address = "0x0000000000000000000000000000000000000000"     # Update after deploy
 
 # For local dev (anvil), uncomment these and comment out the testnet lines above:
 # rpc_url = "http://127.0.0.1:8545"

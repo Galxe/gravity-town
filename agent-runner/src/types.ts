@@ -48,8 +48,9 @@ export interface AgentContext {
   self: unknown;
   world: unknown;
   nearbyAgents: unknown;
-  memories: unknown;
-  recentEvents: unknown;
+  memories: unknown;        // { entries, used, capacity }
+  locationBoard: unknown;   // { entries, used, capacity }
+  inbox: unknown;           // { entries, used, capacity }
 }
 
 export interface AgentSnapshot {
@@ -60,17 +61,10 @@ export interface AgentSnapshot {
 
 /** MCP server auto-launch config */
 export interface McpServerConfig {
-  /** Path to mcp-server directory (resolved relative to agent-runner root) */
   mcpServerDir: string;
-  /** Private key for the MCP operator wallet */
   privateKey: string;
-  /** RPC URL for the chain */
   rpcUrl: string;
-  /** Contract addresses */
-  agentRegistryAddress: string;
-  worldStateAddress: string;
-  memoryLedgerAddress: string;
-  /** MCP HTTP server bind settings */
+  routerAddress: string;
   mcpHost: string;
   mcpPort: number;
   mcpPath: string;
@@ -78,7 +72,6 @@ export interface McpServerConfig {
 
 export type LlmApiType = "openai" | "anthropic" | "auto";
 
-/** Global config shared by all roles (from config.toml) */
 export interface GlobalConfig {
   llmApiType: LlmApiType;
   llmApiKey: string;
@@ -88,11 +81,9 @@ export interface GlobalConfig {
   defaultLoopDelayMs: number;
   defaultMaxToolRoundsPerCycle: number;
   defaultMaxHistoryLength: number;
-  /** If set, auto-launch MCP server as child process */
   mcpServer?: McpServerConfig;
 }
 
-/** Per-role config (from accounts.json or config.toml fallback) */
 export interface AccountConfig {
   id: string;
   label: string;
