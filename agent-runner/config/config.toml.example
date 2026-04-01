@@ -1,7 +1,7 @@
 # === LLM Config ===
 [llm]
 # api_type auto-detected by trying both providers. Set explicitly if auto-detect fails:
-# api_type = "openai"       # openai | anthropic
+# api_type = "openai"       # openai | anthropic | auto
 api_key = "your-api-key"
 model = "gpt-4.1-mini"
 # base_url = "https://api.openai.com/v1"
@@ -11,17 +11,14 @@ model = "gpt-4.1-mini"
 # Pre-funded testnet wallet (10 G) — ready to use, no faucet needed
 private_key = "0x859b68e0eddb79598540a35dcd0f7cf4df7c7b8cad35151177439268566cbfa9"
 
-# Gravity Alpha Testnet (default — contracts already deployed)
+# Gravity Alpha Testnet (contracts deployed)
 rpc_url = "https://rpc-testnet.gravity.xyz"
-agent_registry_address = "0x0000000000000000000000000000000000000000"   # Update after deploy
-agent_ledger_address = "0x0000000000000000000000000000000000000000"     # Update after deploy
-location_ledger_address = "0x0000000000000000000000000000000000000000"  # Update after deploy
-inbox_ledger_address = "0x0000000000000000000000000000000000000000"     # Update after deploy
+router_address = "0x4Dc86C56651a5d85e9d44FF5591594568602Fa3A"
 
 # For local dev (anvil), uncomment these and comment out the testnet lines above:
 # rpc_url = "http://127.0.0.1:8545"
 # private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-# Addresses auto-loaded from ../deployed-addresses.json after `forge script Deploy.s.sol`
+# router_address is auto-loaded from ../deployed-addresses.json after `just anvil-deploy`
 
 # MCP server bind settings
 host = "127.0.0.1"
