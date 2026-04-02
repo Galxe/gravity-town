@@ -4,13 +4,17 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/AgentRegistry.sol";
-import "../src/WorldState.sol";
-import "../src/MemoryLedger.sol";
+import "../src/AgentLedger.sol";
+import "../src/LocationLedger.sol";
+import "../src/InboxLedger.sol";
+import "../src/Router.sol";
 
 contract AITownTest is Test {
     AgentRegistry registry;
-    WorldState world;
-    MemoryLedger memory_ledger;
+    AgentLedger agentLedger;
+    LocationLedger locationLedger;
+    InboxLedger inboxLedger;
+    Router router;
 
     address deployer = address(this);
     address operator = address(0xBEEF);
@@ -18,27 +22,52 @@ contract AITownTest is Test {
     address player2 = address(0x2);
 
     function setUp() public {
-        // Deploy through UUPS proxies (same as production deploy)
+        // Deploy implementations
         AgentRegistry registryImpl = new AgentRegistry();
+        AgentLedger agentLedgerImpl = new AgentLedger();
+        LocationLedger locationLedgerImpl = new LocationLedger();
+        InboxLedger inboxLedgerImpl = new InboxLedger();
+        Router routerImpl = new Router();
+
+        // Deploy proxies
         ERC1967Proxy registryProxy = new ERC1967Proxy(
             address(registryImpl),
             abi.encodeCall(AgentRegistry.initialize, (operator))
         );
         registry = AgentRegistry(address(registryProxy));
 
-        WorldState worldImpl = new WorldState();
-        ERC1967Proxy worldProxy = new ERC1967Proxy(
-            address(worldImpl),
-            abi.encodeCall(WorldState.initialize, (address(registry)))
+        ERC1967Proxy agentLedgerProxy = new ERC1967Proxy(
+            address(agentLedgerImpl),
+            abi.encodeCall(AgentLedger.initialize, (address(registry)))
         );
-        world = WorldState(address(worldProxy));
+        agentLedger = AgentLedger(address(agentLedgerProxy));
 
-        MemoryLedger ledgerImpl = new MemoryLedger();
-        ERC1967Proxy ledgerProxy = new ERC1967Proxy(
-            address(ledgerImpl),
-            abi.encodeCall(MemoryLedger.initialize, (address(registry)))
+        ERC1967Proxy locationLedgerProxy = new ERC1967Proxy(
+            address(locationLedgerImpl),
+            abi.encodeCall(LocationLedger.initialize, (address(registry)))
         );
-        memory_ledger = MemoryLedger(address(ledgerProxy));
+        locationLedger = LocationLedger(address(locationLedgerProxy));
+
+        ERC1967Proxy inboxLedgerProxy = new ERC1967Proxy(
+            address(inboxLedgerImpl),
+            abi.encodeCall(InboxLedger.initialize, (address(registry)))
+        );
+        inboxLedger = InboxLedger(address(inboxLedgerProxy));
+
+        ERC1967Proxy routerProxy = new ERC1967Proxy(
+            address(routerImpl),
+            abi.encodeCall(Router.initialize, (
+                address(registryProxy),
+                address(agentLedgerProxy),
+                address(locationLedgerProxy),
+                address(inboxLedgerProxy)
+            ))
+        );
+        router = Router(address(routerProxy));
+
+        // Create initial locations
+        locationLedger.createLocation("Tavern", "A warm tavern", 0, 0);
+        locationLedger.createLocation("Mine", "A dark mine", 1, -1);
     }
 
     // ============ Upgrade Tests ============
@@ -48,16 +77,17 @@ contract AITownTest is Test {
         registry.initialize(operator);
 
         vm.expectRevert();
-        world.initialize(address(registry));
+        agentLedger.initialize(address(registry));
 
         vm.expectRevert();
-        memory_ledger.initialize(address(registry));
+        locationLedger.initialize(address(registry));
+
+        vm.expectRevert();
+        inboxLedger.initialize(address(registry));
     }
 
     function test_OnlyOwnerCanUpgrade() public {
         AgentRegistry newImpl = new AgentRegistry();
-
-        // player1 is not owner — should revert
         vm.prank(player1);
         vm.expectRevert();
         registry.upgradeToAndCall(address(newImpl), "");
@@ -67,24 +97,30 @@ contract AITownTest is Test {
     }
 
     function test_UpgradePreservesState() public {
-        // Create an agent
         vm.prank(operator);
         uint8[4] memory stats = [uint8(8), 5, 3, 6];
         registry.createAgent("Li Blacksmith", "hardworking", stats, 1, player1);
 
-        // Verify state
         (string memory name1, , , , uint256 gold1,) = registry.getAgent(1);
         assertEq(name1, "Li Blacksmith");
         assertEq(gold1, 100);
 
-        // Upgrade to new implementation
         AgentRegistry newImpl = new AgentRegistry();
         registry.upgradeToAndCall(address(newImpl), "");
 
-        // State is preserved
         (string memory name2, , , , uint256 gold2,) = registry.getAgent(1);
         assertEq(name2, "Li Blacksmith");
         assertEq(gold2, 100);
+    }
+
+    // ============ Router Tests ============
+
+    function test_RouterResolvesAddresses() public view {
+        (address r, address al, address ll, address il) = router.getAddresses();
+        assertEq(r, address(registry));
+        assertEq(al, address(agentLedger));
+        assertEq(ll, address(locationLedger));
+        assertEq(il, address(inboxLedger));
     }
 
     // ============ AgentRegistry Tests ============
@@ -92,12 +128,12 @@ contract AITownTest is Test {
     function test_CreateAgent() public {
         vm.prank(operator);
         uint8[4] memory stats = [uint8(8), 5, 3, 6];
-        uint256 id = registry.createAgent("Li Blacksmith", "hardworking and quiet", stats, 1, player1);
+        uint256 id = registry.createAgent("Li Blacksmith", "hardworking", stats, 1, player1);
 
         assertEq(id, 1);
         (string memory name, string memory personality, uint8[4] memory s, uint256 loc, uint256 gold,) = registry.getAgent(1);
         assertEq(name, "Li Blacksmith");
-        assertEq(personality, "hardworking and quiet");
+        assertEq(personality, "hardworking");
         assertEq(s[0], 8);
         assertEq(loc, 1);
         assertEq(gold, 100);
@@ -107,10 +143,9 @@ contract AITownTest is Test {
         vm.startPrank(operator);
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
         registry.createAgent("Test", "test", stats, 1, player1);
-
-        registry.moveAgent(1, 3);
+        registry.moveAgent(1, 2);
         (, , , uint256 loc, ,) = registry.getAgent(1);
-        assertEq(loc, 3);
+        assertEq(loc, 2);
         vm.stopPrank();
     }
 
@@ -121,7 +156,6 @@ contract AITownTest is Test {
         registry.createAgent("B", "b", stats, 1, player1);
 
         registry.transferGold(1, 2, 30);
-
         (, , , , uint256 goldA,) = registry.getAgent(1);
         (, , , , uint256 goldB,) = registry.getAgent(2);
         assertEq(goldA, 70);
@@ -140,6 +174,20 @@ contract AITownTest is Test {
         vm.stopPrank();
     }
 
+    function test_AddGoldEmitsEvent() public {
+        vm.startPrank(operator);
+        uint8[4] memory stats = [uint8(5), 5, 5, 5];
+        registry.createAgent("A", "a", stats, 1, player1);
+
+        vm.expectEmit(true, false, false, true);
+        emit AgentRegistry.GoldAdded(1, 50);
+        registry.addGold(1, 50);
+
+        (, , , , uint256 gold,) = registry.getAgent(1);
+        assertEq(gold, 150);
+        vm.stopPrank();
+    }
+
     function test_AnyoneCanCreateAgent() public {
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
         vm.prank(player1);
@@ -151,7 +199,6 @@ contract AITownTest is Test {
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
         vm.prank(player1);
         uint256 agentId = registry.createAgent("Owned", "test", stats, 1, player1);
-        // Owner can move their agent
         vm.prank(player1);
         registry.moveAgent(agentId, 2);
     }
@@ -160,65 +207,86 @@ contract AITownTest is Test {
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
         vm.prank(player1);
         uint256 agentId = registry.createAgent("Owned", "test", stats, 1, player1);
-        // player2 cannot move player1's agent
         vm.prank(player2);
         vm.expectRevert("not authorized");
         registry.moveAgent(agentId, 2);
     }
 
-    // ============ WorldState Tests ============
-
-    function test_CreateLocation() public {
-        vm.prank(operator);
-        string[] memory actions = new string[](3);
-        actions[0] = "mine";
-        actions[1] = "rest";
-        actions[2] = "explore";
-        uint256 locId = world.createLocation("Mine", "A dark mine", actions);
-
-        assertEq(locId, 1);
-        (string memory name, string memory desc, string[] memory acts) = world.getLocation(1);
-        assertEq(name, "Mine");
-        assertEq(desc, "A dark mine");
-        assertEq(acts.length, 3);
-        assertEq(acts[0], "mine");
-    }
-
-    function test_PerformAction() public {
+    function test_RemoveAgent() public {
         vm.startPrank(operator);
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        registry.createAgent("Miner", "likes mining", stats, 1, player1);
+        registry.createAgent("A", "a", stats, 1, player1);
+        registry.createAgent("B", "b", stats, 1, player1);
 
-        string[] memory actions = new string[](1);
-        actions[0] = "mine";
-        world.createLocation("Mine", "A dark mine", actions);
+        registry.removeAgent(1);
+        assertEq(registry.getAgentCount(), 1);
 
-        world.performAction(1, "mine", "Found 3 iron ores");
-
-        WorldState.ActionLog[] memory logs = world.getRecentActions(1, 10);
-        assertEq(logs.length, 1);
-        assertEq(logs[0].agentId, 1);
-        assertEq(keccak256(bytes(logs[0].action)), keccak256(bytes("mine")));
-        assertEq(keccak256(bytes(logs[0].result)), keccak256(bytes("Found 3 iron ores")));
+        vm.expectRevert("agent does not exist");
+        registry.getAgent(1);
         vm.stopPrank();
     }
 
-    function test_ActionLogRingBuffer() public {
+    // ============ AgentLedger Tests ============
+
+    function test_WriteAndReadMemory() public {
         vm.startPrank(operator);
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        registry.createAgent("Worker", "works hard", stats, 1, player1);
-        string[] memory actions = new string[](1);
-        actions[0] = "work";
-        world.createLocation("Workshop", "A workshop", actions);
+        registry.createAgent("Thinker", "philosophical", stats, 1, player1);
 
-        for (uint256 i = 0; i < 140; i++) {
-            world.performAction(1, "work", string(abi.encodePacked("result-", vm.toString(i))));
+        uint256[] memory related = new uint256[](0);
+        agentLedger.write(1, 5, "reflection", "The sunset was beautiful", related);
+        agentLedger.write(1, 8, "discovery", "Found a secret passage", related);
+
+        (RingLedger.Entry[] memory entries, uint256 used, uint256 capacity) = agentLedger.readRecent(1, 2);
+        assertEq(entries.length, 2);
+        assertEq(used, 2);
+        assertEq(capacity, 64);
+        assertEq(entries[1].importance, 8);
+        vm.stopPrank();
+    }
+
+    function test_CompactMemories() public {
+        vm.startPrank(operator);
+        uint8[4] memory stats = [uint8(5), 5, 5, 5];
+        registry.createAgent("Learner", "curious", stats, 1, player1);
+
+        uint256[] memory related = new uint256[](0);
+        for (uint256 i = 0; i < 10; i++) {
+            agentLedger.write(1, uint8(3 + (i % 5)), "event", string(abi.encodePacked("mem-", vm.toString(i))), related);
         }
 
-        WorldState.ActionLog[] memory logs = world.getRecentActions(1, 200);
-        assertEq(logs.length, 128);
-        assertEq(keccak256(bytes(logs[0].result)), keccak256(bytes("result-12")));
-        assertEq(keccak256(bytes(logs[127].result)), keccak256(bytes("result-139")));
+        (, uint256 usedBefore,) = agentLedger.readRecent(1, 0);
+        assertEq(usedBefore, 10);
+
+        agentLedger.compact(1, 5, 8, "reflection", "Summary of first 5 events");
+
+        (, uint256 usedAfter,) = agentLedger.readRecent(1, 0);
+        assertEq(usedAfter, 6);
+        vm.stopPrank();
+    }
+
+    // ============ LocationLedger Tests ============
+
+    function test_CreateLocation() public {
+        (string memory name, string memory desc, int32 q, int32 r) = locationLedger.getLocation(1);
+        assertEq(name, "Tavern");
+        assertEq(desc, "A warm tavern");
+        assertEq(q, 0);
+        assertEq(r, 0);
+    }
+
+    function test_WriteToLocationBoard() public {
+        vm.startPrank(operator);
+        uint8[4] memory stats = [uint8(5), 5, 5, 5];
+        registry.createAgent("Miner", "likes mining", stats, 2, player1);
+
+        uint256[] memory related = new uint256[](0);
+        locationLedger.write(1, 5, "action", "Mining copper ore", related);
+
+        (RingLedger.Entry[] memory entries, uint256 used,) = locationLedger.readRecent(2, 10);
+        assertEq(entries.length, 1);
+        assertEq(used, 1);
+        assertEq(entries[0].authorAgent, 1);
         vm.stopPrank();
     }
 
@@ -229,156 +297,64 @@ contract AITownTest is Test {
         registry.createAgent("B", "b", stats, 2, player1);
         registry.createAgent("C", "c", stats, 1, player1);
 
-        string[] memory actions = new string[](0);
-        world.createLocation("Tavern", "A cozy tavern", actions);
-        world.createLocation("Farm", "Green fields", actions);
-
-        uint256[] memory atTavern = world.getAgentsAtLocation(1);
+        uint256[] memory atTavern = locationLedger.getAgentsAtLocation(1);
         assertEq(atTavern.length, 2);
-        assertEq(atTavern[0], 1);
-        assertEq(atTavern[1], 3);
 
-        uint256[] memory atFarm = world.getAgentsAtLocation(2);
-        assertEq(atFarm.length, 1);
-        assertEq(atFarm[0], 2);
+        uint256[] memory atMine = locationLedger.getAgentsAtLocation(2);
+        assertEq(atMine.length, 1);
         vm.stopPrank();
     }
 
-    // ============ MemoryLedger Tests ============
-
-    function test_AddAndRecallMemory() public {
-        vm.startPrank(operator);
-        uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        registry.createAgent("Thinker", "philosophical", stats, 1, player1);
-
-        uint256[] memory related = new uint256[](0);
-        memory_ledger.addMemory(1, 5, "reflection", "The sunset was beautiful today", related);
-        memory_ledger.addMemory(1, 8, "discovery", "Found a secret passage in the mine", related);
-
-        MemoryLedger.Memory[] memory mems = memory_ledger.getRecentMemories(1, 2);
-        assertEq(mems.length, 2);
-        assertEq(mems[1].importance, 8);
-        assertEq(keccak256(bytes(mems[1].category)), keccak256(bytes("discovery")));
-        vm.stopPrank();
+    function test_AdvanceTick() public {
+        locationLedger.advanceTick();
+        assertEq(locationLedger.currentTick(), 1);
     }
 
-    function test_MemoryRingBufferOverflow() public {
-        vm.startPrank(operator);
-        uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        registry.createAgent("Busy", "very active", stats, 1, player1);
+    // ============ InboxLedger Tests ============
 
-        uint256[] memory related = new uint256[](0);
-        for (uint256 i = 0; i < 70; i++) {
-            memory_ledger.addMemory(1, 5, "event", string(abi.encodePacked("memory-", vm.toString(i))), related);
-        }
-
-        assertEq(memory_ledger.memoryCount(1), 64);
-
-        MemoryLedger.Memory[] memory mems = memory_ledger.getRecentMemories(1, 64);
-        assertEq(mems.length, 64);
-        assertEq(keccak256(bytes(mems[0].content)), keccak256(bytes("memory-6")));
-        assertEq(keccak256(bytes(mems[63].content)), keccak256(bytes("memory-69")));
-        vm.stopPrank();
-    }
-
-    function test_CompressMemories() public {
-        vm.startPrank(operator);
-        uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        registry.createAgent("Learner", "curious", stats, 1, player1);
-
-        uint256[] memory related = new uint256[](0);
-        for (uint256 i = 0; i < 10; i++) {
-            memory_ledger.addMemory(1, uint8(3 + (i % 5)), "event", string(abi.encodePacked("mem-", vm.toString(i))), related);
-        }
-        assertEq(memory_ledger.memoryCount(1), 10);
-
-        memory_ledger.compressMemories(1, 5, "Summary of first 5 events", 8, "reflection");
-
-        assertEq(memory_ledger.memoryCount(1), 6);
-
-        MemoryLedger.Memory[] memory mems = memory_ledger.getRecentMemories(1, 6);
-        assertEq(keccak256(bytes(mems[0].content)), keccak256(bytes("Summary of first 5 events")));
-        assertEq(mems[0].importance, 8);
-        assertEq(keccak256(bytes(mems[5].content)), keccak256(bytes("mem-9")));
-        vm.stopPrank();
-    }
-
-    function test_CompressMemories_TooFewFails() public {
-        vm.startPrank(operator);
-        uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        registry.createAgent("Test", "test", stats, 1, player1);
-
-        uint256[] memory related = new uint256[](0);
-        memory_ledger.addMemory(1, 5, "event", "hello", related);
-
-        vm.expectRevert("must compress at least 2");
-        memory_ledger.compressMemories(1, 1, "summary", 5, "reflection");
-        vm.stopPrank();
-    }
-
-    function test_ImportantMemories() public {
-        vm.startPrank(operator);
-        uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        registry.createAgent("Trader", "shrewd", stats, 1, player1);
-
-        uint256[] memory related = new uint256[](0);
-        memory_ledger.addMemory(1, 2, "trade", "Sold an apple", related);
-        memory_ledger.addMemory(1, 9, "event", "The king visited the town!", related);
-        memory_ledger.addMemory(1, 3, "social", "Chatted with a stranger", related);
-
-        MemoryLedger.Memory[] memory important = memory_ledger.getImportantMemories(1, 5);
-        assertEq(important.length, 1);
-        assertEq(important[0].importance, 9);
-        vm.stopPrank();
-    }
-
-    function test_SharedMemories() public {
+    function test_SendAndReadMessage() public {
         vm.startPrank(operator);
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
         registry.createAgent("Alice", "friendly", stats, 1, player1);
-        registry.createAgent("Bob", "grumpy", stats, 1, player1);
+        registry.createAgent("Bob", "grumpy", stats, 2, player1);
 
         uint256[] memory related = new uint256[](1);
         related[0] = 2;
-        memory_ledger.addMemory(1, 7, "social", "Traded a sword with Bob for 50 gold", related);
+        inboxLedger.write(1, 2, 5, "chat", "Hey Bob!", related);
 
-        uint256[] memory noRelated = new uint256[](0);
-        memory_ledger.addMemory(1, 3, "reflection", "I like this town", noRelated);
-
-        MemoryLedger.Memory[] memory shared = memory_ledger.getSharedMemories(1, 2);
-        assertEq(shared.length, 1);
-        assertEq(keccak256(bytes(shared[0].content)), keccak256(bytes("Traded a sword with Bob for 50 gold")));
+        (RingLedger.Entry[] memory entries, uint256 used,) = inboxLedger.readRecent(2, 10);
+        assertEq(entries.length, 1);
+        assertEq(used, 1);
+        assertEq(entries[0].authorAgent, 1);
         vm.stopPrank();
     }
 
-    function test_MemoryByCategory() public {
+    function test_ReadInboxFrom() public {
         vm.startPrank(operator);
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        registry.createAgent("Explorer", "adventurous", stats, 1, player1);
+        registry.createAgent("Alice", "friendly", stats, 1, player1);
+        registry.createAgent("Bob", "grumpy", stats, 2, player1);
+        registry.createAgent("Charlie", "quiet", stats, 1, player1);
 
         uint256[] memory related = new uint256[](0);
-        memory_ledger.addMemory(1, 5, "discovery", "Found a cave", related);
-        memory_ledger.addMemory(1, 3, "social", "Met a traveler", related);
-        memory_ledger.addMemory(1, 7, "discovery", "Found ancient ruins", related);
+        inboxLedger.write(1, 2, 5, "chat", "Hello from Alice", related);
+        inboxLedger.write(3, 2, 5, "chat", "Hello from Charlie", related);
+        inboxLedger.write(1, 2, 5, "chat", "Another from Alice", related);
 
-        MemoryLedger.Memory[] memory discoveries = memory_ledger.getMemoriesByCategory(1, "discovery");
-        assertEq(discoveries.length, 2);
+        RingLedger.Entry[] memory fromAlice = inboxLedger.readFrom(2, 1);
+        assertEq(fromAlice.length, 2);
         vm.stopPrank();
     }
 
-    function test_InvalidImportanceFails() public {
+    function test_CannotMessageSelf() public {
         vm.startPrank(operator);
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        registry.createAgent("Test", "test", stats, 1, player1);
+        registry.createAgent("Alice", "friendly", stats, 1, player1);
 
         uint256[] memory related = new uint256[](0);
-        vm.expectRevert("importance must be 1-10");
-        memory_ledger.addMemory(1, 0, "test", "bad memory", related);
+        vm.expectRevert("cannot message self");
+        inboxLedger.write(1, 1, 5, "chat", "Hi me", related);
         vm.stopPrank();
-    }
-
-    function test_MemoryCapacityQuery() public view {
-        assertEq(memory_ledger.memoryCapacity(), 64);
     }
 
     // ============ Integration Test ============
@@ -386,52 +362,43 @@ contract AITownTest is Test {
     function test_FullGameLoop() public {
         vm.startPrank(operator);
 
-        string[] memory tavernActions = new string[](2);
-        tavernActions[0] = "drink";
-        tavernActions[1] = "chat";
-        world.createLocation("Tavern", "A warm tavern with ale", tavernActions);
-
-        string[] memory mineActions = new string[](2);
-        mineActions[0] = "mine";
-        mineActions[1] = "explore";
-        world.createLocation("Mine", "A dark mine full of ore", mineActions);
-
+        // Create agents
         uint8[4] memory smithStats = [uint8(8), 4, 3, 5];
-        registry.createAgent("Li Blacksmith", "hardworking, quiet, skilled craftsman", smithStats, 2, player1);
+        registry.createAgent("Li Blacksmith", "hardworking", smithStats, 2, player1);
 
         uint8[4] memory hunterStats = [uint8(6), 5, 7, 6];
-        registry.createAgent("Wang Hunter", "adventurous, talkative, good tracker", hunterStats, 1, player1);
+        registry.createAgent("Wang Hunter", "adventurous", hunterStats, 1, player1);
 
-        world.performAction(1, "mine", "Mined 5 iron ores, found a gem");
+        // Li mines and records memory
         uint256[] memory noRelated = new uint256[](0);
-        memory_ledger.addMemory(1, 4, "trade", "Mined 5 iron ores today", noRelated);
+        locationLedger.write(1, 5, "action", "Mined 5 iron ores", noRelated);
+        agentLedger.write(1, 4, "trade", "Mined 5 iron ores today", noRelated);
         registry.addGold(1, 20);
 
+        // Li moves to tavern
         registry.moveAgent(1, 1);
-
-        uint256[] memory atTavern = world.getAgentsAtLocation(1);
+        uint256[] memory atTavern = locationLedger.getAgentsAtLocation(1);
         assertEq(atTavern.length, 2);
 
+        // They trade — social memories
         uint256[] memory relatedToB = new uint256[](1);
         relatedToB[0] = 2;
-        memory_ledger.addMemory(1, 7, "social", "Met Wang Hunter at the tavern. Traded a sword for 50 gold.", relatedToB);
+        agentLedger.write(1, 7, "social", "Met Wang Hunter, traded a sword for 50 gold", relatedToB);
 
-        uint256[] memory relatedToA = new uint256[](1);
-        relatedToA[0] = 1;
-        memory_ledger.addMemory(2, 7, "social", "Met Li Blacksmith at the tavern. Bought a fine sword for 50 gold.", relatedToA);
+        // DM each other
+        inboxLedger.write(1, 2, 5, "chat", "Nice trading with you!", noRelated);
+        inboxLedger.write(2, 1, 5, "chat", "Likewise! Great sword.", noRelated);
 
+        // Transfer gold
         registry.transferGold(2, 1, 50);
-
         (, , , , uint256 goldSmith,) = registry.getAgent(1);
         (, , , , uint256 goldHunter,) = registry.getAgent(2);
-        assertEq(goldSmith, 170);
-        assertEq(goldHunter, 50);
+        assertEq(goldSmith, 170); // 100 + 20 + 50
+        assertEq(goldHunter, 50); // 100 - 50
 
-        MemoryLedger.Memory[] memory shared = memory_ledger.getSharedMemories(1, 2);
-        assertEq(shared.length, 2);
-
-        world.advanceTick();
-        assertEq(world.currentTick(), 1);
+        // Advance tick
+        locationLedger.advanceTick();
+        assertEq(locationLedger.currentTick(), 1);
 
         vm.stopPrank();
     }
