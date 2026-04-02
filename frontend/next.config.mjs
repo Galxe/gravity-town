@@ -35,6 +35,7 @@ if (!routerAddress) {
 const nextConfig = {
   env: {
     NEXT_PUBLIC_RPC_URL: cfg.rpc_url,
+    NEXT_PUBLIC_WSS_URL: cfg.wss_url || '',
     NEXT_PUBLIC_ROUTER_ADDRESS: routerAddress,
   },
 };

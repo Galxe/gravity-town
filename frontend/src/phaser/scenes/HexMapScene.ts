@@ -106,7 +106,7 @@ export class HexMapScene extends Phaser.Scene {
   }
 
   applyLayout(layout: WorldLayout) {
-    try { if (!this.scene.isActive()) return; } catch { return; }
+    if (!this.sys?.displayList) return;
 
     const activeLocIds = new Set(layout.locations.map((l) => l.id));
     this.locationObjects.forEach((obj, id) => {
@@ -133,7 +133,7 @@ export class HexMapScene extends Phaser.Scene {
   }
 
   highlightEntity(entity: { type: string; id: number } | null) {
-    try { if (!this.scene.isActive()) return; } catch { return; }
+    if (!this.sys?.displayList) return;
     this.agentObjects.forEach((sprite, id) => {
       sprite.setSelected(entity?.type === 'agent' && id === entity.id);
     });

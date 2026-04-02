@@ -33,6 +33,7 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event AgentMoved(uint256 indexed agentId, uint256 fromLocation, uint256 toLocation);
     event GoldTransferred(uint256 indexed fromAgent, uint256 indexed toAgent, uint256 amount);
     event StatsUpdated(uint256 indexed agentId, uint8[4] newStats);
+    event GoldAdded(uint256 indexed agentId, uint256 amount);
 
     function _isOperator(address addr) internal view returns (bool) {
         return addr == operator || operators[addr] || addr == owner();
@@ -155,6 +156,7 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice Add gold to an agent (reward from actions)
     function addGold(uint256 agentId, uint256 amount) external canControlAgent(agentId) agentExists(agentId) {
         agents[agentId].gold += amount;
+        emit GoldAdded(agentId, amount);
     }
 
     /// @notice Update agent stats
