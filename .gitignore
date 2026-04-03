@@ -25,7 +25,6 @@ frontend/.env*
 # ============================================================
 # Contracts (Foundry)
 # ============================================================
-contracts/lib/
 contracts/out/
 contracts/cache/
 # Keep run-latest.json, ignore timestamped run files
