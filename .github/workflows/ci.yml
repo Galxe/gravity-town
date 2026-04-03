@@ -15,14 +15,12 @@ jobs:
         working-directory: contracts
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
 
       - name: Install dependencies
-        run: forge install --no-git
+        run: forge install
 
       - name: Build
         run: forge build
