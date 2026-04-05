@@ -37,6 +37,8 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint256 public constant SPAWN_HEXES           = 7;     // hexes per agent (center + ring)
     uint256 public constant POST_MORALE           = 10;    // happiness restored when posting to location board
     uint256 public constant CAPTURE_MORALE_BOOST  = 15;    // happiness added to ALL owner's hexes on capture
+    uint256 public constant INCITE_POWER          = 30;    // happiness reduced per successful incite
+    uint256 public constant INCITE_COOLDOWN       = 30;    // seconds between incite attempts on same hex
 
     // ──────────────────── Hex Storage ────────────────────
 
@@ -80,6 +82,7 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     );
     event HexCaptured(uint256 indexed newOwner, bytes32 indexed hexKey, uint256 indexed oldOwner);
     event HexRebelled(bytes32 indexed hexKey, uint256 indexed oldOwner);
+    event InciteResult(uint256 indexed agentId, bytes32 indexed targetHexKey, bool success, bool captured);
 
     // ──────────────────── Auth ────────────────────
 
@@ -412,6 +415,67 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         return allHexKeys;
     }
 
+
+    // ══════════════════════════════════════════════════════════
+    //                  INCITE REBELLION (comeback mechanic)
+    // ══════════════════════════════════════════════════════════
+
+    /// @notice Eliminated agents (0 hexes) can incite rebellion on enemy hexes.
+    ///         50% chance to reduce happiness by INCITE_POWER. If happiness → 0, hex is captured.
+    function inciteRebellion(uint256 agentId, bytes32 targetHexKey)
+        external canControlAgent(agentId)
+    {
+        require(hexCount[agentId] == 0, "only eliminated agents");
+
+        uint256 lastIncite = attackCooldown[agentId][targetHexKey];
+        require(lastIncite == 0 || block.timestamp >= lastIncite + INCITE_COOLDOWN, "cooldown");
+
+        _updateHappiness(targetHexKey);
+        Hex storage target = hexes[targetHexKey];
+        require(target.ownerId != 0, "hex unclaimed");
+
+        // 50% probability
+        uint256 rand = uint256(keccak256(abi.encode(
+            block.prevrandao, agentId, targetHexKey, block.timestamp
+        ))) % 100;
+        bool success = rand < 50;
+
+        attackCooldown[agentId][targetHexKey] = block.timestamp;
+
+        if (!success) {
+            emit InciteResult(agentId, targetHexKey, false, false);
+            return;
+        }
+
+        bool captured = false;
+        if (target.happiness <= INCITE_POWER) {
+            // Hex rebels and goes to the inciter — comeback!
+            uint256 oldOwner = target.ownerId;
+            _removeHexFromAgent(oldOwner, targetHexKey);
+            hexCount[oldOwner]--;
+
+            target.ownerId = agentId;
+            target.happiness = MAX_HAPPINESS;
+            target.happinessUpdatedAt = block.timestamp;
+            target.lastHarvest = block.timestamp;
+
+            agentHexKeys[agentId].push(targetHexKey);
+            hexCount[agentId]++;
+
+            // Give some starting ore
+            orePool[agentId] = STARTING_ORE;
+
+            // Move agent to captured hex
+            registry.moveAgent(agentId, target.locationId);
+
+            captured = true;
+            emit HexCaptured(agentId, targetHexKey, oldOwner);
+        } else {
+            target.happiness -= INCITE_POWER;
+        }
+
+        emit InciteResult(agentId, targetHexKey, true, captured);
+    }
 
     // ══════════════════════════════════════════════════════════
     //                     RAID (composite attack)

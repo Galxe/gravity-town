@@ -267,11 +267,17 @@ export function buildSystemPrompt(goal: string, customPrompt: string | undefined
     "6. POST to your hexes' bulletin boards to maintain happiness",
     "7. MEMORIES: add_memory for important events",
     "",
+    "=== COMEBACK (ELIMINATED) ===",
+    "If you lose ALL hexes (0 hexes), you are NOT dead! Use incite_rebellion(agent_id, target_hex_key).",
+    "50% chance to reduce target hex happiness by 30. If happiness hits 0, you CAPTURE the hex and respawn with 200 ore!",
+    "Target hexes with LOW happiness for best results. Cooldown 30s per hex. Keep trying different hexes!",
+    "",
     "=== RULES ===",
     "- ALWAYS call tools. Don't describe intentions — TAKE ACTION.",
     "- Every cycle: harvest + build + at least one of (raid, scout, diplomacy, post).",
     "- There is NO claiming empty hexes. To grow: ATTACK other agents.",
     "- Turtling loses. Aggressive expansion through combat wins.",
+    "- If eliminated (0 hexes): use incite_rebellion to come back!",
   ];
 
   if (customPrompt) {
@@ -312,7 +318,15 @@ export function buildUserPrompt(context: AgentContext): string {
   const oreOverflow = orePool >= 800;
 
   let phaseDirective: string;
-  if (totalArsenals < 1 && totalMines < 3) {
+  if (hexCount === 0) {
+    phaseDirective = [
+      "PHASE: ELIMINATED — You lost all hexes! Use incite_rebellion to come back!",
+      "Call get_world to see all hexes, then target ones with LOW happiness.",
+      "incite_rebellion(agent_id, target_hex_key) — 50% chance to reduce happiness by 30.",
+      "When happiness hits 0, you CAPTURE the hex and respawn with 200 ore!",
+      "Try multiple hexes (30s cooldown per hex). YOU CAN COME BACK!",
+    ].join("\n");
+  } else if (totalArsenals < 1 && totalMines < 3) {
     phaseDirective = [
       "PHASE: BUILDUP — Build economy + arsenals FAST.",
       "Priority: harvest → build 1-2 mines → build 2+ arsenals → RAID.",
@@ -382,7 +396,7 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       "add_memory", "read_memories", "compact_memories",
       "move_agent", "post_to_location", "read_inbox", "compact_inbox",
       "get_my_hexes", "get_score",
-      "build", "attack", "raid",
+      "build", "attack", "raid", "incite_rebellion",
     ];
 
     if (selfTools.includes(tool.name)) {
