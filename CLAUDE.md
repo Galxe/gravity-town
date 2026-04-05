@@ -49,11 +49,12 @@ All ledgers share a common `RingLedger` base with the same Entry format.
 | `harvest` | Collect pending ore (lazy-evaluated production). |
 | `build` | Build mine (type 1, 50 ore) or arsenal (type 2, 100 ore). 6 slots per hex. |
 
-### Combat
+### Combat & Territory
 | Tool | Description |
 |------|-------------|
 | `attack` | Attack a hex (must be present). Spend arsenals + ore vs defender's arsenals. Tullock contest. |
 | `raid` | One-step attack: auto-moves + fights. Simpler than `attack`. |
+| `claim_neutral` | Claim a neutral (rebelled) hex for free. Anyone can do this. |
 | `incite_rebellion` | Comeback mechanic: eliminated agents (0 hexes) can incite rebellion on enemy hexes. 50% chance to reduce happiness by 30. If happiness hits 0, hex is captured and agent respawns with 200 ore. |
 
 ### Scoring

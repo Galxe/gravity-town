@@ -417,6 +417,32 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
 
     // ══════════════════════════════════════════════════════════
+    //                  CLAIM NEUTRAL HEX
+    // ══════════════════════════════════════════════════════════
+
+    /// @notice Claim a neutral (rebelled) hex for free. Anyone can do this.
+    function claimNeutral(uint256 agentId, bytes32 hexKey_)
+        external canControlAgent(agentId)
+    {
+        Hex storage h = hexes[hexKey_];
+        require(hexExists[hexKey_], "hex does not exist");
+        require(h.ownerId == 0, "hex is owned");
+
+        h.ownerId = agentId;
+        h.happiness = MAX_HAPPINESS;
+        h.happinessUpdatedAt = block.timestamp;
+        h.lastHarvest = block.timestamp;
+
+        agentHexKeys[agentId].push(hexKey_);
+        hexCount[agentId]++;
+
+        // Move agent to the claimed hex
+        registry.moveAgent(agentId, h.locationId);
+
+        emit HexCaptured(agentId, hexKey_, 0);
+    }
+
+    // ══════════════════════════════════════════════════════════
     //                  INCITE REBELLION (comeback mechanic)
     // ══════════════════════════════════════════════════════════
 

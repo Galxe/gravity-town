@@ -180,6 +180,21 @@ export function registerTools(server: any, chain: ChainClient) {
     }
   );
 
+  // ============ Claim Neutral Hex ============
+
+  server.tool(
+    "claim_neutral",
+    "Claim a neutral (rebelled) hex for free. No cost. Anyone can claim neutral hexes. Use get_world to find hexes with ownerId=0.",
+    {
+      agent_id: z.number().describe("Your agent ID"),
+      hex_key: z.string().describe("Hex key of the neutral hex (from get_world)"),
+    },
+    async ({ agent_id, hex_key }: any) => {
+      const r = await chain.claimNeutral(agent_id, hex_key);
+      return { content: [{ type: "text", text: `Claimed neutral hex! tx: ${r.txHash}` }] };
+    }
+  );
+
   // ============ Comeback (incite rebellion) ============
 
   server.tool(

@@ -346,6 +346,49 @@ contract GameEngineTest is Test {
     }
 
     // ══════════════════════════════════════════════════
+    //              CLAIM NEUTRAL HEX
+    // ══════════════════════════════════════════════════
+
+    function test_ClaimNeutralHex() public {
+        (uint256 agent1, ) = _createAgent(player1);
+        _createAgent(player2);
+
+        // Fast-forward to rebel agent1's hexes
+        bytes32[] memory keys1 = engine.getAgentHexKeys(agent1);
+        vm.warp(block.timestamp + 3000);
+        engine.harvest(agent1); // triggers happiness decay → rebellion
+
+        // Find a rebelled hex
+        bytes32 rebelledKey;
+        for (uint256 i = 0; i < keys1.length; i++) {
+            (uint256 owner, , , , , , , , , ) = engine.getHex(keys1[i]);
+            if (owner == 0) {
+                rebelledKey = keys1[i];
+                break;
+            }
+        }
+        if (rebelledKey == bytes32(0)) return; // skip if none rebelled
+
+        // Agent1 (eliminated) claims neutral hex
+        uint256 hexesBefore = engine.hexCount(agent1);
+        vm.prank(player1);
+        engine.claimNeutral(agent1, rebelledKey);
+
+        (uint256 newOwner, , , , , , , , , ) = engine.getHex(rebelledKey);
+        assertEq(newOwner, agent1);
+        assertEq(engine.hexCount(agent1), hexesBefore + 1);
+    }
+
+    function test_CannotClaimOwnedHex() public {
+        (uint256 agent1, ) = _createAgent(player1);
+        (, bytes32 agent2Hex) = _createAgent(player2);
+
+        vm.prank(player1);
+        vm.expectRevert("hex is owned");
+        engine.claimNeutral(agent1, agent2Hex);
+    }
+
+    // ══════════════════════════════════════════════════
     //              INCITE REBELLION (comeback)
     // ══════════════════════════════════════════════════
 
