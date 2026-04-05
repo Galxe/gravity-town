@@ -54,16 +54,21 @@ export async function ensureAgent(
     throw new Error("Set agentId or provide agentName + agentPersonality");
   }
 
-  // create_agent no longer takes location — auto-claims hex near origin
-  const created = await callMcpTool(client, "create_agent", {
+  // create_agent is idempotent — returns existing agent if same name+owner
+  const result = await callMcpTool(client, "create_agent", {
     name: opts.agentName,
     personality: opts.agentPersonality,
     stats: opts.agentStats,
   });
-  console.log("[debug] create_agent response:", JSON.stringify(created));
-  const parsed = parseToolJson(created) as { agentId?: string };
+  const parsed = parseToolJson(result) as { agentId?: string; existing?: boolean };
   if (!parsed?.agentId) throw new Error("Agent creation succeeded but no agentId returned");
-  return Number(parsed.agentId);
+  const agentId = Number(parsed.agentId);
+  if (parsed.existing) {
+    console.log(`[ensureAgent] found existing agent "${opts.agentName}" → #${agentId}`);
+  } else {
+    console.log(`[ensureAgent] created new agent "${opts.agentName}" → #${agentId}`);
+  }
+  return agentId;
 }
 
 export async function collectContext(

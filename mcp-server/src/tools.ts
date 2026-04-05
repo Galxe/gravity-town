@@ -7,7 +7,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "create_agent",
-    "Create a new agent. Auto-claims a hex near origin as home base with 200 starting ore.",
+    "Create a new agent (idempotent — returns existing agent if same name+owner). Auto-claims a 7-hex cluster with 200 starting ore.",
     {
       name: z.string().describe("Agent's name"),
       personality: z.string().describe("Personality description"),
@@ -16,6 +16,12 @@ export function registerTools(server: any, chain: ChainClient) {
     },
     async ({ name, personality, stats, owner }: any) => {
       const ownerAddr = owner || await chain.signer.getAddress();
+      // Check if agent already exists for this owner+name
+      const existingId = await chain.findAgentByName(name, ownerAddr);
+      if (existingId > 0) {
+        const agent = await chain.getAgent(existingId);
+        return { content: [{ type: "text", text: JSON.stringify({ agentId: String(existingId), existing: true, ...agent }, null, 2) }] };
+      }
       const result = await chain.createAgent(name, personality, stats, ownerAddr);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
@@ -110,7 +116,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "build",
-    "Build on your hex. Instant, costs ore. Types: 1=Mine (+5 ore/min), 2=Arsenal (+5 defense, consumable for +5 attack). 12 slots per hex.",
+    "Build on your hex. Instant, costs ore. Types: 1=Mine (+5 ore/sec), 2=Arsenal (+5 defense, consumable for +5 attack). 6 slots per hex.",
     {
       agent_id: z.number().describe("Agent ID"),
       hex_key: z.string().describe("Hex key (must own)"),
@@ -126,7 +132,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "attack",
-    "Attack a hex. Must be at target hex (move_agent first). Spend arsenals (destroyed from source hex) + ore as attack power. Win: target buildings destroyed, hex unclaimed. Lose: spent resources gone. Cooldown 60s per target.",
+    "Attack a hex. Must be at target hex (move_agent first). Spend arsenals (destroyed from source hex) + ore as attack power. Win: capture hex + steal 30% of defender ore. Lose: spent resources gone. Cooldown 5s per target.",
     {
       agent_id: z.number().describe("Attacking agent ID"),
       target_hex_key: z.string().describe("Hex key to attack"),
@@ -145,7 +151,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "raid",
-    "ONE-STEP attack: auto-moves to target hex, picks your best source hex, and attacks. Much simpler than attack — use this instead. Win: target buildings destroyed + hex unclaimed. Lose: spent resources gone.",
+    "ONE-STEP attack: auto-moves to target hex, picks your best source hex, and attacks. Much simpler than attack — use this instead. Win: capture hex + steal 30% of defender ore. Lose: spent resources gone.",
     {
       agent_id: z.number().describe("Attacking agent ID"),
       target_hex_key: z.string().describe("Hex key to attack (from get_world or get_hex)"),
