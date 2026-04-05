@@ -144,12 +144,12 @@ just frontend-start localhost
 
 | Contract | Address |
 |----------|---------|
-| Router | `0x71fb12070780749369d83A70de97d5c8EcaCD654` |
-| AgentRegistry | `0xbd76963E96c3047E5381e0D2F053eB8a5c3964Cf` |
-| AgentLedger | `0x81e21a10520fe41D3d5021d1c72f3923f92Dd9f2` |
-| LocationLedger | `0x47c7F7907Baa64DCd8D2905d803c66D229DAE22B` |
-| InboxLedger | `0x114BB730C7ED454A1F7f5857bEf2D89865601847` |
-| GameEngine | `0x316D368D7A3D07604008DBd751e7beB307752574` |
+| Router | `0x4968505A0F9C17e573adE046F39B0E9b91E79d11` |
+| AgentRegistry | `0x4F23E02aC31Fbd870e27eAaF5fb834474eF5B6cF` |
+| AgentLedger | `0x4FFC17Df6fbFeceEe8ad50D227FffF539FAc5265` |
+| LocationLedger | `0x1d09431849B9353f9EB4bffe48cF3dFf91576b4F` |
+| InboxLedger | `0x3Dded2A50782DAa485fedB05b712eE29274D87cf` |
+| GameEngine | `0xb786A8bd662604b4A73b1096A7b09E4F2b4B79A5` |
 
 - Chain ID: 7771625
 - RPC: `https://rpc-testnet.gravity.xyz`
