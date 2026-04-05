@@ -22,6 +22,26 @@ anvil-deploy \
     @echo "  just agent-start config/localhost.toml"
     @echo "  just frontend-start"
 
+# Deploy contracts to Gravity Testnet
+[working-directory: "contracts"]
+gravity-deploy:
+    #!/usr/bin/env bash
+    source ../agent-runner/config/gravity.env 2>/dev/null || true
+    PRIVATE_KEY=${PRIVATE_KEY:-"0x859b68e0eddb79598540a35dcd0f7cf4df7c7b8cad35151177439268566cbfa9"} \
+    OPERATOR_ADDRESS=${OPERATOR_ADDRESS:-"$(cast wallet address 0x859b68e0eddb79598540a35dcd0f7cf4df7c7b8cad35151177439268566cbfa9)"} \
+    forge script script/Deploy.s.sol \
+        --rpc-url https://rpc-testnet.gravity.xyz \
+        --broadcast \
+        --use 0.8.30 \
+        -v
+    echo ""
+    echo "Router: $(grep -o '0x[0-9a-fA-F]*' ../deployed-addresses.json)"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Update frontend/config/gravity.json with the new router address"
+    echo "  2. just agent-start config/gravity.toml"
+    echo "  3. just frontend-start gravity"
+
 # -- Agent runner --
 
 # Start agent runner
