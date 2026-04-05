@@ -26,6 +26,9 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice namedAgents[ownerAddr][keccak256(name)] → agentId (0 = none)
     mapping(address => mapping(bytes32 => uint256)) public namedAgents;
 
+    /// @notice All agent IDs owned by an address
+    mapping(address => uint256[]) public ownerAgentIds;
+
     event AgentCreated(uint256 indexed agentId, string name, address indexed owner);
     event AgentRemoved(uint256 indexed agentId);
     event AgentMoved(uint256 indexed agentId, uint256 fromLocation, uint256 toLocation);
@@ -84,6 +87,7 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         a.createdAt = block.timestamp;
         agentOwner[agentId] = ownerAddr;
         namedAgents[ownerAddr][nameHash] = agentId;
+        ownerAgentIds[ownerAddr].push(agentId);
         allAgentIds.push(agentId);
         emit AgentCreated(agentId, name, ownerAddr);
     }
@@ -93,6 +97,15 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         address ownerAddr = agentOwner[agentId];
         bytes32 nameHash = keccak256(bytes(a.name));
         delete namedAgents[ownerAddr][nameHash];
+        // Remove from ownerAgentIds
+        uint256[] storage ids = ownerAgentIds[ownerAddr];
+        for (uint256 i = 0; i < ids.length; i++) {
+            if (ids[i] == agentId) {
+                ids[i] = ids[ids.length - 1];
+                ids.pop();
+                break;
+            }
+        }
         a.alive = false;
         for (uint256 i = 0; i < allAgentIds.length; i++) {
             if (allAgentIds[i] == agentId) {
@@ -128,6 +141,11 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice Look up an agent by owner address + name. Returns 0 if none.
     function getAgentByName(address ownerAddr, string calldata name) external view returns (uint256) {
         return namedAgents[ownerAddr][keccak256(bytes(name))];
+    }
+
+    /// @notice Get all agent IDs owned by an address
+    function getAgentsByOwner(address ownerAddr) external view returns (uint256[] memory) {
+        return ownerAgentIds[ownerAddr];
     }
 
     function getAgentCount() external view returns (uint256) { return allAgentIds.length; }

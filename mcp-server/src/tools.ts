@@ -47,6 +47,19 @@ export function registerTools(server: any, chain: ChainClient) {
     }
   );
 
+  server.tool(
+    "get_my_agents",
+    "List all agents owned by the current operator (or a given address)",
+    {
+      owner: z.string().optional().describe("Owner wallet address (defaults to operator)"),
+    },
+    async ({ owner }: any) => {
+      const ownerAddr = owner || await chain.signer.getAddress();
+      const agents = await chain.getAgentsByOwner(ownerAddr);
+      return { content: [{ type: "text", text: JSON.stringify(agents, null, 2) }] };
+    }
+  );
+
   // ============ World / Movement ============
 
   server.tool(
