@@ -29,7 +29,7 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint256 public constant STARTING_ORE          = 200;
     uint256 public constant INITIAL_RESERVE       = 2000;  // ore reserve per fresh hex
     uint256 public constant DEPLETED_ORE_PER_SEC  = 2;     // trickle production when reserve=0
-    int32   public constant MAP_RADIUS            = 8;     // world boundary: hex distance from origin
+    int32   public constant MAP_RADIUS            = 4;     // world boundary: hex distance from origin
     uint256 public constant MAX_HAPPINESS         = 100;
     uint256 public constant CAPTURE_ORE_PCT       = 70;    // % ore kept on capture
     uint256 public constant DEFENSE_MORALE        = 20;    // happiness restored on successful defense

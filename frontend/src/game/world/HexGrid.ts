@@ -7,7 +7,7 @@ export const TILE_H = 140;
 export const LOCATION_SPREAD = 1;
 
 /** World boundary radius — must match GameEngine.MAP_RADIUS */
-export const MAP_RADIUS = 8;
+export const MAP_RADIUS = 4;
 
 /** Axial hex distance from origin: max(|q|, |r|, |q+r|) */
 export function hexDist(q: number, r: number): number {
