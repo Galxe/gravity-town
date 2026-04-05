@@ -55,6 +55,11 @@ export async function launchMcpServer(config: McpServerConfig): Promise<ChildPro
     MCP_HOST: config.mcpHost,
     MCP_PORT: String(config.mcpPort),
     MCP_PATH: config.mcpPath,
+    // Ensure no proxy interferes with local RPC connections
+    HTTP_PROXY: "",
+    HTTPS_PROXY: "",
+    http_proxy: "",
+    https_proxy: "",
   };
 
   log(`launching MCP server: ${entryPoint}`);

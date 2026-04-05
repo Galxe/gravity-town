@@ -4,18 +4,11 @@ import { StoreBridge } from '../StoreBridge';
 
 const MEEPLE_COLORS = ['blue', 'green', 'purple', 'red', 'yellow', 'white', 'black'];
 const MEEPLE_SCALE = 0.55;
-const SELECT_COLOR = 0x60a5fa;
+const SELECT_COLOR = 0xd4a030; // warm gold
 const CLICK_THRESHOLD = 8;
 
 export function meepleKey(agentId: number): string {
   return `meeple_${MEEPLE_COLORS[agentId % MEEPLE_COLORS.length]}`;
-}
-
-export function allMeepleTextureKeys(): { key: string; file: string }[] {
-  return MEEPLE_COLORS.map((c) => ({
-    key: `meeple_${c}`,
-    file: `/tiles/agents/meeple_${c}.png`,
-  }));
 }
 
 export class AgentSprite extends Phaser.GameObjects.Container {
@@ -38,7 +31,7 @@ export class AgentSprite extends Phaser.GameObjects.Container {
     this.selectionRing.setVisible(false);
     this.add(this.selectionRing);
 
-    // Meeple sprite
+    // Agent sprite (cartoon character)
     this.sprite = scene.add.image(0, 0, meepleKey(agent.id));
     this.sprite.setScale(MEEPLE_SCALE);
     this.sprite.setInteractive(
@@ -47,14 +40,14 @@ export class AgentSprite extends Phaser.GameObjects.Container {
     );
     this.add(this.sprite);
 
-    // Name label (hidden by default)
-    this.label = scene.add.text(0, -(32 * MEEPLE_SCALE + 12), agent.name, {
+    // Name label — cartoon font with warm background
+    this.label = scene.add.text(0, -(32 * MEEPLE_SCALE + 14), agent.name, {
       fontSize: '13px',
-      fontFamily: 'monospace',
+      fontFamily: 'Fredoka, system-ui, sans-serif',
       fontStyle: 'bold',
-      color: '#ffffff',
-      backgroundColor: '#000000cc',
-      padding: { x: 4, y: 2 },
+      color: '#2c1810',
+      backgroundColor: '#f5e6c8e6',
+      padding: { x: 6, y: 3 },
       align: 'center',
     }).setOrigin(0.5).setVisible(false);
     this.add(this.label);
@@ -91,9 +84,9 @@ export class AgentSprite extends Phaser.GameObjects.Container {
     if (selected) {
       this.sprite.setScale(MEEPLE_SCALE * 1.25);
       this.selectionRing.clear();
-      this.selectionRing.lineStyle(3.5, SELECT_COLOR, 1);
+      this.selectionRing.lineStyle(4, SELECT_COLOR, 0.9);
       this.selectionRing.strokeCircle(0, 0, 24);
-      this.selectionRing.lineStyle(2.5, SELECT_COLOR, 0.35);
+      this.selectionRing.lineStyle(3, SELECT_COLOR, 0.3);
       this.selectionRing.strokeCircle(0, 0, 30);
       this.selectionRing.setVisible(true);
       this.label.setVisible(true);

@@ -2,7 +2,7 @@
 import { Contract, WebSocketProvider, JsonRpcProvider } from 'ethers';
 import {
   ROUTER_ABI, REGISTRY_ABI, AGENT_LEDGER_ABI,
-  LOCATION_LEDGER_ABI, INBOX_LEDGER_ABI,
+  LOCATION_LEDGER_ABI, INBOX_LEDGER_ABI, GAME_ENGINE_ABI,
 } from './abis';
 
 export interface Contracts {
@@ -10,6 +10,7 @@ export interface Contracts {
   agentLedger: Contract;
   locationLedger: Contract;
   inboxLedger: Contract;
+  gameEngine: Contract;
 }
 
 export async function resolveContracts(
@@ -17,7 +18,7 @@ export async function resolveContracts(
   routerAddress: string,
 ): Promise<Contracts> {
   const router = new Contract(routerAddress, ROUTER_ABI, provider);
-  const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr] =
+  const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr] =
     await router.getAddresses();
 
   return {
@@ -25,5 +26,6 @@ export async function resolveContracts(
     agentLedger: new Contract(agentLedgerAddr, AGENT_LEDGER_ABI, provider),
     locationLedger: new Contract(locationLedgerAddr, LOCATION_LEDGER_ABI, provider),
     inboxLedger: new Contract(inboxLedgerAddr, INBOX_LEDGER_ABI, provider),
+    gameEngine: new Contract(engineAddr, GAME_ENGINE_ABI, provider),
   };
 }

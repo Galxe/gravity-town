@@ -97,3 +97,6 @@ main().catch((err) => {
   console.error("Fatal:", err);
   process.exit(1);
 });
+
+// Keep process alive — prevent tsx/node from exiting when spawned as child
+setInterval(() => {}, 1 << 30);

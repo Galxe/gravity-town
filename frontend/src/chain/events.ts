@@ -78,29 +78,6 @@ export function subscribeEvents(contracts: Contracts): () => void {
     }));
   };
 
-  const onGoldTransferred = async (fromAgent: bigint, toAgent: bigint) => {
-    const [from, to] = [Number(fromAgent), Number(toAgent)];
-    const [a1, a2] = await Promise.all([
-      fetchAgent(contracts, from),
-      fetchAgent(contracts, to),
-    ]);
-    set((s) => ({
-      agents: { ...s.agents, [from]: a1, [to]: a2 },
-    }));
-  };
-
-  const onGoldAdded = async (agentId: bigint) => {
-    const id = Number(agentId);
-    const agent = await fetchAgent(contracts, id);
-    set((s) => ({ agents: { ...s.agents, [id]: agent } }));
-  };
-
-  const onStatsUpdated = async (agentId: bigint) => {
-    const id = Number(agentId);
-    const agent = await fetchAgent(contracts, id);
-    set((s) => ({ agents: { ...s.agents, [id]: agent } }));
-  };
-
   // --- AgentLedger events ---
 
   const onMemoryWritten = async (_entryId: bigint, agentId: bigint) => {
@@ -159,10 +136,6 @@ export function subscribeEvents(contracts: Contracts): () => void {
   registry.on('AgentCreated', onAgentCreated);
   registry.on('AgentRemoved', onAgentRemoved);
   registry.on('AgentMoved', onAgentMoved);
-  registry.on('GoldTransferred', onGoldTransferred);
-  registry.on('GoldAdded', onGoldAdded);
-  registry.on('StatsUpdated', onStatsUpdated);
-
   agentLedger.on('EntryWritten', onMemoryWritten);
   agentLedger.on('Compacted', onMemoryCompacted);
 

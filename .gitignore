@@ -5,6 +5,7 @@ agent-runner/config/*.toml
 frontend/config/*.json
 !frontend/config/gravity.json
 !frontend/config/*.example.json
+deployed-addresses.json
 
 # ============================================================
 # Dependencies

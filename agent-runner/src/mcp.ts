@@ -23,11 +23,7 @@ export function parseToolJson(result: any): unknown {
 export async function connectMcp(
   mcpServerUrl: string
 ): Promise<{ client: Client; transport: StreamableHTTPClientTransport; tools: McpTool[] }> {
-  const client = new Client({
-    name: "gravity-town-runner",
-    version: "0.2.0",
-  });
-
+  const client = new Client({ name: "gravity-town-runner", version: "0.3.0" });
   const transport = new StreamableHTTPClientTransport(new URL(mcpServerUrl));
   await client.connect(transport);
   const toolResult = await client.listTools();
@@ -52,28 +48,21 @@ export async function ensureAgent(
     agentStartLocation: number;
   }
 ): Promise<number> {
-  if (opts.agentId !== undefined) {
-    return opts.agentId;
-  }
+  if (opts.agentId !== undefined) return opts.agentId;
 
   if (!opts.agentName || !opts.agentPersonality) {
-    throw new Error(
-      "Set agentId to use an existing agent, or provide agentName and agentPersonality to create a new one"
-    );
+    throw new Error("Set agentId or provide agentName + agentPersonality");
   }
 
+  // create_agent no longer takes location — auto-claims hex near origin
   const created = await callMcpTool(client, "create_agent", {
     name: opts.agentName,
     personality: opts.agentPersonality,
     stats: opts.agentStats,
-    location: opts.agentStartLocation,
   });
   console.log("[debug] create_agent response:", JSON.stringify(created));
   const parsed = parseToolJson(created) as { agentId?: string };
-  if (!parsed?.agentId) {
-    throw new Error("Agent creation succeeded but no agentId was returned");
-  }
-
+  if (!parsed?.agentId) throw new Error("Agent creation succeeded but no agentId returned");
   return Number(parsed.agentId);
 }
 
@@ -89,7 +78,7 @@ export async function collectContext(
       ? Number((self as AgentSnapshot).location)
       : undefined;
 
-  const [world, nearbyAgents, memories, locationBoard, inbox] = await Promise.all([
+  const [world, nearbyAgents, memories, locationBoard, inbox, myHexes] = await Promise.all([
     callMcpTool(client, "get_world").then(parseToolJson),
     callMcpTool(client, "get_nearby_agents", { agent_id: agentId }).then(parseToolJson),
     callMcpTool(client, "read_memories", { agent_id: agentId, count: 10 }).then(parseToolJson),
@@ -97,18 +86,16 @@ export async function collectContext(
       ? callMcpTool(client, "read_location", { location_id: selfLocation, count: 10 }).then(parseToolJson)
       : Promise.resolve(null),
     callMcpTool(client, "read_inbox", { agent_id: agentId, count: 16 }).then(parseToolJson),
+    callMcpTool(client, "get_my_hexes", { agent_id: agentId }).then(parseToolJson).catch(() => null),
   ]);
 
-  return { self, world, nearbyAgents, memories, locationBoard, inbox };
+  return { self, world, nearbyAgents, memories, locationBoard, inbox, myHexes };
 }
 
 export function parseArguments(toolCall: ToolCall): Record<string, unknown> {
   const raw = toolCall.function.arguments || "{}";
-  try {
-    return JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    throw new Error(`Invalid JSON arguments for tool ${toolCall.function.name}: ${raw}`);
-  }
+  try { return JSON.parse(raw) as Record<string, unknown>; }
+  catch { throw new Error(`Invalid JSON arguments for tool ${toolCall.function.name}: ${raw}`); }
 }
 
 export function applyAgentDefaults(
@@ -118,19 +105,19 @@ export function applyAgentDefaults(
 ): Record<string, unknown> {
   const next = { ...args };
 
-  // Tools where agent_id defaults to self
   const selfTools = [
-    "get_agent", "get_nearby_agents", "get_balance",
+    "get_agent", "get_nearby_agents",
     "add_memory", "read_memories", "compact_memories",
     "move_agent", "post_to_location", "read_inbox", "compact_inbox",
+    "get_my_hexes", "get_score", "harvest",
+    "build", "attack", "raid",
   ];
 
   if (selfTools.includes(toolName) && next.agent_id === undefined) {
     next.agent_id = agentId;
   }
 
-  // Tools where from_agent defaults to self
-  if ((toolName === "transfer_gold" || toolName === "send_message") && next.from_agent === undefined) {
+  if (toolName === "send_message" && next.from_agent === undefined) {
     next.from_agent = agentId;
   }
 

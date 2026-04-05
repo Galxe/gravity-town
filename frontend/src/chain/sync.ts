@@ -56,11 +56,16 @@ export async function fullSync(c: Contracts): Promise<SyncResult> {
     })),
     Promise.all(agentIds.map(async (aId: bigint) => {
       const id = Number(aId);
-      const [name, personality, stats, location, gold, createdAt] = await c.registry.getAgent(id);
+      const [[name, personality, stats, location, createdAt], score, hCount] = await Promise.all([
+        c.registry.getAgent(id),
+        c.gameEngine.getScore(id),
+        c.gameEngine.hexCount(id),
+      ]);
       return {
         id, name, personality,
         stats: Array.from(stats).map(Number),
-        location: Number(location), gold: Number(gold), createdAt: Number(createdAt),
+        location: Number(location), hexCount: Number(hCount),
+        score: Number(score), createdAt: Number(createdAt),
       } as Agent;
     })),
   ]);
@@ -96,11 +101,16 @@ export async function fullSync(c: Contracts): Promise<SyncResult> {
 // --- Targeted refetch helpers (called on individual events) ---
 
 export async function fetchAgent(c: Contracts, agentId: number): Promise<Agent> {
-  const [name, personality, stats, location, gold, createdAt] = await c.registry.getAgent(agentId);
+  const [[name, personality, stats, location, createdAt], score, hCount] = await Promise.all([
+    c.registry.getAgent(agentId),
+    c.gameEngine.getScore(agentId),
+    c.gameEngine.hexCount(agentId),
+  ]);
   return {
     id: agentId, name, personality,
     stats: Array.from(stats).map(Number),
-    location: Number(location), gold: Number(gold), createdAt: Number(createdAt),
+    location: Number(location), hexCount: Number(hCount),
+    score: Number(score), createdAt: Number(createdAt),
   };
 }
 

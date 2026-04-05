@@ -64,14 +64,21 @@ export class Orchestrator {
     }
   }
 
-  /** Start multiple roles from account list */
+  /** Start multiple roles from account list, staggered so they don't all tick at once */
   async startAll(accounts: AccountConfig[]): Promise<void> {
     const enabled = accounts.filter((a) => a.enabled);
     this.log(`starting ${enabled.length} role(s)...`);
 
-    for (const account of enabled) {
+    for (let i = 0; i < enabled.length; i++) {
+      const account = enabled[i];
       try {
-        await this.addRole(account);
+        const runner = await this.addRole(account);
+        // Stagger: each agent starts offset by heartbeat / N so they spread evenly
+        if (i > 0) {
+          const staggerMs = Math.round(runner.heartbeatMs / enabled.length) * i;
+          runner.rescheduleWithDelay(staggerMs);
+          this.log(`staggered "${account.label}" by ${staggerMs}ms`);
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.log(`failed to start role "${account.label}": ${message}`, true);

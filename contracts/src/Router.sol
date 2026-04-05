@@ -6,12 +6,12 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 /// @title Router — single entry point that holds all contract addresses
-/// @notice Deploy once, configure everywhere with just one address
 contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     address public registry;
     address public agentLedger;
     address public locationLedger;
     address public inboxLedger;
+    address public gameEngine;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() { _disableInitializers(); }
@@ -20,29 +20,32 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         address _registry,
         address _agentLedger,
         address _locationLedger,
-        address _inboxLedger
+        address _inboxLedger,
+        address _gameEngine
     ) public initializer {
         __Ownable_init(msg.sender);
         registry = _registry;
         agentLedger = _agentLedger;
         locationLedger = _locationLedger;
         inboxLedger = _inboxLedger;
+        gameEngine = _gameEngine;
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
-    function setRegistry(address _registry) external onlyOwner { registry = _registry; }
-    function setAgentLedger(address _agentLedger) external onlyOwner { agentLedger = _agentLedger; }
-    function setLocationLedger(address _locationLedger) external onlyOwner { locationLedger = _locationLedger; }
-    function setInboxLedger(address _inboxLedger) external onlyOwner { inboxLedger = _inboxLedger; }
+    function setRegistry(address _v) external onlyOwner { registry = _v; }
+    function setAgentLedger(address _v) external onlyOwner { agentLedger = _v; }
+    function setLocationLedger(address _v) external onlyOwner { locationLedger = _v; }
+    function setInboxLedger(address _v) external onlyOwner { inboxLedger = _v; }
+    function setGameEngine(address _v) external onlyOwner { gameEngine = _v; }
 
-    /// @notice Get all addresses in one call
     function getAddresses() external view returns (
         address _registry,
         address _agentLedger,
         address _locationLedger,
-        address _inboxLedger
+        address _inboxLedger,
+        address _gameEngine
     ) {
-        return (registry, agentLedger, locationLedger, inboxLedger);
+        return (registry, agentLedger, locationLedger, inboxLedger, gameEngine);
     }
 }

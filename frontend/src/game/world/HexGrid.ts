@@ -4,7 +4,20 @@ import type { WorldPoint } from './types';
 export const TILE_W = 120;
 export const TILE_H = 140;
 
-export const LOCATION_SPREAD = 2;
+export const LOCATION_SPREAD = 1;
+
+/** World boundary radius — must match GameEngine.MAP_RADIUS */
+export const MAP_RADIUS = 4;
+
+/** Axial hex distance from origin: max(|q|, |r|, |q+r|) */
+export function hexDist(q: number, r: number): number {
+  return Math.max(Math.abs(q), Math.abs(r), Math.abs(q + r));
+}
+
+/** Check if (q,r) is within world boundary */
+export function inBounds(q: number, r: number): boolean {
+  return hexDist(q, r) <= MAP_RADIUS;
+}
 
 /**
  * Pointy-top hex: axial (q, r) → pixel position.

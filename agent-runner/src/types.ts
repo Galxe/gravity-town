@@ -48,9 +48,10 @@ export interface AgentContext {
   self: unknown;
   world: unknown;
   nearbyAgents: unknown;
-  memories: unknown;        // { entries, used, capacity }
-  locationBoard: unknown;   // { entries, used, capacity }
-  inbox: unknown;           // { entries, used, capacity }
+  memories: unknown;
+  locationBoard: unknown;
+  inbox: unknown;
+  myHexes: unknown;       // agent's owned hex territories
 }
 
 export interface AgentSnapshot {
@@ -59,7 +60,6 @@ export interface AgentSnapshot {
   location?: number;
 }
 
-/** MCP server auto-launch config */
 export interface McpServerConfig {
   mcpServerDir: string;
   privateKey: string;
@@ -81,6 +81,7 @@ export interface GlobalConfig {
   defaultLoopDelayMs: number;
   defaultMaxToolRoundsPerCycle: number;
   defaultMaxHistoryLength: number;
+  defaultMaxContextLength: number;
   mcpServer?: McpServerConfig;
 }
 
@@ -98,5 +99,6 @@ export interface AccountConfig {
   heartbeatMs?: number;
   maxToolRoundsPerCycle?: number;
   maxHistoryLength?: number;
+  maxContextLength?: number;
   enabled: boolean;
 }

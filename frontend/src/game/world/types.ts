@@ -4,10 +4,12 @@ export interface WorldPoint {
   y: number;
 }
 
-/** Layout-resolved location. */
+/** Layout-resolved location (= claimed hex). */
 export interface ResolvedLocation {
   id: number;
   name: string;
+  ownerId: number;   // agent who owns this hex, 0 = unclaimed
+  ownerName: string;
   center: WorldPoint;
   centerHex: { q: number; r: number };
 }
@@ -28,6 +30,8 @@ export interface ResolvedAgent {
 export interface WorldLayout {
   locations: ResolvedLocation[];
   agents: ResolvedAgent[];
+  /** Map of "q,r" → ownerId for all owned hexes (for territory coloring) */
+  hexOwners: Map<string, number>;
 }
 
 /** Camera target for fly-to. Renderer translates to its own camera system. */
