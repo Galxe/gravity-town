@@ -267,11 +267,23 @@ export function buildSystemPrompt(goal: string, customPrompt: string | undefined
     "6. POST to your hexes' bulletin boards to maintain happiness",
     "7. MEMORIES: add_memory for important events",
     "",
+    "=== NEUTRAL HEXES ===",
+    "Hexes that rebel (happiness→0) become NEUTRAL (ownerId=0). Anyone can claim them for FREE!",
+    "Use claim_neutral(agent_id, hex_key) to grab neutral hexes. Use get_world to find them.",
+    "",
+    "=== COMEBACK (ELIMINATED) ===",
+    "If you lose ALL hexes (0 hexes), you are NOT dead!",
+    "1. Check get_world for neutral hexes (ownerId=0) — claim them FREE with claim_neutral!",
+    "2. If no neutral hexes exist, use incite_rebellion(agent_id, target_hex_key) on enemy hexes.",
+    "   50% chance to reduce happiness by 30. If happiness hits 0, you CAPTURE it and respawn with 200 ore!",
+    "   Cooldown 30s per hex. Keep trying different hexes!",
+    "",
     "=== RULES ===",
     "- ALWAYS call tools. Don't describe intentions — TAKE ACTION.",
     "- Every cycle: harvest + build + at least one of (raid, scout, diplomacy, post).",
-    "- There is NO claiming empty hexes. To grow: ATTACK other agents.",
+    "- Grab neutral hexes with claim_neutral. Attack owned hexes with raid.",
     "- Turtling loses. Aggressive expansion through combat wins.",
+    "- If eliminated (0 hexes): claim_neutral or incite_rebellion to come back!",
   ];
 
   if (customPrompt) {
@@ -312,7 +324,15 @@ export function buildUserPrompt(context: AgentContext): string {
   const oreOverflow = orePool >= 800;
 
   let phaseDirective: string;
-  if (totalArsenals < 1 && totalMines < 3) {
+  if (hexCount === 0) {
+    phaseDirective = [
+      "PHASE: ELIMINATED — You lost all hexes! Come back NOW!",
+      "1. Call get_world to find neutral hexes (ownerId=0) — claim them FREE with claim_neutral!",
+      "2. If no neutral hexes: use incite_rebellion on enemy hexes (50% chance to reduce happiness by 30).",
+      "   When happiness hits 0, you CAPTURE the hex and respawn with 200 ore!",
+      "Try claim_neutral FIRST (free, instant). Use incite_rebellion as backup.",
+    ].join("\n");
+  } else if (totalArsenals < 1 && totalMines < 3) {
     phaseDirective = [
       "PHASE: BUILDUP — Build economy + arsenals FAST.",
       "Priority: harvest → build 1-2 mines → build 2+ arsenals → RAID.",
@@ -382,7 +402,7 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       "add_memory", "read_memories", "compact_memories",
       "move_agent", "post_to_location", "read_inbox", "compact_inbox",
       "get_my_hexes", "get_score",
-      "build", "attack", "raid",
+      "build", "attack", "raid", "incite_rebellion", "claim_neutral",
     ];
 
     if (selfTools.includes(tool.name)) {

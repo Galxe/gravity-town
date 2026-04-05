@@ -59,6 +59,9 @@ const GAME_ENGINE_ABI = [
   "function toKey(int32 q, int32 r) view returns (bytes32)",
   "function raid(uint256 agentId, bytes32 targetHexKey, uint256 arsenalSpend, uint256 oreSpend)",
   "function boostHappiness(uint256 agentId, bytes32 hexKey)",
+  "event InciteResult(uint256 indexed agentId, bytes32 indexed targetHexKey, bool success, bool captured)",
+  "function claimNeutral(uint256 agentId, bytes32 hexKey)",
+  "function inciteRebellion(uint256 agentId, bytes32 targetHexKey)",
 ];
 
 const ROUTER_ABI = [
@@ -298,6 +301,29 @@ export class ChainClient {
             defensePower: Number(parsed.args.defensePower),
             success: parsed.args.success,
           };
+          break;
+        }
+      } catch {}
+    }
+    return { ...result, txHash: receipt.transactionHash };
+  }
+
+  async claimNeutral(agentId: number, hexKey: string) {
+    const tx = await this.gameEngine.claimNeutral(agentId, hexKey);
+    const receipt = await tx.wait();
+    return { txHash: receipt.transactionHash };
+  }
+
+  async inciteRebellion(agentId: number, targetHexKey: string) {
+    const tx = await this.gameEngine.inciteRebellion(agentId, targetHexKey);
+    const receipt = await tx.wait();
+    let result = { success: false, captured: false };
+    const iface = this.gameEngine.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "InciteResult") {
+          result = { success: parsed.args.success, captured: parsed.args.captured };
           break;
         }
       } catch {}

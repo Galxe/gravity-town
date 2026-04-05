@@ -115,7 +115,7 @@ export function applyAgentDefaults(
     "add_memory", "read_memories", "compact_memories",
     "move_agent", "post_to_location", "read_inbox", "compact_inbox",
     "get_my_hexes", "get_score", "harvest",
-    "build", "attack", "raid",
+    "build", "attack", "raid", "incite_rebellion", "claim_neutral",
   ];
 
   if (selfTools.includes(toolName) && next.agent_id === undefined) {

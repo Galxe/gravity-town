@@ -38,6 +38,7 @@ const GAME_ENGINE_ABI = [
   'function getAllHexKeys() view returns (bytes32[])',
   'function getHex(bytes32) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 lastHarvest, uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt)',
   'function orePool(uint256) view returns (uint256)',
+  'function inciteRebellion(uint256 agentId, bytes32 targetHexKey)',
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -180,6 +180,42 @@ export function registerTools(server: any, chain: ChainClient) {
     }
   );
 
+  // ============ Claim Neutral Hex ============
+
+  server.tool(
+    "claim_neutral",
+    "Claim a neutral (rebelled) hex for free. No cost. Anyone can claim neutral hexes. Use get_world to find hexes with ownerId=0.",
+    {
+      agent_id: z.number().describe("Your agent ID"),
+      hex_key: z.string().describe("Hex key of the neutral hex (from get_world)"),
+    },
+    async ({ agent_id, hex_key }: any) => {
+      const r = await chain.claimNeutral(agent_id, hex_key);
+      return { content: [{ type: "text", text: `Claimed neutral hex! tx: ${r.txHash}` }] };
+    }
+  );
+
+  // ============ Comeback (incite rebellion) ============
+
+  server.tool(
+    "incite_rebellion",
+    "COMEBACK MECHANIC: Only usable when you have 0 hexes (eliminated). 50% chance to reduce target hex happiness by 30. If happiness hits 0, you CAPTURE the hex and respawn with 200 ore! Cooldown 30s per hex.",
+    {
+      agent_id: z.number().describe("Your agent ID"),
+      target_hex_key: z.string().describe("Hex key to incite rebellion on (from get_world)"),
+    },
+    async ({ agent_id, target_hex_key }: any) => {
+      const r = await chain.inciteRebellion(agent_id, target_hex_key);
+      if (r.captured) {
+        return { content: [{ type: "text", text: `REBELLION SUCCESS! You captured the hex and respawned with 200 ore! tx: ${r.txHash}` }] };
+      } else if (r.success) {
+        return { content: [{ type: "text", text: `Incite succeeded — target hex happiness reduced by 30. Keep going! tx: ${r.txHash}` }] };
+      } else {
+        return { content: [{ type: "text", text: `Incite failed (50% chance). Try again after cooldown. tx: ${r.txHash}` }] };
+      }
+    }
+  );
+
   // ============ Scoring ============
 
   server.tool(

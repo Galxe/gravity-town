@@ -346,6 +346,134 @@ contract GameEngineTest is Test {
     }
 
     // ══════════════════════════════════════════════════
+    //              CLAIM NEUTRAL HEX
+    // ══════════════════════════════════════════════════
+
+    function test_ClaimNeutralHex() public {
+        (uint256 agent1, ) = _createAgent(player1);
+        _createAgent(player2);
+
+        // Fast-forward to rebel agent1's hexes
+        bytes32[] memory keys1 = engine.getAgentHexKeys(agent1);
+        vm.warp(block.timestamp + 3000);
+        engine.harvest(agent1); // triggers happiness decay → rebellion
+
+        // Find a rebelled hex
+        bytes32 rebelledKey;
+        for (uint256 i = 0; i < keys1.length; i++) {
+            (uint256 owner, , , , , , , , , ) = engine.getHex(keys1[i]);
+            if (owner == 0) {
+                rebelledKey = keys1[i];
+                break;
+            }
+        }
+        if (rebelledKey == bytes32(0)) return; // skip if none rebelled
+
+        // Agent1 (eliminated) claims neutral hex
+        uint256 hexesBefore = engine.hexCount(agent1);
+        vm.prank(player1);
+        engine.claimNeutral(agent1, rebelledKey);
+
+        (uint256 newOwner, , , , , , , , , ) = engine.getHex(rebelledKey);
+        assertEq(newOwner, agent1);
+        assertEq(engine.hexCount(agent1), hexesBefore + 1);
+    }
+
+    function test_CannotClaimOwnedHex() public {
+        (uint256 agent1, ) = _createAgent(player1);
+        (, bytes32 agent2Hex) = _createAgent(player2);
+
+        vm.prank(player1);
+        vm.expectRevert("hex is owned");
+        engine.claimNeutral(agent1, agent2Hex);
+    }
+
+    // ══════════════════════════════════════════════════
+    //              INCITE REBELLION (comeback)
+    // ══════════════════════════════════════════════════
+
+    function test_InciteRequiresZeroHexes() public {
+        (uint256 agentId, ) = _createAgent(player1);
+        (, bytes32 targetHex) = _createAgent(player2);
+
+        // Agent with 7 hexes cannot incite
+        vm.prank(player1);
+        vm.expectRevert("only eliminated agents");
+        engine.inciteRebellion(agentId, targetHex);
+    }
+
+    function test_InciteReducesHappiness() public {
+        (uint256 attacker, ) = _createAgent(player1);
+        (uint256 defender, ) = _createAgent(player2);
+        bytes32 targetHex = engine.getAgentHexKeys(defender)[0];
+
+        // Eliminate attacker by advancing time in steps, boosting defender each step
+        bytes32[] memory defenderKeys = engine.getAgentHexKeys(defender);
+        for (uint256 step = 0; step < 10; step++) {
+            vm.warp(block.timestamp + 300);
+            engine.harvest(attacker);
+            // Keep defender hexes happy by boosting them
+            for (uint256 i = 0; i < defenderKeys.length; i++) {
+                (uint256 dOwner, , , , , , , , , ) = engine.getHex(defenderKeys[i]);
+                if (dOwner == defender) {
+                    vm.prank(player2);
+                    engine.boostHappiness(defender, defenderKeys[i]);
+                }
+            }
+            if (engine.hexCount(attacker) == 0) break;
+        }
+
+        if (engine.hexCount(attacker) > 0) return; // skip if not eliminated
+
+        // Now attacker can incite
+        vm.prank(player1);
+        engine.inciteRebellion(attacker, targetHex);
+
+        // Check happiness decreased or hex was captured (depends on randomness)
+        (, , , , , , , , uint256 happiness, ) = engine.getHex(targetHex);
+        (uint256 owner, , , , , , , , , ) = engine.getHex(targetHex);
+
+        // Either happiness decreased or hex was captured
+        assertTrue(happiness < 100 || owner == attacker);
+    }
+
+    function test_InciteCooldown() public {
+        (uint256 attacker, ) = _createAgent(player1);
+        (uint256 defender, ) = _createAgent(player2);
+        bytes32 targetHex = engine.getAgentHexKeys(defender)[0];
+
+        // Eliminate attacker same way
+        bytes32[] memory defenderKeys = engine.getAgentHexKeys(defender);
+        for (uint256 step = 0; step < 10; step++) {
+            vm.warp(block.timestamp + 300);
+            engine.harvest(attacker);
+            for (uint256 i = 0; i < defenderKeys.length; i++) {
+                (uint256 dOwner, , , , , , , , , ) = engine.getHex(defenderKeys[i]);
+                if (dOwner == defender) {
+                    vm.prank(player2);
+                    engine.boostHappiness(defender, defenderKeys[i]);
+                }
+            }
+            if (engine.hexCount(attacker) == 0) break;
+        }
+
+        if (engine.hexCount(attacker) > 0) return;
+
+        vm.prank(player1);
+        engine.inciteRebellion(attacker, targetHex);
+
+        // Immediate retry — should fail with cooldown
+        vm.prank(player1);
+        vm.expectRevert("cooldown");
+        engine.inciteRebellion(attacker, targetHex);
+
+        // After cooldown — should work
+        vm.warp(block.timestamp + 31);
+        vm.prank(player1);
+        engine.inciteRebellion(attacker, targetHex);
+    }
+
+    // ══════════════════════════════════════════════════
     //              FULL GAME LOOP
     // ══════════════════════════════════════════════════
 
