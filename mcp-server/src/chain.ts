@@ -52,6 +52,7 @@ const GAME_ENGINE_ABI = [
   "function getScore(uint256 agentId) view returns (uint256)",
   "function getHex(bytes32 hexKey) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 lastHarvest, uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt)",
   "function getAgentHexKeys(uint256 agentId) view returns (bytes32[])",
+  "function getAllHexKeys() view returns (bytes32[])",
   "function hexCount(uint256 agentId) view returns (uint256)",
   "function toKey(int32 q, int32 r) view returns (bytes32)",
   "function raid(uint256 agentId, bytes32 targetHexKey, uint256 arsenalSpend, uint256 oreSpend)",
@@ -297,13 +298,19 @@ export class ChainClient {
   // ============ Location Ledger ============
 
   async getWorld() {
-    const locationIds: bigint[] = await this.locationLedger.getAllLocationIds();
-    const locations = await Promise.all(locationIds.map(async (id) => {
-      const [name, description, q, r] = await this.locationLedger.getLocation(Number(id));
-      const agentIds: bigint[] = await this.locationLedger.getAgentsAtLocation(Number(id));
-      return { id: Number(id), name, description, q: Number(q), r: Number(r), agents: agentIds.map(Number) };
-    }));
-    return { locations };
+    const [locationIds, hexKeys] = await Promise.all([
+      this.locationLedger.getAllLocationIds() as Promise<bigint[]>,
+      this.gameEngine.getAllHexKeys() as Promise<string[]>,
+    ]);
+    const [locations, hexes] = await Promise.all([
+      Promise.all(locationIds.map(async (id) => {
+        const [name, description, q, r] = await this.locationLedger.getLocation(Number(id));
+        const agentIds: bigint[] = await this.locationLedger.getAgentsAtLocation(Number(id));
+        return { id: Number(id), name, description, q: Number(q), r: Number(r), agents: agentIds.map(Number) };
+      })),
+      Promise.all(hexKeys.map((k) => this.getHex(k))),
+    ]);
+    return { locations, hexes };
   }
 
   async writeToLocation(agentId: number, importance: number, category: string, content: string, relatedAgents: number[]): Promise<WriteResult> {

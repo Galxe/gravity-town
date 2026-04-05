@@ -35,6 +35,7 @@ const GAME_ENGINE_ABI = [
   'function getScore(uint256) view returns (uint256)',
   'function hexCount(uint256) view returns (uint256)',
   'function getAgentHexKeys(uint256) view returns (bytes32[])',
+  'function getAllHexKeys() view returns (bytes32[])',
   'function getHex(bytes32) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 lastHarvest, uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt)',
   'function orePool(uint256) view returns (uint256)',
 ];
@@ -56,9 +57,7 @@ function parseBoardResult(raw: any): BoardState {
 }
 
 export function useGameEngine() {
-  const setAgents = useGameStore((s) => s.setAgents);
-  const setLocations = useGameStore((s) => s.setLocations);
-  const setHexes = useGameStore((s) => s.setHexes);
+  const setWorldData = useGameStore((s) => s.setWorldData);
   const setAgentHexes = useGameStore((s) => s.setAgentHexes);
   const setMemories = useGameStore((s) => s.setMemories);
   const setLocationBoard = useGameStore((s) => s.setLocationBoard);
@@ -131,35 +130,37 @@ export function useGameEngine() {
         const newAgents: Record<number, Agent> = {};
         for (const agent of agentResults) newAgents[agent.id] = agent;
 
-        // Fetch hex data per agent + boards in parallel
+        // Fetch all hex data + boards in parallel
         const allHexes: Record<string, HexData> = {};
 
         await Promise.all([
-          // Agent hex territories
-          Promise.all(agentIds.map(async (aId: bigint) => {
-            const id = Number(aId);
-            try {
-              const keys: string[] = await gameEngine.getAgentHexKeys(id);
-              const hexList: HexData[] = [];
-              for (const k of keys) {
-                const [ownerId, locationId, q, r, mineCount, arsenalCount, lastHarvest, reserve, happiness, happinessUpdatedAt] =
-                  await gameEngine.getHex(k);
-                const hd: HexData = {
-                  hexKey: k, ownerId: Number(ownerId), locationId: Number(locationId),
-                  q: Number(q), r: Number(r),
-                  mineCount: Number(mineCount), arsenalCount: Number(arsenalCount),
-                  lastHarvest: Number(lastHarvest),
-                  reserve: Number(reserve),
-                  happiness: Number(happiness),
-                  usedSlots: Number(mineCount) + Number(arsenalCount), totalSlots: 6,
-                  defense: Number(arsenalCount) * 5,
-                };
-                hexList.push(hd);
-                allHexes[k] = hd;
+          // All hexes (global list — includes unowned/rebelled)
+          (async () => {
+            const keys: string[] = await gameEngine.getAllHexKeys();
+            const agentHexMap: Record<number, HexData[]> = {};
+            await Promise.all(keys.map(async (k: string) => {
+              const [ownerId, locationId, q, r, mineCount, arsenalCount, lastHarvest, reserve, happiness, happinessUpdatedAt] =
+                await gameEngine.getHex(k);
+              const hd: HexData = {
+                hexKey: k, ownerId: Number(ownerId), locationId: Number(locationId),
+                q: Number(q), r: Number(r),
+                mineCount: Number(mineCount), arsenalCount: Number(arsenalCount),
+                lastHarvest: Number(lastHarvest),
+                reserve: Number(reserve),
+                happiness: Number(happiness),
+                usedSlots: Number(mineCount) + Number(arsenalCount), totalSlots: 6,
+                defense: Number(arsenalCount) * 5,
+              };
+              allHexes[k] = hd;
+              if (hd.ownerId > 0) {
+                if (!agentHexMap[hd.ownerId]) agentHexMap[hd.ownerId] = [];
+                agentHexMap[hd.ownerId].push(hd);
               }
-              setAgentHexes(id, hexList);
-            } catch { /* agent may have 0 hexes */ }
-          })),
+            }));
+            for (const [id, hexList] of Object.entries(agentHexMap)) {
+              setAgentHexes(Number(id), hexList);
+            }
+          })(),
           // Memories
           Promise.all(agentIds.map(async (aId: bigint) => {
             const id = Number(aId);
@@ -180,9 +181,7 @@ export function useGameEngine() {
           })),
         ]);
 
-        setHexes(allHexes);
-        setLocations(newLocs);
-        setAgents(newAgents);
+        setWorldData(newAgents, newLocs, allHexes);
       } catch (err) {
         console.error("RPC Error:", err);
       } finally {
@@ -193,5 +192,5 @@ export function useGameEngine() {
     pullData();
     const interval = setInterval(pullData, 5000);
     return () => clearInterval(interval);
-  }, [setAgents, setLocations, setHexes, setAgentHexes, setMemories, setLocationBoard, setInbox]);
+  }, [setWorldData, setAgentHexes, setMemories, setLocationBoard, setInbox]);
 }

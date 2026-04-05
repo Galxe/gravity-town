@@ -83,6 +83,7 @@ export interface GameState {
   setAgents: (agents: Record<number, Agent>) => void;
   setLocations: (locations: Record<number, LocationData>) => void;
   setHexes: (hexes: Record<string, HexData>) => void;
+  setWorldData: (agents: Record<number, Agent>, locations: Record<number, LocationData>, hexes: Record<string, HexData>) => void;
   setAgentHexes: (agentId: number, hexes: HexData[]) => void;
   setMemories: (agentId: number, board: BoardState) => void;
   setLocationBoard: (locationId: number, board: BoardState) => void;
@@ -106,6 +107,7 @@ export const useGameStore = create<GameState>((set) => ({
   setAgents: (agents) => set({ agents }),
   setLocations: (locations) => set({ locations }),
   setHexes: (hexes) => set({ hexes }),
+  setWorldData: (agents, locations, hexes) => set({ agents, locations, hexes }),
   setAgentHexes: (agentId, hexes) => set((state) => ({
     agentHexes: { ...state.agentHexes, [agentId]: hexes },
   })),

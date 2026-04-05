@@ -1,8 +1,9 @@
 import * as Phaser from 'phaser';
 import type { ResolvedLocation } from '../../game/world/types';
-import { buildingKeyForLocation } from '../../game/BuildingTags';
+import { buildingKeyForLocation, buildingIdForLocation } from '../../game/BuildingTags';
 import { TILE_W, TILE_H } from '../../game/world/HexGrid';
 import { StoreBridge } from '../StoreBridge';
+import { generateBuildingTexture, AGENT_COLORS } from '../CartoonTextures';
 
 const CLICK_THRESHOLD = 8;
 const SELECT_COLOR = 0xd4a030; // warm gold
@@ -70,8 +71,18 @@ export class LocationCluster extends Phaser.GameObjects.Container {
     this.selectionRing.setVisible(false);
     this.add(this.selectionRing);
 
-    // Building tile
-    const texKey = buildingKeyForLocation(loc.name);
+    // Building tile — roof color matches owner's meeple color
+    let texKey: string;
+    if (loc.ownerId > 0) {
+      const buildingId = buildingIdForLocation(loc.name);
+      const roofColor = AGENT_COLORS[(loc.ownerId - 1) % AGENT_COLORS.length].body;
+      texKey = `building_${buildingId}_owner${loc.ownerId}`;
+      generateBuildingTexture(scene, texKey, buildingId, roofColor);
+    } else {
+      const buildingId = buildingIdForLocation(loc.name);
+      texKey = `building_${buildingId}_unowned`;
+      generateBuildingTexture(scene, texKey, buildingId, 0xe0d0c0);
+    }
     this.tile = scene.add.image(this.cx, this.cy, texKey);
     this.tile.setInteractive(
       new Phaser.Geom.Circle(60, 70, 50),

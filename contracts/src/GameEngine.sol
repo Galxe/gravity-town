@@ -56,6 +56,8 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     mapping(bytes32 => Hex) public hexes;
     mapping(uint256 => bytes32[]) public agentHexKeys;   // agentId → owned hex keys
     mapping(uint256 => uint256) public hexCount;          // agentId → owned hex count
+    bytes32[] public allHexKeys;                          // global list of all ever-created hex keys
+    mapping(bytes32 => bool) public hexExists;            // dedup guard for allHexKeys
 
     /// @notice Agent-level ore pool. All hex production flows here.
     mapping(uint256 => uint256) public orePool;
@@ -185,6 +187,10 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         h.reserve = INITIAL_RESERVE;
         h.happiness = MAX_HAPPINESS;
         h.happinessUpdatedAt = block.timestamp;
+        if (!hexExists[key]) {
+            allHexKeys.push(key);
+            hexExists[key] = true;
+        }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -400,6 +406,10 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     function getAgentHexKeys(uint256 agentId) external view returns (bytes32[] memory) {
         return agentHexKeys[agentId];
+    }
+
+    function getAllHexKeys() external view returns (bytes32[] memory) {
+        return allHexKeys;
     }
 
 

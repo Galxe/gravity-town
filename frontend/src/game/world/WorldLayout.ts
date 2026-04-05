@@ -20,15 +20,18 @@ export function computeWorldLayout(
   }
 
   locArray.forEach((loc) => {
+    const hex = locToHex[loc.id];
+    // Only show locations that are tied to an agent's hex
+    if (!hex || hex.ownerId <= 0) return;
+
     const q = loc.q * LOCATION_SPREAD;
     const r = loc.r * LOCATION_SPREAD;
-    const hex = locToHex[loc.id];
 
     resolvedLocations.push({
       id: loc.id,
       name: loc.name,
-      ownerId: hex?.ownerId ?? 0,
-      ownerName: hex?.ownerId ? (agents[hex.ownerId]?.name ?? `#${hex.ownerId}`) : '',
+      ownerId: hex.ownerId,
+      ownerName: agents[hex.ownerId]?.name ?? `#${hex.ownerId}`,
       center: hexToPixel(q, r),
       centerHex: { q, r },
     });

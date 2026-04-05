@@ -29,11 +29,16 @@ export function allBuildingTextureKeys(): { key: string; file: string }[] {
   return result;
 }
 
-/** Resolve a location name to a building texture key. */
-export function buildingKeyForLocation(name: string): string {
+/** Resolve a location name to a building ID (e.g. 'medieval_mine'). */
+export function buildingIdForLocation(name: string): string {
   const lower = name.toLowerCase();
   for (const [keyword, tile] of Object.entries(TAG_MAP)) {
-    if (lower.includes(keyword)) return `building_${tile}`;
+    if (lower.includes(keyword)) return tile;
   }
-  return `building_${FALLBACK}`;
+  return FALLBACK;
+}
+
+/** Resolve a location name to a building texture key. */
+export function buildingKeyForLocation(name: string): string {
+  return `building_${buildingIdForLocation(name)}`;
 }

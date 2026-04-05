@@ -3,7 +3,7 @@ import { CameraController } from '../CameraController';
 import { StoreBridge } from '../StoreBridge';
 import { LocationCluster } from '../objects/LocationCluster';
 import { AgentSprite } from '../objects/AgentSprite';
-import { hexToPixel, TILE_W, TILE_H, inBounds, MAP_RADIUS, hexRing } from '../../game/world/HexGrid';
+import { hexToPixel, TILE_W, TILE_H, MAP_RADIUS, hexRing } from '../../game/world/HexGrid';
 import { getTerrain } from '../../game/TerrainGen';
 import { generateAllTextures } from '../CartoonTextures';
 import type { WorldLayout } from '../../game/world/types';
@@ -30,6 +30,7 @@ export class HexMapScene extends Phaser.Scene {
   private agentObjects = new Map<number, AgentSprite>();
   private terrainSprites = new Map<string, Phaser.GameObjects.Image>();
   private ownerOverlays = new Map<string, Phaser.GameObjects.Graphics>();
+  private gridLines = new Map<string, Phaser.GameObjects.Graphics>();
   private hexOwners = new Map<string, number>();
 
   constructor() {
@@ -78,67 +79,68 @@ export class HexMapScene extends Phaser.Scene {
     const qMin = Math.floor((left - rMax * R_STEP_X) / Q_STEP_X) - VIEW_PAD;
     const qMax = Math.ceil((right - rMin * R_STEP_X) / Q_STEP_X) + VIEW_PAD;
 
+    // 1. Grid lines: viewport-culled, infinite background
     const visible = new Set<string>();
-
     for (let r = rMin; r <= rMax; r++) {
       for (let q = qMin; q <= qMax; q++) {
         const { x, y } = hexToPixel(q, r);
-
         if (x < left || x > right || y < top || y > bottom) continue;
-
         const key = `${q},${r}`;
         visible.add(key);
-
-        // Only render terrain inside world boundary
-        if (!inBounds(q, r)) continue;
-
-        if (!this.terrainSprites.has(key)) {
-          const terrain = getTerrain(q, r);
-          const sprite = this.add.image(Math.round(x), Math.round(y), terrain.textureKey);
-          sprite.setScale(1.01);
-          sprite.setDepth(-1);
-          this.terrainSprites.set(key, sprite);
-        }
-
-        // Owner territory overlay
-        const ownerId = this.hexOwners.get(key);
-        if (ownerId && !this.ownerOverlays.has(key)) {
-          const color = OWNER_COLORS[(ownerId - 1) % OWNER_COLORS.length];
-          const gfx = this.add.graphics();
-          gfx.fillStyle(color, 0.3);
-          const pts = this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.5);
-          gfx.fillPoints(pts, true);
-          gfx.lineStyle(2.5, color, 0.6);
-          gfx.strokePoints(pts, true);
-          gfx.setDepth(0);
-          this.ownerOverlays.set(key, gfx);
+        if (!this.gridLines.has(key)) {
+          const g = this.add.graphics();
+          g.lineStyle(1.5, 0x8b5e3c, 0.25);
+          g.strokePoints(this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.5), true);
+          g.setDepth(-2);
+          this.gridLines.set(key, g);
         }
       }
     }
-
-    // Cleanup off-screen terrain
-    this.terrainSprites.forEach((sprite, key) => {
-      if (!visible.has(key)) {
-        sprite.destroy();
-        this.terrainSprites.delete(key);
-      }
+    this.gridLines.forEach((gfx, key) => {
+      if (!visible.has(key)) { gfx.destroy(); this.gridLines.delete(key); }
     });
 
-    // Cleanup off-screen overlays
-    this.ownerOverlays.forEach((gfx, key) => {
-      if (!visible.has(key)) {
-        gfx.destroy();
-        this.ownerOverlays.delete(key);
+    // 2. Owned hexes: always rendered (few total), never viewport-culled
+    this.hexOwners.forEach((ownerId, key) => {
+      const [q, r] = key.split(',').map(Number);
+      const { x, y } = hexToPixel(q, r);
+
+      if (!this.terrainSprites.has(key)) {
+        const terrain = getTerrain(q, r);
+        const sprite = this.add.image(Math.round(x), Math.round(y), terrain.textureKey);
+        sprite.setScale(1.01);
+        sprite.setDepth(-1);
+        this.terrainSprites.set(key, sprite);
+      }
+
+      if (!this.ownerOverlays.has(key)) {
+        const color = OWNER_COLORS[(ownerId - 1) % OWNER_COLORS.length];
+        const gfx = this.add.graphics();
+        gfx.fillStyle(color, 0.3);
+        const pts = this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.5);
+        gfx.fillPoints(pts, true);
+        gfx.lineStyle(2.5, color, 0.6);
+        gfx.strokePoints(pts, true);
+        gfx.setDepth(0);
+        this.ownerOverlays.set(key, gfx);
       }
     });
   }
 
-  /** Update hex ownership data and refresh overlays */
+  /** Update hex ownership data and refresh visuals for changed hexes */
   updateHexOwners(hexOwners: Map<string, number>) {
+    // Only touch hexes whose ownership actually changed
+    this.terrainSprites.forEach((sprite, key) => {
+      if (this.hexOwners.get(key) && !hexOwners.has(key)) {
+        sprite.destroy(); this.terrainSprites.delete(key);
+      }
+    });
+    this.ownerOverlays.forEach((gfx, key) => {
+      if (this.hexOwners.get(key) !== hexOwners.get(key)) {
+        gfx.destroy(); this.ownerOverlays.delete(key);
+      }
+    });
     this.hexOwners = hexOwners;
-    // Clear all existing overlays so they get recreated with correct colors
-    this.ownerOverlays.forEach((gfx) => gfx.destroy());
-    this.ownerOverlays.clear();
   }
 
   applyLayout(layout: WorldLayout) {
@@ -178,25 +180,14 @@ export class HexMapScene extends Phaser.Scene {
     });
   }
 
-  /** Draw the world boundary as a visible hex outline at MAP_RADIUS+0.5 */
+  /** Draw world boundary markers just outside MAP_RADIUS */
   private drawBoundary() {
     const gfx = this.add.graphics();
     gfx.setDepth(0.5);
 
-    // Draw faded hex outlines on the boundary ring (radius = MAP_RADIUS)
-    const ring = hexRing(0, 0, MAP_RADIUS);
-    for (const [q, r] of ring) {
-      const { x, y } = hexToPixel(q, r);
-      const pts = this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.5);
-      gfx.lineStyle(2, 0x8b5e3c, 0.4);
-      gfx.strokePoints(pts, true);
-    }
-
-    // Draw a thicker outline just outside the boundary
     const outerRing = hexRing(0, 0, MAP_RADIUS + 1);
     for (const [q, r] of outerRing) {
       const { x, y } = hexToPixel(q, r);
-      // Dim "void" markers outside boundary
       gfx.fillStyle(0x1a1408, 0.6);
       const pts = this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.48);
       gfx.fillPoints(pts, true);
@@ -220,6 +211,8 @@ export class HexMapScene extends Phaser.Scene {
 
   shutdown() {
     this.bridge.destroy();
+    this.gridLines.forEach((g) => g.destroy());
+    this.gridLines.clear();
     this.terrainSprites.forEach((s) => s.destroy());
     this.terrainSprites.clear();
     this.ownerOverlays.forEach((g) => g.destroy());

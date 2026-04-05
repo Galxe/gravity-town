@@ -23,7 +23,7 @@ const BUILDING_STYLES: Record<string, { wall: number; roof: number; accent: numb
   medieval_house:       { wall: 0xd4b896, roof: 0xc06090, accent: 0x7b5ea7 },
 };
 
-const AGENT_COLORS: { body: number; face: number }[] = [
+export const AGENT_COLORS: { body: number; face: number }[] = [
   { body: 0x4a7eb5, face: 0xfff0d8 },  // blue
   { body: 0x4a9e5c, face: 0xfff0d8 },  // green
   { body: 0x7b5ea7, face: 0xfff0d8 },  // purple
@@ -127,13 +127,14 @@ function generateTerrainTexture(scene: Phaser.Scene, key: string, biome: string,
   gfx.destroy();
 }
 
-function generateBuildingTexture(scene: Phaser.Scene, key: string, buildingId: string) {
+export function generateBuildingTexture(scene: Phaser.Scene, key: string, buildingId: string, roofColor?: number) {
   if (scene.textures.exists(key)) return;
 
   const gfx = scene.add.graphics();
   const cx = TILE_W / 2;
   const cy = TILE_H / 2;
   const style = BUILDING_STYLES[buildingId] || BUILDING_STYLES.medieval_house;
+  const roof = roofColor ?? style.roof;
 
   // Shadow under building
   gfx.fillStyle(0x000000, 0.15);
@@ -169,7 +170,7 @@ function generateBuildingTexture(scene: Phaser.Scene, key: string, buildingId: s
   gfx.lineBetween(cx + 8.5, by + 8, cx + 8.5, by + 15);
 
   // Roof
-  gfx.fillStyle(style.roof, 1);
+  gfx.fillStyle(roof, 1);
   gfx.fillTriangle(cx - bw / 2 - 6, by + 2, cx + bw / 2 + 6, by + 2, cx, by - 22);
 
   // Roof highlight
