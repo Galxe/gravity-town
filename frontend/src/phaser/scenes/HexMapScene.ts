@@ -100,7 +100,7 @@ export class HexMapScene extends Phaser.Scene {
       if (!visible.has(key)) { gfx.destroy(); this.gridLines.delete(key); }
     });
 
-    // 2. Owned hexes: always rendered (few total), never viewport-culled
+    // 2. All hexes: always rendered (few total), never viewport-culled
     this.hexOwners.forEach((ownerId, key) => {
       const [q, r] = key.split(',').map(Number);
       const { x, y } = hexToPixel(q, r);
@@ -114,13 +114,21 @@ export class HexMapScene extends Phaser.Scene {
       }
 
       if (!this.ownerOverlays.has(key)) {
-        const color = OWNER_COLORS[(ownerId - 1) % OWNER_COLORS.length];
         const gfx = this.add.graphics();
-        gfx.fillStyle(color, 0.3);
         const pts = this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.5);
-        gfx.fillPoints(pts, true);
-        gfx.lineStyle(2.5, color, 0.6);
-        gfx.strokePoints(pts, true);
+        if (ownerId > 0) {
+          const color = OWNER_COLORS[(ownerId - 1) % OWNER_COLORS.length];
+          gfx.fillStyle(color, 0.3);
+          gfx.fillPoints(pts, true);
+          gfx.lineStyle(2.5, color, 0.6);
+          gfx.strokePoints(pts, true);
+        } else {
+          // Neutral/rebelled hex — dim outline
+          gfx.fillStyle(0x555555, 0.15);
+          gfx.fillPoints(pts, true);
+          gfx.lineStyle(1.5, 0x888888, 0.3);
+          gfx.strokePoints(pts, true);
+        }
         gfx.setDepth(0);
         this.ownerOverlays.set(key, gfx);
       }

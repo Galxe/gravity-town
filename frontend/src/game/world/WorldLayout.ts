@@ -68,12 +68,10 @@ export function computeWorldLayout(
     });
   }
 
-  // Build hex ownership map: "q,r" → ownerId
+  // Build hex ownership map: "q,r" → ownerId (0 = neutral/rebelled)
   const hexOwners = new Map<string, number>();
   for (const h of Object.values(hexes)) {
-    if (h.ownerId > 0) {
-      hexOwners.set(`${h.q},${h.r}`, h.ownerId);
-    }
+    hexOwners.set(`${h.q},${h.r}`, h.ownerId);
   }
 
   return { locations: resolvedLocations, agents: resolvedAgents, hexOwners };
