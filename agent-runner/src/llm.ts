@@ -381,8 +381,8 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       "get_agent", "get_nearby_agents",
       "add_memory", "read_memories", "compact_memories",
       "move_agent", "post_to_location", "read_inbox", "compact_inbox",
-      "get_my_hexes", "get_score", "get_claimable_hexes",
-      "build", "claim_hex", "attack", "raid",
+      "get_my_hexes", "get_score",
+      "build", "attack", "raid",
     ];
 
     if (selfTools.includes(tool.name)) {

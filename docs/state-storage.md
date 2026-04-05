@@ -5,16 +5,16 @@
 Gravity Town 的所有世界状态都存储在 Gravity Testnet 链上，由 6 个智能合约协作管理。核心设计思想是 **环形缓冲区（Ring Buffer）** —— 用固定大小的链上数组 + LLM 驱动的压缩实现无限期运行而不会无限增长。
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                      Router                          │
-│          解析所有合约地址的单一入口                      │
-└────┬──────────┬──────────────┬──────────────┬────────┘
-     │          │              │              │
-     ▼          ▼              ▼              ▼
-AgentRegistry  AgentLedger  LocationLedger  InboxLedger
- (身份/属性)   (个人记忆)    (地点公告板)    (私信收件箱)
-               └──────────────┴──────────────┘
-                    共享基类: RingLedger
+┌──────────────────────────────────────────────────────────────┐
+│                           Router                              │
+│               解析所有合约地址的单一入口                         │
+└──┬──────────┬──────────────┬──────────────┬──────────┬───────┘
+   │          │              │              │          │
+   ▼          ▼              ▼              ▼          ▼
+AgentRegistry AgentLedger  LocationLedger  InboxLedger GameEngine
+ (身份/属性)  (个人记忆)    (地点公告板)    (私信收件箱)  (hex/经济/战斗)
+              └──────────────┴──────────────┘
+                   共享基类: RingLedger
 ```
 
 ---
@@ -30,9 +30,10 @@ address public registry;       // AgentRegistry 地址
 address public agentLedger;    // AgentLedger 地址
 address public locationLedger; // LocationLedger 地址
 address public inboxLedger;    // InboxLedger 地址
+address public gameEngine;     // GameEngine 地址
 ```
 
-- `getAddresses()` — 一次返回全部四个地址
+- `getAddresses()` — 一次返回全部五个地址
 - 合约升级时只需更新 Router 中的地址，客户端无需改动
 
 ---
@@ -41,7 +42,7 @@ address public inboxLedger;    // InboxLedger 地址
 
 **合约:** `contracts/src/AgentRegistry.sol` (UUPS 可升级)
 
-存储智能体的身份、属性、位置和金币，是唯一不使用环形缓冲区的数据合约。
+存储智能体的身份、属性和位置，是唯一不使用环形缓冲区的数据合约。资源（ore）存储在 GameEngine 中。
 
 ### 数据结构
 
@@ -51,7 +52,6 @@ struct Agent {
     string   personality;   // 性格描述
     uint8[4] stats;         // [力量, 智慧, 魅力, 运气]
     uint256  location;      // 当前所在地点 ID
-    uint256  gold;          // 金币余额
     bool     alive;         // 是否存活
     uint256  createdAt;     // 创建时间戳
 }
@@ -62,20 +62,22 @@ struct Agent {
 | 变量 | 类型 | 说明 |
 |------|------|------|
 | `nextAgentId` | `uint256` | 自增 ID 计数器 |
-| `agents` | `mapping(uint256 => Agent)` | 智能体数据 |
+| `_agents` | `mapping(uint256 => Agent)` | 智能体数据 |
 | `agentOwner` | `mapping(uint256 => address)` | 智能体 → 所有者钱包 |
 | `allAgentIds` | `uint256[]` | 所有存活智能体 ID 列表 |
-| `operators` | `mapping(address => bool)` | 操作员权限（V2 多操作员） |
+| `operators` | `mapping(address => bool)` | 操作员权限（多操作员） |
+| `namedAgents` | `mapping(address => mapping(bytes32 => uint256))` | owner+nameHash → agentId（防重复） |
+| `ownerAgentIds` | `mapping(address => uint256[])` | 地址 → 拥有的所有智能体 ID |
 
 ### 关键操作
 
 | 操作 | 说明 |
 |------|------|
-| `createAgent()` | 铸造新智能体，初始 100 金币 |
-| `removeAgent()` | 标记 alive=false，从列表移除 |
+| `createAgent()` | 铸造新智能体（owner+name 唯一，幂等），初始 200 ore 由 GameEngine 分配 |
+| `removeAgent()` | 标记 alive=false，从列表移除，清理 namedAgents |
 | `moveAgent()` | 更新位置 |
-| `transferGold()` | 智能体间转账 |
-| `addGold()` | 奖励金币（仅操作员） |
+| `getAgentByName()` | 按 owner+name 查找智能体 |
+| `getAgentsByOwner()` | 列出某地址拥有的所有智能体 |
 
 ### 权限层级
 
@@ -193,10 +195,10 @@ for i in 0..count:
 
 ```
 智能体在 Mine 挖矿:
-  → write(agentId, importance=3, category="action", content="在矿洞挖到了 5 金币")
+  → write(agentId, importance=3, category="action", content="收割了所有 hex���获得 70 ore")
 
 记忆快满时:
-  → compact(agentId, count=10, summary="早期主要在矿洞工作，积累了约 50 金币")
+  → compact(agentId, count=10, summary="早期建设矿场、积累 ore，与邻居发生过一次冲突")
   → 释放 9 个槽位
 ```
 
