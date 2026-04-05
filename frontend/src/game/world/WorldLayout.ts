@@ -21,8 +21,7 @@ export function computeWorldLayout(
 
   locArray.forEach((loc) => {
     const hex = locToHex[loc.id];
-    // Only show locations that are tied to an agent's hex
-    if (!hex || hex.ownerId <= 0) return;
+    if (!hex) return;
 
     const q = loc.q * LOCATION_SPREAD;
     const r = loc.r * LOCATION_SPREAD;
@@ -31,7 +30,7 @@ export function computeWorldLayout(
       id: loc.id,
       name: loc.name,
       ownerId: hex.ownerId,
-      ownerName: agents[hex.ownerId]?.name ?? `#${hex.ownerId}`,
+      ownerName: hex.ownerId > 0 ? (agents[hex.ownerId]?.name ?? `#${hex.ownerId}`) : 'Neutral',
       center: hexToPixel(q, r),
       centerHex: { q, r },
     });
@@ -68,12 +67,10 @@ export function computeWorldLayout(
     });
   }
 
-  // Build hex ownership map: "q,r" → ownerId
+  // Build hex ownership map: "q,r" → ownerId (0 = neutral/rebelled)
   const hexOwners = new Map<string, number>();
   for (const h of Object.values(hexes)) {
-    if (h.ownerId > 0) {
-      hexOwners.set(`${h.q},${h.r}`, h.ownerId);
-    }
+    hexOwners.set(`${h.q},${h.r}`, h.ownerId);
   }
 
   return { locations: resolvedLocations, agents: resolvedAgents, hexOwners };

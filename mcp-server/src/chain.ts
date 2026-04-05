@@ -11,6 +11,8 @@ const AGENT_REGISTRY_ABI = [
   "function getAgentCount() view returns (uint256)",
   "function getAllAgentIds() view returns (uint256[])",
   "function agentOwner(uint256) view returns (address)",
+  "function getAgentByName(address ownerAddr, string name) view returns (uint256)",
+  "function getAgentsByOwner(address ownerAddr) view returns (uint256[])",
 ];
 
 const ENTRY_TUPLE = "tuple(uint256 id, uint256 authorAgent, uint256 blockNumber, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)";
@@ -161,6 +163,16 @@ export class ChainClient {
       } catch {}
     }
     return { agentId, hexKey, txHash: receipt.transactionHash };
+  }
+
+  async findAgentByName(name: string, ownerAddr: string): Promise<number> {
+    const id = Number(await this.registry.getAgentByName(ownerAddr, name));
+    return id; // 0 = not found
+  }
+
+  async getAgentsByOwner(ownerAddr: string) {
+    const ids: bigint[] = await this.registry.getAgentsByOwner(ownerAddr);
+    return Promise.all(ids.map((id) => this.getAgent(Number(id))));
   }
 
   async getAgent(agentId: number) {

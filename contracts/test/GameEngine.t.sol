@@ -52,9 +52,12 @@ contract GameEngineTest is Test {
         registry.addOperator(address(engine));
     }
 
+    uint256 _agentCounter;
+
     function _createAgent(address ownerAddr) internal returns (uint256 agentId, bytes32 hexKey) {
+        string memory name = string.concat("Agent", vm.toString(++_agentCounter));
         vm.prank(ownerAddr);
-        (agentId, hexKey) = engine.createAgent("Agent", "brave", defaultStats, ownerAddr);
+        (agentId, hexKey) = engine.createAgent(name, "brave", defaultStats, ownerAddr);
     }
 
     // ══════════════════════════════════════════════════
@@ -76,6 +79,26 @@ contract GameEngineTest is Test {
         // Center hex is owned
         (uint256 owner, , , , , , , , , ) = engine.getHex(hexKey);
         assertEq(owner, agentId);
+    }
+
+    function test_DuplicateNameSameOwnerReverts() public {
+        vm.prank(player1);
+        engine.createAgent("Mira", "cunning", defaultStats, player1);
+
+        vm.prank(player1);
+        vm.expectRevert("agent with this name already exists for owner");
+        engine.createAgent("Mira", "different personality", defaultStats, player1);
+    }
+
+    function test_SameNameDifferentOwnerOk() public {
+        vm.prank(player1);
+        engine.createAgent("Mira", "cunning", defaultStats, player1);
+
+        vm.prank(player2);
+        engine.createAgent("Mira", "brave", defaultStats, player2);
+
+        assertEq(registry.getAgentByName(player1, "Mira"), 1);
+        assertEq(registry.getAgentByName(player2, "Mira"), 2);
     }
 
     function test_TwoAgentsGetDifferentClusters() public {
