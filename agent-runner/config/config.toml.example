@@ -13,7 +13,7 @@ private_key = "0x859b68e0eddb79598540a35dcd0f7cf4df7c7b8cad35151177439268566cbfa
 
 # Gravity Alpha Testnet (contracts deployed)
 rpc_url = "https://rpc-testnet.gravity.xyz"
-router_address = "0x4Dc86C56651a5d85e9d44FF5591594568602Fa3A"
+router_address = "0x96EBC8b846795d19130e1Dd944B61Ab90696bA1a"
 
 # For local dev (anvil), uncomment these and comment out the testnet lines above:
 # rpc_url = "http://127.0.0.1:8545"
@@ -37,4 +37,4 @@ max_history_length = 20
 # === Single-agent fallback (used only when accounts.json does not exist) ===
 [agent]
 id = 1
-goal = "Explore the town, socialize actively, record important memories, and advance the world clock when the time is right."
+goal = "Build arsenals and raid enemy hexes to capture territory. Ore pool caps at 1000 — spend it on raids or lose it. Post to hex boards to maintain happiness."
