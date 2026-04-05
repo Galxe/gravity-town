@@ -6,8 +6,25 @@ export interface Agent {
   personality: string;
   stats: number[];
   location: number;
-  gold: number;
+  hexCount: number;
+  score: number;
   createdAt: number;
+}
+
+export interface HexData {
+  hexKey: string;
+  ownerId: number;
+  locationId: number;
+  q: number;
+  r: number;
+  mineCount: number;
+  arsenalCount: number;
+  ore: number;
+  lastHarvest: number;
+  reserve: number;
+  usedSlots: number;
+  totalSlots: number;
+  defense: number;
 }
 
 export interface LocationData {
@@ -19,7 +36,6 @@ export interface LocationData {
   r: number;
 }
 
-/** Unified entry — same structure for memories, location board, and inbox */
 export interface Entry {
   id: number;
   authorAgent: number;
@@ -56,6 +72,8 @@ export interface SelectedEntity {
 export interface GameState {
   agents: Record<number, Agent>;
   locations: Record<number, LocationData>;
+  hexes: Record<string, HexData>;          // keyed by hexKey
+  agentHexes: Record<number, HexData[]>;   // agentId → owned hexes
   memories: Record<number, BoardState>;
   locationBoards: Record<number, BoardState>;
   inbox: Record<number, BoardState>;
@@ -64,6 +82,8 @@ export interface GameState {
   hoveredEntity: HoveredEntity | null;
   setAgents: (agents: Record<number, Agent>) => void;
   setLocations: (locations: Record<number, LocationData>) => void;
+  setHexes: (hexes: Record<string, HexData>) => void;
+  setAgentHexes: (agentId: number, hexes: HexData[]) => void;
   setMemories: (agentId: number, board: BoardState) => void;
   setLocationBoard: (locationId: number, board: BoardState) => void;
   setInbox: (agentId: number, board: BoardState) => void;
@@ -75,6 +95,8 @@ export interface GameState {
 export const useGameStore = create<GameState>((set) => ({
   agents: {},
   locations: {},
+  hexes: {},
+  agentHexes: {},
   memories: {},
   locationBoards: {},
   inbox: {},
@@ -83,6 +105,10 @@ export const useGameStore = create<GameState>((set) => ({
   hoveredEntity: null,
   setAgents: (agents) => set({ agents }),
   setLocations: (locations) => set({ locations }),
+  setHexes: (hexes) => set({ hexes }),
+  setAgentHexes: (agentId, hexes) => set((state) => ({
+    agentHexes: { ...state.agentHexes, [agentId]: hexes },
+  })),
   setMemories: (agentId, board) => set((state) => ({
     memories: { ...state.memories, [agentId]: board },
   })),

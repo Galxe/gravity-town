@@ -4,19 +4,32 @@ export const ENTRY_TUPLE =
   'tuple(uint256 id, uint256 authorAgent, uint256 blockNumber, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)';
 
 export const ROUTER_ABI = [
-  'function getAddresses() view returns (address, address, address, address)',
+  'function getAddresses() view returns (address, address, address, address, address)',
 ];
 
 export const REGISTRY_ABI = [
-  'function getAgent(uint256) view returns (string, string, uint8[4], uint256, uint256, uint256)',
+  'function getAgent(uint256) view returns (string, string, uint8[4], uint256, uint256)',
   'function getAllAgentIds() view returns (uint256[])',
   // Events
   'event AgentCreated(uint256 indexed agentId, string name, address indexed owner)',
   'event AgentRemoved(uint256 indexed agentId)',
   'event AgentMoved(uint256 indexed agentId, uint256 fromLocation, uint256 toLocation)',
-  'event GoldTransferred(uint256 indexed fromAgent, uint256 indexed toAgent, uint256 amount)',
-  'event GoldAdded(uint256 indexed agentId, uint256 amount)',
-  'event StatsUpdated(uint256 indexed agentId, uint8[4] newStats)',
+];
+
+export const GAME_ENGINE_ABI = [
+  'function getScore(uint256) view returns (uint256)',
+  'function hexCount(uint256) view returns (uint256)',
+  'function getAgentHexKeys(uint256) view returns (bytes32[])',
+  'function getAllHexKeys() view returns (bytes32[])',
+  'function getHex(bytes32) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 lastHarvest, uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt)',
+  'function orePool(uint256) view returns (uint256)',
+  // Events
+  'event AgentCreated(uint256 indexed agentId, bytes32 indexed hexKey, uint256 locationId)',
+  'event Built(uint256 indexed agentId, bytes32 indexed hexKey, uint8 buildingType)',
+  'event Harvested(uint256 indexed agentId, uint256 oreGained)',
+  'event AttackResult(uint256 indexed attackerId, bytes32 indexed targetHexKey, uint256 attackPower, uint256 defensePower, bool success)',
+  'event HexCaptured(uint256 indexed newOwner, bytes32 indexed hexKey, uint256 indexed oldOwner)',
+  'event HexRebelled(bytes32 indexed hexKey, uint256 indexed oldOwner)',
 ];
 
 export const AGENT_LEDGER_ABI = [

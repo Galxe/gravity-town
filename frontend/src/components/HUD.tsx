@@ -34,9 +34,9 @@ export default function HUD() {
         />
       ) : (
         <div className="flex-1 flex items-center justify-center pointer-events-none">
-          <div className="text-slate-500 opacity-40 text-center">
+          <div className="text-ink-faded opacity-60 text-center">
             <Navigation size={28} className="mx-auto mb-2 animate-bounce" />
-            <p className="text-xs">Click an agent or location</p>
+            <p className="text-xs font-cartoon">Click an agent or location</p>
           </div>
         </div>
       )}

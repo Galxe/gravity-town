@@ -217,34 +217,180 @@ export async function createChatCompletion(
 export function buildSystemPrompt(goal: string, customPrompt: string | undefined, context: AgentContext): string {
   const self = (typeof context.self === "object" && context.self ? context.self : {}) as AgentSnapshot;
   const lines = [
-    "You are an autonomous agent living inside Gravity Town.",
+    "You are an autonomous agent in Gravity Town — a hex-territory PvP world on-chain.",
     `Your persistent objective: ${goal}`,
     `Current agent profile: ${self.name || "unknown"} | personality: ${self.personality || "unknown"}`,
-    "You must behave like an in-world character, not like an assistant talking to a user.",
-    "Prefer concrete in-world actions: moving, posting to the location board, remembering, gifting gold, sending messages, and advancing the world tick when appropriate.",
-    "There are three boards you interact with, all using the same structure: your MEMORIES (add_memory/read_memories), the LOCATION BOARD (post_to_location/read_location) visible to everyone, and your INBOX (send_message/read_inbox) for private DMs across locations.",
-    "Each board returns { entries, used, capacity }. When used/capacity is high, call the compact tool to summarize old entries and free slots.",
-    "Keep outputs short and action-oriented.",
-    "When you use a tool that changes the world, make sure the arguments are realistic and internally consistent.",
-    "Avoid repeating the same action with the same explanation unless the world state actually changed.",
-    "If you have enough information, call tools instead of describing what you might do.",
-    "When the cycle is complete, respond with a brief summary of what you decided or accomplished.",
+    "You must behave like an in-world character, not an assistant.",
+    "",
+    "=== WORLD ===",
+    "The map is a hex grid with radius 8 from origin (max ~217 hexes). Beyond the boundary you cannot claim.",
+    "Only agent-claimed hexes exist as 'land'. Each hex has a bulletin board (post_to_location/read_location).",
+    "You were born on a hex near origin. You can claim adjacent hexes to expand territory (claim_hex). Cost: 200, 400, 800... ore (exponential).",
+    "Move between hexes with move_agent (pass location_id from get_my_hexes or get_world).",
+    "The world is small and crowded — conflict is inevitable. Expand fast before others take all the land.",
+    "",
+    "=== ECONOMY ===",
+    "One resource: Ore. Each hex has a RESERVE (starts at 2000). Full production while reserve > 0, then drops to 2 ore/min (trickle).",
+    "This means OLD hexes become nearly worthless. You MUST expand to fresh hexes for real income.",
+    "Call 'harvest' on a hex_key to collect. Check 'reserve' field in get_my_hexes output.",
+    "Two building types, 12 slots per hex, INSTANT construction:",
+    "  build type 1 = Mine (50 ore): +5 ore/min (while reserve > 0)",
+    "  build type 2 = Arsenal (100 ore): +5 defense, consumable as +5 attack",
+    "Score = hexes×100 + total_ore + buildings×50.",
+    "",
+    "=== KEY TOOLS ===",
+    "get_my_hexes — shows your hexes WITH claimable adjacent empty hexes and claim cost",
+    "harvest(hex_key) — collect pending ore on a hex",
+    "build(agent_id, hex_key, building_type) — instant build (1=mine, 2=arsenal)",
+    "get_claimable_hexes(agent_id) — list empty hexes you can claim + cost",
+    "claim_hex(agent_id, q, r, source_hex_key) — claim an adjacent empty hex, pay ore from source",
+    "raid(agent_id, target_hex_key, arsenal_spend, ore_spend) — ONE-STEP attack (auto-moves you + attacks). Use this instead of manual move+attack.",
+    "get_hex(hex_key) — scout any hex to see buildings/defense/ore",
+    "",
+    "=== COMBAT ===",
+    "Use 'raid' to attack (simplest). It auto-moves you to the target and attacks.",
+    "Attack power = arsenals_spent×5 + ore_spent. Defense = target's arsenals×5.",
+    "Win: target hex destroyed + unclaimed. Lose: your spent resources gone.",
+    "WARNING: While you're at an enemy hex, YOUR hexes are undefended.",
+    "",
+    "=== ACTION PRIORITY (every cycle, pick from top) ===",
+    "1. HARVEST all your hexes (collect pending ore)",
+    "2. If you can afford it: CLAIM a new hex (get_claimable_hexes → claim_hex). Expansion > building.",
+    "3. If hex has empty slots: BUILD (mines first for income, then arsenals for defense)",
+    "4. SCOUT other agents' hexes (get_world → get_hex on their hex_keys)",
+    "5. RAID weak targets: if they have fewer arsenals than you, attack!",
+    "6. DIPLOMACY: read_inbox, send_message to threaten/ally/trade",
+    "7. MEMORIES: add_memory for important events only",
+    "",
+    "NEVER do only harvest+build in a cycle. Always try to expand, scout, or interact too.",
+    "",
+    "=== DIPLOMACY ===",
+    "send_message for threats, alliances, trade. Promises are non-binding.",
+    "",
+    "=== BOARDS ===",
+    "MEMORIES (add_memory/read_memories), HEX BOARD (post_to_location/read_location), INBOX (send_message/read_inbox).",
+    "Compact when board usage > 75%.",
+    "",
+    "=== VICTORY CONDITION ===",
+    "The agent with the MOST HEX TERRITORIES wins. Territory count is everything.",
+    "Expand aggressively, raid enemies to destroy their hexes, then claim the land.",
+    "",
+    "=== RULES ===",
+    "- ALWAYS call tools. Don't describe intentions — TAKE ACTION.",
+    "- Every cycle MUST include at least: harvest + one of (claim, raid, send_message, scout).",
+    "- Do NOT just harvest and build every cycle. You WILL lose if you turtle.",
+    "- If you have 200+ ore and can claim: CLAIM NOW. Expansion is the #1 priority.",
   ];
 
   if (customPrompt) {
-    lines.push(`Additional operator instructions: ${customPrompt}`);
+    lines.push(`\nAdditional operator instructions: ${customPrompt}`);
   }
 
   return lines.join("\n");
 }
 
 export function buildUserPrompt(context: AgentContext): string {
+  // Extract key metrics for phase detection
+  const self = (typeof context.self === "object" && context.self ? context.self : {}) as Record<string, unknown>;
+  const myHexes = context.myHexes as { hexes?: any[]; claimableHexes?: any[] } | null;
+  const hexCount = Array.isArray(myHexes?.hexes) ? myHexes!.hexes.length : 0;
+  const totalMines = Array.isArray(myHexes?.hexes)
+    ? myHexes!.hexes.reduce((s: number, h: any) => s + (Number(h.mineCount) || 0), 0)
+    : 0;
+  const totalArsenals = Array.isArray(myHexes?.hexes)
+    ? myHexes!.hexes.reduce((s: number, h: any) => s + (Number(h.arsenalCount) || 0), 0)
+    : 0;
+  const totalOre = Array.isArray(myHexes?.hexes)
+    ? myHexes!.hexes.reduce((s: number, h: any) => s + (Number(h.ore) || 0), 0)
+    : 0;
+  const totalReserve = Array.isArray(myHexes?.hexes)
+    ? myHexes!.hexes.reduce((s: number, h: any) => s + (Number(h.reserve) || 0), 0)
+    : 0;
+  const depletedHexes = Array.isArray(myHexes?.hexes)
+    ? myHexes!.hexes.filter((h: any) => Number(h.reserve) === 0).length
+    : 0;
+  const canClaim = Array.isArray(myHexes?.claimableHexes) && myHexes!.claimableHexes.length > 0;
+
+  // Count other agents in the world
+  const world = context.world as { locations?: any[] } | null;
+  const worldAgentIds = new Set<number>();
+  if (Array.isArray(world?.locations)) {
+    for (const loc of world!.locations) {
+      if (Array.isArray(loc.agents)) {
+        for (const a of loc.agents) worldAgentIds.add(Number(a.id || a));
+      }
+    }
+  }
+  const selfId = Number(self.id || 0);
+  worldAgentIds.delete(selfId);
+  const otherAgentCount = worldAgentIds.size;
+
+  // Phase detection & directive
+  let phaseDirective: string;
+  if (hexCount <= 1 && totalMines < 2) {
+    phaseDirective = [
+      "PHASE: EARLY GAME — You just started.",
+      "Priority: harvest ore, build 2-3 mines for income. Once you have 200+ ore, CLAIM a second hex immediately.",
+      "Don't just build — you MUST expand or you'll fall behind.",
+    ].join("\n");
+  } else if (hexCount <= 2 && totalArsenals < 1) {
+    phaseDirective = [
+      "PHASE: EARLY EXPANSION — You have some territory.",
+      "Priority: Build 1-2 arsenals for defense, then CLAIM more hexes. Check get_claimable_hexes and expand NOW.",
+      "Harvest all your hexes first, then spend ore on expansion.",
+      otherAgentCount > 0
+        ? `There are ${otherAgentCount} other agents in the world. Send them a message to scout their intentions.`
+        : "",
+    ].filter(Boolean).join("\n");
+  } else if (totalArsenals >= 1 && hexCount <= 3) {
+    phaseDirective = [
+      "PHASE: MID GAME — Time to get aggressive.",
+      "Priority: EXPAND territory (claim_hex) and SCOUT enemies (get_hex on their hexes from get_world).",
+      `You have ${totalArsenals} arsenal(s) and ${totalOre} ore. ${canClaim ? "You CAN claim more hexes — DO IT." : "Build more mines for income."}`,
+      depletedHexes > 0
+        ? `WARNING: ${depletedHexes} of your hexes are DEPLETED (reserve=0, only 2 ore/min). You NEED fresh territory!`
+        : `Reserve remaining: ${totalReserve}. Your hexes will deplete — plan expansion NOW.`,
+      otherAgentCount > 0
+        ? "Use send_message to threaten or ally with other agents. Check read_inbox for replies."
+        : "",
+      "Don't just sit and harvest — MOVE and ACT.",
+    ].filter(Boolean).join("\n");
+  } else {
+    phaseDirective = [
+      "PHASE: LATE GAME — Dominate the map.",
+      `You have ${hexCount} hexes, ${totalArsenals} arsenals, ${totalOre} ore.`,
+      depletedHexes > 0
+        ? `CRITICAL: ${depletedHexes}/${hexCount} hexes are DEPLETED. Your income is dying. Raid enemies for fresh land or claim new hexes!`
+        : `Reserve remaining: ${totalReserve}. Expand before your hexes deplete.`,
+      "Priority: RAID weaker agents to destroy their hexes, then claim the empty land.",
+      "Use get_world to find targets. Use get_hex to scout defense. Use raid to attack.",
+      canClaim ? "Also claim any available adjacent hexes to grow your territory." : "",
+      otherAgentCount > 0
+        ? "Send threatening messages to weaker agents. Form alliances with strong ones."
+        : "",
+      "Score = hexes × 100 + ore + buildings × 50. MORE HEXES = MORE SCORE. Be aggressive!",
+    ].filter(Boolean).join("\n");
+  }
+
+  // Inbox nudge
+  const inbox = context.inbox as { entries?: any[]; used?: number } | null;
+  const unreadCount = inbox?.used || 0;
+  const inboxNudge = unreadCount > 0
+    ? `You have ${unreadCount} inbox messages. READ THEM and respond — diplomacy wins wars.`
+    : "";
+
   return [
     `Timestamp: ${nowIso()}`,
+    "",
+    phaseDirective,
+    inboxNudge,
+    "",
+    "IMPORTANT: Do NOT repeat the same actions every cycle. If you built last cycle, expand or scout this cycle. Vary your strategy.",
+    "IMPORTANT: Call tools — don't just describe what you plan to do. TAKE ACTION NOW.",
+    "",
     "Current world snapshot:",
     stringify(context),
-    "Decide what to do in this cycle. You may call tools multiple times before giving your final short summary.",
-  ].join("\n\n");
+  ].filter(Boolean).join("\n");
 }
 
 export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDefinition[] {
@@ -256,9 +402,11 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
         : {};
 
     const selfTools = [
-      "get_agent", "get_nearby_agents", "get_balance",
+      "get_agent", "get_nearby_agents",
       "add_memory", "read_memories", "compact_memories",
       "move_agent", "post_to_location", "read_inbox", "compact_inbox",
+      "get_my_hexes", "get_score", "get_claimable_hexes",
+      "build", "claim_hex", "attack", "raid",
     ];
 
     if (selfTools.includes(tool.name)) {
@@ -268,7 +416,7 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       };
     }
 
-    if (tool.name === "transfer_gold" || tool.name === "send_message") {
+    if (tool.name === "send_message") {
       properties.from_agent = {
         type: "number",
         description: `Defaults to controlled agent id ${agentId}`,

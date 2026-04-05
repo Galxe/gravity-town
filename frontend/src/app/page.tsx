@@ -12,7 +12,7 @@ export default function Home() {
   useGameEngine();
 
   return (
-    <main className="w-screen h-screen overflow-hidden bg-[#080c16] relative">
+    <main className="w-screen h-screen overflow-hidden bg-[#1a1408] relative">
       <Suspense fallback={<div className="text-white text-center mt-20 font-mono animate-pulse">Initializing Game Engine...</div>}>
         <div className="absolute inset-0">
           <PhaserMap />

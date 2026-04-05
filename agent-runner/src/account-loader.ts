@@ -12,6 +12,7 @@ interface TomlConfig {
     api_key?: string;
     base_url?: string;
     model?: string;
+    max_context_length?: number;
   };
   mcp?: {
     private_key?: string;
@@ -141,6 +142,7 @@ export function loadGlobalConfig(): GlobalConfig {
     defaultLoopDelayMs: cfg.runner?.loop_delay_ms ?? 8000,
     defaultMaxToolRoundsPerCycle: cfg.runner?.max_tool_rounds_per_cycle ?? 6,
     defaultMaxHistoryLength: cfg.runner?.max_history_length ?? 20,
+    defaultMaxContextLength: cfg.llm?.max_context_length ?? 0,
     mcpServer,
   };
 }
@@ -166,6 +168,7 @@ export function loadAccounts(): AccountConfig[] {
       heartbeatMs: acc.heartbeatMs,
       maxToolRoundsPerCycle: acc.maxToolRoundsPerCycle,
       maxHistoryLength: acc.maxHistoryLength,
+      maxContextLength: acc.maxContextLength,
       enabled: acc.enabled !== false,
     }));
   }

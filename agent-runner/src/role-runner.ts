@@ -32,8 +32,9 @@ export class RoleRunner {
   /** Persistent conversation history across cycles */
   private conversationHistory: Message[] = [];
   private maxHistoryLength: number;
+  private maxContextLength: number;
 
-  private heartbeatMs: number;
+  public heartbeatMs: number;
   private maxToolRoundsPerCycle: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private _status: RoleStatus = "idle";
@@ -58,6 +59,7 @@ export class RoleRunner {
     this.heartbeatMs = accountConfig.heartbeatMs ?? globalConfig.defaultLoopDelayMs;
     this.maxToolRoundsPerCycle = accountConfig.maxToolRoundsPerCycle ?? globalConfig.defaultMaxToolRoundsPerCycle;
     this.maxHistoryLength = accountConfig.maxHistoryLength ?? globalConfig.defaultMaxHistoryLength;
+    this.maxContextLength = accountConfig.maxContextLength ?? globalConfig.defaultMaxContextLength;
   }
 
   get status(): RoleStatus {
@@ -73,10 +75,19 @@ export class RoleRunner {
     this.log(`heartbeat updated to ${ms}ms`);
   }
 
+  /** Cancel current scheduled tick and reschedule with a custom delay (for staggering) */
+  rescheduleWithDelay(delayMs: number): void {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.timer = setTimeout(() => this.tick(), delayMs);
+  }
+
   start(): void {
     if (this._status !== "idle" && this._status !== "stopped") return;
     this._status = "idle";
-    this.log(`started (hb=${this.heartbeatMs}ms, maxRounds=${this.maxToolRoundsPerCycle}, historyWindow=${this.maxHistoryLength})`);
+    this.log(`started (hb=${this.heartbeatMs}ms, maxRounds=${this.maxToolRoundsPerCycle}, historyWindow=${this.maxHistoryLength}, maxCtx=${this.maxContextLength || "unlimited"})`);
     this.scheduleNext();
   }
 
@@ -284,10 +295,34 @@ export class RoleRunner {
     this.trimHistory();
   }
 
+  /** Estimate token count for a message (~4 chars per token). */
+  private static estimateTokens(msg: Message): number {
+    let chars = (msg.content || "").length + (msg.role?.length || 0);
+    if (msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        chars += tc.function.name.length + tc.function.arguments.length;
+      }
+    }
+    return Math.ceil(chars / 4);
+  }
+
   private trimHistory(): void {
+    // 1. Trim by message count
     if (this.conversationHistory.length > this.maxHistoryLength) {
       const excess = this.conversationHistory.length - this.maxHistoryLength;
       this.conversationHistory = this.conversationHistory.slice(excess);
+    }
+
+    // 2. Trim by estimated token count (if configured)
+    if (this.maxContextLength > 0) {
+      let totalTokens = 0;
+      for (const msg of this.conversationHistory) {
+        totalTokens += RoleRunner.estimateTokens(msg);
+      }
+      while (this.conversationHistory.length > 0 && totalTokens > this.maxContextLength) {
+        const removed = this.conversationHistory.shift()!;
+        totalTokens -= RoleRunner.estimateTokens(removed);
+      }
     }
   }
 

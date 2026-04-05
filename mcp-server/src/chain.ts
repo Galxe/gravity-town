@@ -1,20 +1,18 @@
-// Chain interaction layer — unified ledger architecture
+// Chain interaction layer — hex territory economy
 import { ethers } from "ethers";
+
+// ──────────────────── ABIs ────────────────────
 
 const AGENT_REGISTRY_ABI = [
   "event AgentCreated(uint256 indexed agentId, string name, address indexed owner)",
-  "function createAgent(string name, string personality, uint8[4] stats, uint256 location, address agentOwnerAddr) returns (uint256)",
-  "function getAgent(uint256 agentId) view returns (string name, string personality, uint8[4] stats, uint256 location, uint256 gold, uint256 createdAt)",
+  "function getAgent(uint256 agentId) view returns (string name, string personality, uint8[4] stats, uint256 location, uint256 createdAt)",
+  "function isAlive(uint256 agentId) view returns (bool)",
   "function moveAgent(uint256 agentId, uint256 toLocation)",
-  "function transferGold(uint256 fromAgent, uint256 toAgent, uint256 amount)",
-  "function addGold(uint256 agentId, uint256 amount)",
-  "function updateStats(uint256 agentId, uint8[4] newStats)",
   "function getAgentCount() view returns (uint256)",
   "function getAllAgentIds() view returns (uint256[])",
   "function agentOwner(uint256) view returns (address)",
 ];
 
-// Shared Entry struct ABI fragment (same for all three ledgers)
 const ENTRY_TUPLE = "tuple(uint256 id, uint256 authorAgent, uint256 blockNumber, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)";
 
 const AGENT_LEDGER_ABI = [
@@ -24,15 +22,12 @@ const AGENT_LEDGER_ABI = [
 ];
 
 const LOCATION_LEDGER_ABI = [
-  `function createLocation(string name, string description, int32 q, int32 r) returns (uint256)`,
-  `function getLocation(uint256 locationId) view returns (string name, string description, int32 q, int32 r)`,
+  `function getLocation(uint256) view returns (string, string, int32, int32)`,
   `function getAllLocationIds() view returns (uint256[])`,
-  `function getAgentsAtLocation(uint256 locationId) view returns (uint256[])`,
+  `function getAgentsAtLocation(uint256) view returns (uint256[])`,
   `function write(uint256 agentId, uint8 importance, string category, string content, uint256[] relatedAgents) returns (uint256 entryId, uint256 used, uint256 capacity)`,
   `function readRecent(uint256 locationId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
   `function compact(uint256 locationId, uint256 count, uint256 authorAgent, uint8 importance, string category, string summaryContent) returns (uint256 summaryId, uint256 used, uint256 capacity)`,
-  `function advanceTick()`,
-  `function currentTick() view returns (uint256)`,
 ];
 
 const INBOX_LEDGER_ABI = [
@@ -42,9 +37,33 @@ const INBOX_LEDGER_ABI = [
   `function compact(uint256 agentId, uint256 count, uint8 importance, string category, string summaryContent) returns (uint256 summaryId, uint256 used, uint256 capacity)`,
 ];
 
-const ROUTER_ABI = [
-  "function getAddresses() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger)",
+const GAME_ENGINE_ABI = [
+  "event AgentCreated(uint256 indexed agentId, bytes32 indexed hexKey, uint256 locationId)",
+  "event HexClaimed(uint256 indexed agentId, bytes32 indexed hexKey, int32 q, int32 r, uint256 locationId)",
+  "event HexLost(uint256 indexed agentId, bytes32 indexed hexKey)",
+  "event Built(uint256 indexed agentId, bytes32 indexed hexKey, uint8 buildingType)",
+  "event Harvested(bytes32 indexed hexKey, uint256 oreGained)",
+  "event AttackResult(uint256 indexed attackerId, bytes32 indexed targetHexKey, uint256 attackPower, uint256 defensePower, bool success)",
+  "function createAgent(string name, string personality, uint8[4] stats, address ownerAddr) returns (uint256 agentId, bytes32 hexKey)",
+  "function claimHex(uint256 agentId, int32 q, int32 r, bytes32 sourceHexKey)",
+  "function harvest(bytes32 hexKey)",
+  "function build(uint256 agentId, bytes32 hexKey, uint8 buildingType)",
+  "function attack(uint256 agentId, bytes32 targetHexKey, bytes32 sourceHexKey, uint256 arsenalSpend, uint256 oreSpend)",
+  "function getScore(uint256 agentId) view returns (uint256)",
+  "function getHex(bytes32 hexKey) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 ore, uint256 lastHarvest, uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt)",
+  "function getAgentHexKeys(uint256 agentId) view returns (bytes32[])",
+  "function hexCount(uint256 agentId) view returns (uint256)",
+  "function getClaimCost(uint256 agentId) view returns (uint256)",
+  "function toKey(int32 q, int32 r) view returns (bytes32)",
+  "function getClaimableHexes(uint256 agentId) view returns (int32[] qs, int32[] rs)",
+  "function raid(uint256 agentId, bytes32 targetHexKey, uint256 arsenalSpend, uint256 oreSpend)",
 ];
+
+const ROUTER_ABI = [
+  "function getAddresses() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger, address gameEngine)",
+];
+
+// ──────────────────── Types ────────────────────
 
 export interface ChainConfig {
   rpcUrl: string;
@@ -52,7 +71,6 @@ export interface ChainConfig {
   routerAddress: string;
 }
 
-// Formatted entry returned to MCP tools
 export interface FormattedEntry {
   id: number;
   authorAgent: number;
@@ -77,6 +95,8 @@ export interface WriteResult {
   txHash: string;
 }
 
+// ──────────────────── ChainClient ────────────────────
+
 export class ChainClient {
   provider: ethers.providers.JsonRpcProvider;
   signer: ethers.Wallet;
@@ -84,6 +104,7 @@ export class ChainClient {
   agentLedger: ethers.Contract = null!;
   locationLedger: ethers.Contract = null!;
   inboxLedger: ethers.Contract = null!;
+  gameEngine: ethers.Contract = null!;
   private _ready: Promise<void>;
 
   constructor(config: ChainConfig) {
@@ -94,31 +115,26 @@ export class ChainClient {
     const signer = this.signer;
     this._ready = (async () => {
       const router = new ethers.Contract(config.routerAddress, ROUTER_ABI, provider);
-      const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr] = await router.getAddresses();
+      const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr] =
+        await router.getAddresses();
       this.registry = new ethers.Contract(registryAddr, AGENT_REGISTRY_ABI, signer);
       this.agentLedger = new ethers.Contract(agentLedgerAddr, AGENT_LEDGER_ABI, signer);
       this.locationLedger = new ethers.Contract(locationLedgerAddr, LOCATION_LEDGER_ABI, signer);
       this.inboxLedger = new ethers.Contract(inboxLedgerAddr, INBOX_LEDGER_ABI, signer);
+      this.gameEngine = new ethers.Contract(engineAddr, GAME_ENGINE_ABI, signer);
     })();
   }
 
-  /** Wait for router resolution to complete */
-  async ready(): Promise<void> {
-    await this._ready;
-  }
+  async ready(): Promise<void> { await this._ready; }
 
-  // ============ Shared helpers ============
+  // ============ Helpers ============
 
   private formatEntry(e: any): FormattedEntry {
     return {
-      id: Number(e.id),
-      authorAgent: Number(e.authorAgent),
-      blockNumber: Number(e.blockNumber),
-      timestamp: Number(e.timestamp),
-      importance: Number(e.importance),
-      category: e.category,
-      content: e.content,
-      relatedAgents: e.relatedAgents.map((a: any) => Number(a)),
+      id: Number(e.id), authorAgent: Number(e.authorAgent),
+      blockNumber: Number(e.blockNumber), timestamp: Number(e.timestamp),
+      importance: Number(e.importance), category: e.category,
+      content: e.content, relatedAgents: e.relatedAgents.map((a: any) => Number(a)),
     };
   }
 
@@ -126,36 +142,38 @@ export class ChainClient {
     return entries.map((e: any) => this.formatEntry(e));
   }
 
-  // ============ Agent Operations ============
+  // ============ Agent ============
 
-  async createAgent(name: string, personality: string, stats: number[], location: number, ownerAddr: string) {
-    const tx = await this.registry.createAgent(name, personality, stats, location, ownerAddr);
+  async createAgent(name: string, personality: string, stats: number[], ownerAddr: string) {
+    const tx = await this.gameEngine.createAgent(name, personality, stats, ownerAddr);
     const receipt = await tx.wait();
     let agentId: string | null = null;
-    const event = receipt.events?.find((entry: any) => entry.event === "AgentCreated");
-    if (event?.args?.[0] != null) {
-      agentId = event.args[0].toString();
-    } else if (receipt.logs?.length > 0) {
-      const iface = this.registry.interface;
-      for (const log of receipt.logs) {
-        try {
-          const parsed = iface.parseLog(log);
-          if (parsed.name === "AgentCreated") {
-            agentId = parsed.args[0].toString();
-            break;
-          }
-        } catch {}
-      }
+    let hexKey: string | null = null;
+    const iface = this.gameEngine.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "AgentCreated") {
+          agentId = parsed.args.agentId.toString();
+          hexKey = parsed.args.hexKey;
+          break;
+        }
+      } catch {}
     }
-    return { agentId, txHash: receipt.transactionHash };
+    return { agentId, hexKey, txHash: receipt.transactionHash };
   }
 
   async getAgent(agentId: number) {
-    const [name, personality, stats, location, gold, createdAt] = await this.registry.getAgent(agentId);
+    const [name, personality, stats, location, createdAt] = await this.registry.getAgent(agentId);
+    const score = await this.gameEngine.getScore(agentId);
+    const hCount = await this.gameEngine.hexCount(agentId);
     return {
       id: agentId, name, personality,
       stats: stats.map((s: bigint) => Number(s)),
-      location: Number(location), gold: Number(gold), createdAt: Number(createdAt),
+      location: Number(location),
+      hexCount: Number(hCount),
+      score: Number(score),
+      createdAt: Number(createdAt),
     };
   }
 
@@ -170,37 +188,133 @@ export class ChainClient {
     return { txHash: receipt.transactionHash };
   }
 
-  async transferGold(fromAgent: number, toAgent: number, amount: number) {
-    const tx = await this.registry.transferGold(fromAgent, toAgent, amount);
+  // ============ Hex / Economy ============
+
+  async getHex(hexKey: string) {
+    const [ownerId, locationId, q, r, mineCount, arsenalCount, ore, lastHarvest, reserve, happiness, happinessUpdatedAt] =
+      await this.gameEngine.getHex(hexKey);
+    return {
+      hexKey, ownerId: Number(ownerId), locationId: Number(locationId),
+      q: Number(q), r: Number(r),
+      mineCount: Number(mineCount), arsenalCount: Number(arsenalCount),
+      ore: Number(ore), lastHarvest: Number(lastHarvest),
+      reserve: Number(reserve),
+      happiness: Number(happiness), happinessUpdatedAt: Number(happinessUpdatedAt),
+      usedSlots: Number(mineCount) + Number(arsenalCount), totalSlots: 12,
+      defense: Number(arsenalCount) * 5,
+      depleted: Number(reserve) === 0,
+    };
+  }
+
+  async getMyHexes(agentId: number) {
+    const keys: string[] = await this.gameEngine.getAgentHexKeys(agentId);
+    const hexes = await Promise.all(keys.map((k) => this.getHex(k)));
+    const claimable = await this.getClaimableHexes(agentId);
+    return { hexes, claimable };
+  }
+
+  async claimHex(agentId: number, q: number, r: number, sourceHexKey: string) {
+    const tx = await this.gameEngine.claimHex(agentId, q, r, sourceHexKey);
     const receipt = await tx.wait();
-    return { txHash: receipt.transactionHash };
+    let hexKey: string | null = null;
+    const iface = this.gameEngine.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "HexClaimed") { hexKey = parsed.args.hexKey; break; }
+      } catch {}
+    }
+    return { hexKey, txHash: receipt.transactionHash };
   }
 
-  async addGold(agentId: number, amount: number) {
-    const tx = await this.registry.addGold(agentId, amount);
+  async harvest(hexKey: string) {
+    const tx = await this.gameEngine.harvest(hexKey);
     const receipt = await tx.wait();
-    return { txHash: receipt.transactionHash };
+    let oreGained = 0;
+    const iface = this.gameEngine.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "Harvested") { oreGained = Number(parsed.args.oreGained); break; }
+      } catch {}
+    }
+    return { oreGained, txHash: receipt.transactionHash };
   }
 
-  // ============ Agent Ledger (memories) ============
-
-  async writeMemory(agentId: number, importance: number, category: string, content: string, relatedAgents: number[]): Promise<WriteResult> {
-    const tx = await this.agentLedger.write(agentId, importance, category, content, relatedAgents);
+  async build(agentId: number, hexKey: string, buildingType: number) {
+    const tx = await this.gameEngine.build(agentId, hexKey, buildingType);
     const receipt = await tx.wait();
-    // Parse return values from event or receipt
-    return { entryId: 0, used: 0, capacity: 64, txHash: receipt.transactionHash };
+    return { buildingType: buildingType === 1 ? "Mine" : "Arsenal", txHash: receipt.transactionHash };
   }
 
-  async readMemories(agentId: number, count: number): Promise<BoardRead> {
-    const [entries, used, capacity] = await this.agentLedger.readRecent(agentId, count);
-    return { entries: this.formatEntries(entries), used: Number(used), capacity: Number(capacity) };
-  }
-
-  async compactMemories(agentId: number, count: number, importance: number, category: string, summary: string) {
-    const tx = await this.agentLedger.compact(agentId, count, importance, category, summary);
+  async attack(agentId: number, targetHexKey: string, sourceHexKey: string, arsenalSpend: number, oreSpend: number) {
+    const tx = await this.gameEngine.attack(agentId, targetHexKey, sourceHexKey, arsenalSpend, oreSpend);
     const receipt = await tx.wait();
-    return { txHash: receipt.transactionHash };
+    let result = { attackPower: 0, defensePower: 0, success: false };
+    const iface = this.gameEngine.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "AttackResult") {
+          result = {
+            attackPower: Number(parsed.args.attackPower),
+            defensePower: Number(parsed.args.defensePower),
+            success: parsed.args.success,
+          };
+          break;
+        }
+      } catch {}
+    }
+    return { ...result, txHash: receipt.transactionHash };
   }
+
+  async getScore(agentId: number) { return Number(await this.gameEngine.getScore(agentId)); }
+
+  async getScoreboard() {
+    const ids: bigint[] = await this.registry.getAllAgentIds();
+    const scores = await Promise.all(ids.map(async (id) => {
+      const agentId = Number(id);
+      const [name] = await this.registry.getAgent(agentId);
+      const score = Number(await this.gameEngine.getScore(agentId));
+      const hCount = Number(await this.gameEngine.hexCount(agentId));
+      return { agentId, name, hexCount: hCount, score };
+    }));
+    return scores.sort((a, b) => b.score - a.score);
+  }
+
+  async getClaimCost(agentId: number) { return Number(await this.gameEngine.getClaimCost(agentId)); }
+
+  async getClaimableHexes(agentId: number) {
+    const [qs, rs] = await this.gameEngine.getClaimableHexes(agentId);
+    const cost = await this.getClaimCost(agentId);
+    return {
+      cost,
+      hexes: qs.map((q: bigint, i: number) => ({ q: Number(q), r: Number(rs[i]) })),
+    };
+  }
+
+  async raid(agentId: number, targetHexKey: string, arsenalSpend: number, oreSpend: number) {
+    const tx = await this.gameEngine.raid(agentId, targetHexKey, arsenalSpend, oreSpend);
+    const receipt = await tx.wait();
+    let result = { attackPower: 0, defensePower: 0, success: false };
+    const iface = this.gameEngine.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "AttackResult") {
+          result = {
+            attackPower: Number(parsed.args.attackPower),
+            defensePower: Number(parsed.args.defensePower),
+            success: parsed.args.success,
+          };
+          break;
+        }
+      } catch {}
+    }
+    return { ...result, txHash: receipt.transactionHash };
+  }
+
+  async toKey(q: number, r: number): Promise<string> { return this.gameEngine.toKey(q, r); }
 
   // ============ Location Ledger ============
 
@@ -209,14 +323,9 @@ export class ChainClient {
     const locations = await Promise.all(locationIds.map(async (id) => {
       const [name, description, q, r] = await this.locationLedger.getLocation(Number(id));
       const agentIds: bigint[] = await this.locationLedger.getAgentsAtLocation(Number(id));
-      return {
-        id: Number(id), name, description,
-        q: Number(q), r: Number(r),
-        agents: agentIds.map((a: bigint) => Number(a)),
-      };
+      return { id: Number(id), name, description, q: Number(q), r: Number(r), agents: agentIds.map(Number) };
     }));
-    const tick = await this.locationLedger.currentTick();
-    return { tick: Number(tick), locations };
+    return { locations };
   }
 
   async writeToLocation(agentId: number, importance: number, category: string, content: string, relatedAgents: number[]): Promise<WriteResult> {
@@ -246,14 +355,26 @@ export class ChainClient {
     return agents;
   }
 
-  async advanceTick() {
-    const tx = await this.locationLedger.advanceTick();
+  // ============ Agent Ledger (memories) ============
+
+  async writeMemory(agentId: number, importance: number, category: string, content: string, relatedAgents: number[]): Promise<WriteResult> {
+    const tx = await this.agentLedger.write(agentId, importance, category, content, relatedAgents);
     const receipt = await tx.wait();
-    const tick = await this.locationLedger.currentTick();
-    return { tick: Number(tick), txHash: receipt.transactionHash };
+    return { entryId: 0, used: 0, capacity: 64, txHash: receipt.transactionHash };
   }
 
-  // ============ Inbox Ledger (DMs) ============
+  async readMemories(agentId: number, count: number): Promise<BoardRead> {
+    const [entries, used, capacity] = await this.agentLedger.readRecent(agentId, count);
+    return { entries: this.formatEntries(entries), used: Number(used), capacity: Number(capacity) };
+  }
+
+  async compactMemories(agentId: number, count: number, importance: number, category: string, summary: string) {
+    const tx = await this.agentLedger.compact(agentId, count, importance, category, summary);
+    const receipt = await tx.wait();
+    return { txHash: receipt.transactionHash };
+  }
+
+  // ============ Inbox Ledger ============
 
   async sendMessage(fromAgent: number, toAgent: number, importance: number, category: string, content: string, relatedAgents: number[]): Promise<WriteResult> {
     const tx = await this.inboxLedger.write(fromAgent, toAgent, importance, category, content, relatedAgents);
@@ -273,8 +394,7 @@ export class ChainClient {
 
   async getConversation(agentA: number, agentB: number): Promise<FormattedEntry[]> {
     const [aToB, bToA] = await Promise.all([
-      this.readInboxFrom(agentB, agentA),  // A sent to B
-      this.readInboxFrom(agentA, agentB),  // B sent to A
+      this.readInboxFrom(agentB, agentA), this.readInboxFrom(agentA, agentB),
     ]);
     return [...aToB, ...bToA].sort((a, b) => a.blockNumber - b.blockNumber || a.id - b.id);
   }

@@ -9,17 +9,19 @@ export class StoreBridge {
 
   constructor(private scene: HexMapScene) {
     const state = useGameStore.getState();
-    const layout = computeWorldLayout(state.agents, state.locations);
+    const layout = computeWorldLayout(state.agents, state.locations, state.hexes);
     this.scene.applyLayout(layout);
     this.scene.highlightEntity(state.selectedEntity);
 
     let prevAgents = state.agents;
     let prevLocations = state.locations;
+    let prevHexes = state.hexes;
     this.unsubLayout = useGameStore.subscribe((s) => {
-      if (s.agents !== prevAgents || s.locations !== prevLocations) {
+      if (s.agents !== prevAgents || s.locations !== prevLocations || s.hexes !== prevHexes) {
         prevAgents = s.agents;
         prevLocations = s.locations;
-        const newLayout = computeWorldLayout(s.agents, s.locations);
+        prevHexes = s.hexes;
+        const newLayout = computeWorldLayout(s.agents, s.locations, s.hexes);
         this.scene.applyLayout(newLayout);
       }
     });

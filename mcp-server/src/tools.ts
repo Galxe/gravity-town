@@ -1,30 +1,29 @@
-// MCP Tool definitions — unified ledger architecture
+// MCP Tool definitions — hex territory economy
 import { z } from "zod";
 import { ChainClient } from "./chain.js";
 
 export function registerTools(server: any, chain: ChainClient) {
-  // ============ Agent Lifecycle ============
+  // ============ Agent ============
 
   server.tool(
     "create_agent",
-    "Create a new AI Agent in the town with a name, personality, stats, and starting location",
+    "Create a new agent. Auto-claims a hex near origin as home base with 200 starting ore.",
     {
       name: z.string().describe("Agent's name"),
       personality: z.string().describe("Personality description"),
       stats: z.array(z.number().min(1).max(10)).length(4).describe("Stats: [strength, wisdom, charisma, luck]"),
-      location: z.number().describe("Starting location ID"),
       owner: z.string().optional().describe("Owner wallet address (defaults to operator)"),
     },
-    async ({ name, personality, stats, location, owner }: any) => {
+    async ({ name, personality, stats, owner }: any) => {
       const ownerAddr = owner || await chain.signer.getAddress();
-      const result = await chain.createAgent(name, personality, stats, location, ownerAddr);
+      const result = await chain.createAgent(name, personality, stats, ownerAddr);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
   server.tool(
     "get_agent",
-    "Get the full state of an AI Agent",
+    "Get agent state: identity, location, hex count, score",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const agent = await chain.getAgent(agent_id);
@@ -34,7 +33,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "list_agents",
-    "List all AI Agents in the town",
+    "List all agents with their state",
     {},
     async () => {
       const agents = await chain.listAgents();
@@ -42,11 +41,11 @@ export function registerTools(server: any, chain: ChainClient) {
     }
   );
 
-  // ============ World ============
+  // ============ World / Movement ============
 
   server.tool(
     "get_world",
-    "Get full world state: locations (with hex coordinates), agent positions, current tick",
+    "Get all claimed hexes as locations with agent positions",
     {},
     async () => {
       const world = await chain.getWorld();
@@ -56,20 +55,20 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "move_agent",
-    "Move an Agent to a different location",
+    "Move agent to a hex location (by location ID). Must know the location ID of the target hex.",
     {
       agent_id: z.number().describe("Agent ID"),
-      location_id: z.number().describe("Target location ID"),
+      location_id: z.number().describe("Target location ID (from get_hex or get_world)"),
     },
     async ({ agent_id, location_id }: any) => {
       const result = await chain.moveAgent(agent_id, location_id);
-      return { content: [{ type: "text", text: `Moved agent ${agent_id} to location ${location_id}. tx: ${result.txHash}` }] };
+      return { content: [{ type: "text", text: `Moved. tx: ${result.txHash}` }] };
     }
   );
 
   server.tool(
     "get_nearby_agents",
-    "Get all other Agents at the same location",
+    "Get agents at the same hex/location as you",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const nearby = await chain.getNearbyAgents(agent_id);
@@ -77,200 +76,273 @@ export function registerTools(server: any, chain: ChainClient) {
     }
   );
 
+  // ============ Hex / Economy ============
+
   server.tool(
-    "advance_tick",
-    "Advance the world clock by one tick",
-    {},
-    async () => {
-      const result = await chain.advanceTick();
-      return { content: [{ type: "text", text: `World advanced to tick ${result.tick}. tx: ${result.txHash}` }] };
+    "get_hex",
+    "Get hex data: owner, buildings (mines/arsenals), ore, defense. Pass a hex_key (bytes32).",
+    { hex_key: z.string().describe("Hex key (bytes32)") },
+    async ({ hex_key }: any) => {
+      const hex = await chain.getHex(hex_key);
+      return { content: [{ type: "text", text: JSON.stringify(hex, null, 2) }] };
     }
   );
 
-  // ============ Agent Ledger (memories) ============
+  server.tool(
+    "get_my_hexes",
+    "Get all hexes owned by an agent with their buildings and ore",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      const hexes = await chain.getMyHexes(agent_id);
+      return { content: [{ type: "text", text: JSON.stringify(hexes, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "claim_hex",
+    "Claim an empty hex adjacent to your territory. Cost escalates: 200, 400, 800... ore. Deducted from source hex.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      q: z.number().describe("Target hex q coordinate"),
+      r: z.number().describe("Target hex r coordinate"),
+      source_hex_key: z.string().describe("Hex key to pay ore from"),
+    },
+    async ({ agent_id, q, r, source_hex_key }: any) => {
+      const result = await chain.claimHex(agent_id, q, r, source_hex_key);
+      return { content: [{ type: "text", text: `Claimed hex. key: ${result.hexKey}. tx: ${result.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "harvest",
+    "Harvest pending ore on a hex. Ore accumulates lazily based on time and mine count.",
+    { hex_key: z.string().describe("Hex key") },
+    async ({ hex_key }: any) => {
+      const result = await chain.harvest(hex_key);
+      return { content: [{ type: "text", text: `Harvested +${result.oreGained} ore. tx: ${result.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "build",
+    "Build on your hex. Instant, costs ore. Types: 1=Mine (+5 ore/min), 2=Arsenal (+5 defense, consumable for +5 attack). 12 slots per hex.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      hex_key: z.string().describe("Hex key (must own)"),
+      building_type: z.number().min(1).max(2).describe("1=Mine (50 ore), 2=Arsenal (100 ore)"),
+    },
+    async ({ agent_id, hex_key, building_type }: any) => {
+      const result = await chain.build(agent_id, hex_key, building_type);
+      return { content: [{ type: "text", text: `Built ${result.buildingType}. tx: ${result.txHash}` }] };
+    }
+  );
+
+  // ============ Combat ============
+
+  server.tool(
+    "attack",
+    "Attack a hex. Must be at target hex (move_agent first). Spend arsenals (destroyed from source hex) + ore as attack power. Win: target buildings destroyed, hex unclaimed. Lose: spent resources gone. Cooldown 60s per target.",
+    {
+      agent_id: z.number().describe("Attacking agent ID"),
+      target_hex_key: z.string().describe("Hex key to attack"),
+      source_hex_key: z.string().describe("Your hex key (arsenals consumed from here)"),
+      arsenal_spend: z.number().min(0).describe("Number of arsenals to consume (each +5 attack)"),
+      ore_spend: z.number().min(0).describe("Ore to invest as attack power"),
+    },
+    async ({ agent_id, target_hex_key, source_hex_key, arsenal_spend, ore_spend }: any) => {
+      const r = await chain.attack(agent_id, target_hex_key, source_hex_key, arsenal_spend, ore_spend);
+      const outcome = r.success
+        ? `SUCCESS! Target hex destroyed. Attack ${r.attackPower} vs Defense ${r.defensePower}.`
+        : `FAILED. Attack ${r.attackPower} vs Defense ${r.defensePower}. Resources lost.`;
+      return { content: [{ type: "text", text: `${outcome} tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "raid",
+    "ONE-STEP attack: auto-moves to target hex, picks your best source hex, and attacks. Much simpler than attack — use this instead. Win: target buildings destroyed + hex unclaimed. Lose: spent resources gone.",
+    {
+      agent_id: z.number().describe("Attacking agent ID"),
+      target_hex_key: z.string().describe("Hex key to attack (from get_world or get_hex)"),
+      arsenal_spend: z.number().min(1).describe("Arsenals to consume from your best hex (each +5 attack)"),
+      ore_spend: z.number().min(0).describe("Ore to invest as extra attack power"),
+    },
+    async ({ agent_id, target_hex_key, arsenal_spend, ore_spend }: any) => {
+      const r = await chain.raid(agent_id, target_hex_key, arsenal_spend, ore_spend);
+      const outcome = r.success
+        ? `RAID SUCCESS! Target hex destroyed. Attack ${r.attackPower} vs Defense ${r.defensePower}.`
+        : `RAID FAILED. Attack ${r.attackPower} vs Defense ${r.defensePower}. Resources lost.`;
+      return { content: [{ type: "text", text: `${outcome} tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "get_claimable_hexes",
+    "List all empty hexes adjacent to your territory that you can claim. Returns coordinates + cost.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      const result = await chain.getClaimableHexes(agent_id);
+      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  // ============ Scoring ============
+
+  server.tool(
+    "get_score",
+    "Get agent score: hexes×100 + ore + buildings×50",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      const score = await chain.getScore(agent_id);
+      return { content: [{ type: "text", text: `Score: ${score}` }] };
+    }
+  );
+
+  server.tool(
+    "get_scoreboard",
+    "Global scoreboard ranked by score",
+    {},
+    async () => {
+      const sb = await chain.getScoreboard();
+      return { content: [{ type: "text", text: JSON.stringify(sb, null, 2) }] };
+    }
+  );
+
+  // ============ Memories ============
 
   server.tool(
     "add_memory",
-    "Record a memory to your personal ledger. Returns { used, capacity } so you know when to compact.",
+    "Record a memory to your personal ledger",
     {
       agent_id: z.number().describe("Agent ID"),
       importance: z.number().min(1).max(10).describe("Importance 1-10"),
-      category: z.string().describe("Category: social, discovery, trade, event, reflection"),
+      category: z.string().describe("Category"),
       content: z.string().describe("Memory content"),
-      related_agents: z.array(z.number()).default([]).describe("IDs of related agents"),
+      related_agents: z.array(z.number()).default([]).describe("Related agent IDs"),
     },
     async ({ agent_id, importance, category, content, related_agents }: any) => {
-      const result = await chain.writeMemory(agent_id, importance, category, content, related_agents);
-      return { content: [{ type: "text", text: `Memory recorded. tx: ${result.txHash}` }] };
+      const r = await chain.writeMemory(agent_id, importance, category, content, related_agents);
+      return { content: [{ type: "text", text: `Memory recorded. tx: ${r.txHash}` }] };
     }
   );
 
   server.tool(
     "read_memories",
-    "Read recent entries from your personal memory ledger. Returns { entries, used, capacity }.",
-    {
-      agent_id: z.number().describe("Agent ID"),
-      count: z.number().default(10).describe("Number of recent entries"),
-    },
+    "Read recent memories",
+    { agent_id: z.number().describe("Agent ID"), count: z.number().default(10) },
     async ({ agent_id, count }: any) => {
-      const result = await chain.readMemories(agent_id, count);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      const r = await chain.readMemories(agent_id, count);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
     }
   );
 
   server.tool(
     "compact_memories",
-    "Compress N oldest memories into one summary, freeing N-1 slots.",
+    "Compress N oldest memories into one summary",
     {
       agent_id: z.number().describe("Agent ID"),
-      count: z.number().min(2).describe("Number of oldest entries to merge"),
-      importance: z.number().min(1).max(10).describe("Importance for the summary"),
-      category: z.string().default("summary").describe("Category for the summary"),
-      summary: z.string().describe("AI-generated compressed summary"),
+      count: z.number().min(2), importance: z.number().min(1).max(10),
+      category: z.string().default("summary"), summary: z.string(),
     },
     async ({ agent_id, count, importance, category, summary }: any) => {
-      const result = await chain.compactMemories(agent_id, count, importance, category, summary);
-      return { content: [{ type: "text", text: `Compacted ${count} memories into 1 summary. tx: ${result.txHash}` }] };
+      const r = await chain.compactMemories(agent_id, count, importance, category, summary);
+      return { content: [{ type: "text", text: `Compacted. tx: ${r.txHash}` }] };
     }
   );
 
-  // ============ Location Ledger (public board) ============
+  // ============ Location Board (hex bulletin) ============
 
   server.tool(
     "post_to_location",
-    "Post to the public board at your current location. All agents can read it. Returns { used, capacity }.",
+    "Post to the bulletin board of your current hex. Visible to all.",
     {
-      agent_id: z.number().describe("Agent ID (must be at the location)"),
-      importance: z.number().min(1).max(10).default(5).describe("Importance 1-10"),
-      category: z.string().describe("Category: chat, action, trade, event, announcement"),
-      content: z.string().describe("What you're posting"),
-      related_agents: z.array(z.number()).default([]).describe("IDs of related agents"),
+      agent_id: z.number().describe("Agent ID"),
+      importance: z.number().min(1).max(10).default(5),
+      category: z.string(), content: z.string(),
+      related_agents: z.array(z.number()).default([]),
     },
     async ({ agent_id, importance, category, content, related_agents }: any) => {
-      const result = await chain.writeToLocation(agent_id, importance, category, content, related_agents);
-      return { content: [{ type: "text", text: `Posted to location board. tx: ${result.txHash}` }] };
+      const r = await chain.writeToLocation(agent_id, importance, category, content, related_agents);
+      return { content: [{ type: "text", text: `Posted. tx: ${r.txHash}` }] };
     }
   );
 
   server.tool(
     "read_location",
-    "Read recent entries from a location's public board. Returns { entries, used, capacity }.",
-    {
-      location_id: z.number().describe("Location ID"),
-      count: z.number().default(10).describe("Number of recent entries"),
-    },
+    "Read bulletin board entries for a location/hex",
+    { location_id: z.number(), count: z.number().default(10) },
     async ({ location_id, count }: any) => {
-      const result = await chain.readLocation(location_id, count);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      const r = await chain.readLocation(location_id, count);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
     }
   );
 
   server.tool(
     "compact_location",
-    "Compress N oldest entries on a location board into one summary.",
+    "Compress oldest entries on a location board",
     {
-      location_id: z.number().describe("Location ID"),
-      agent_id: z.number().describe("Agent ID performing the compaction"),
-      count: z.number().min(2).describe("Number of oldest entries to merge"),
-      importance: z.number().min(1).max(10).describe("Importance for the summary"),
-      category: z.string().default("summary").describe("Category for the summary"),
-      summary: z.string().describe("AI-generated compressed summary"),
+      location_id: z.number(), agent_id: z.number(),
+      count: z.number().min(2), importance: z.number().min(1).max(10),
+      category: z.string().default("summary"), summary: z.string(),
     },
     async ({ location_id, agent_id, count, importance, category, summary }: any) => {
-      const result = await chain.compactLocation(location_id, agent_id, count, importance, category, summary);
-      return { content: [{ type: "text", text: `Compacted ${count} location entries into 1. tx: ${result.txHash}` }] };
+      const r = await chain.compactLocation(location_id, agent_id, count, importance, category, summary);
+      return { content: [{ type: "text", text: `Compacted. tx: ${r.txHash}` }] };
     }
   );
 
-  // ============ Inbox Ledger (DMs) ============
+  // ============ Inbox ============
 
   server.tool(
     "send_message",
-    "Send a direct message to another agent's inbox. Cross-location OK. Returns { used, capacity } of recipient's inbox.",
+    "Send a private message to another agent",
     {
-      from_agent: z.number().describe("Sender Agent ID"),
-      to_agent: z.number().describe("Recipient Agent ID"),
-      importance: z.number().min(1).max(10).default(5).describe("Importance 1-10"),
-      category: z.string().default("chat").describe("Category: chat, trade, coordination"),
-      content: z.string().describe("Message content"),
-      related_agents: z.array(z.number()).default([]).describe("Other agents mentioned"),
+      from_agent: z.number(), to_agent: z.number(),
+      importance: z.number().min(1).max(10).default(5),
+      category: z.string().default("chat"), content: z.string(),
+      related_agents: z.array(z.number()).default([]),
     },
     async ({ from_agent, to_agent, importance, category, content, related_agents }: any) => {
-      const result = await chain.sendMessage(from_agent, to_agent, importance, category, content, related_agents);
-      return { content: [{ type: "text", text: `Message sent to Agent #${to_agent}. tx: ${result.txHash}` }] };
+      const r = await chain.sendMessage(from_agent, to_agent, importance, category, content, related_agents);
+      return { content: [{ type: "text", text: `Sent to #${to_agent}. tx: ${r.txHash}` }] };
     }
   );
 
   server.tool(
     "read_inbox",
-    "Read recent messages in your inbox. Returns { entries, used, capacity }.",
-    {
-      agent_id: z.number().describe("Agent ID"),
-      count: z.number().default(10).describe("Number of recent messages"),
-      from_agent: z.number().optional().describe("Filter by sender"),
-    },
+    "Read inbox messages",
+    { agent_id: z.number(), count: z.number().default(10), from_agent: z.number().optional() },
     async ({ agent_id, count, from_agent }: any) => {
       if (from_agent !== undefined) {
         const entries = await chain.readInboxFrom(agent_id, from_agent);
         return { content: [{ type: "text", text: JSON.stringify(entries, null, 2) }] };
       }
-      const result = await chain.readInbox(agent_id, count);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      const r = await chain.readInbox(agent_id, count);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
     }
   );
 
   server.tool(
     "compact_inbox",
-    "Compress N oldest inbox messages into one summary.",
+    "Compress oldest inbox messages into summary",
     {
-      agent_id: z.number().describe("Agent ID"),
-      count: z.number().min(2).describe("Number of oldest entries to merge"),
-      importance: z.number().min(1).max(10).describe("Importance for the summary"),
-      category: z.string().default("summary").describe("Category for the summary"),
-      summary: z.string().describe("AI-generated compressed summary"),
+      agent_id: z.number(), count: z.number().min(2),
+      importance: z.number().min(1).max(10),
+      category: z.string().default("summary"), summary: z.string(),
     },
     async ({ agent_id, count, importance, category, summary }: any) => {
-      const result = await chain.compactInbox(agent_id, count, importance, category, summary);
-      return { content: [{ type: "text", text: `Compacted ${count} inbox messages into 1. tx: ${result.txHash}` }] };
+      const r = await chain.compactInbox(agent_id, count, importance, category, summary);
+      return { content: [{ type: "text", text: `Compacted. tx: ${r.txHash}` }] };
     }
   );
 
   server.tool(
     "get_conversation",
-    "Get the full two-way conversation between two agents, sorted by time.",
-    {
-      agent_a: z.number().describe("First Agent ID"),
-      agent_b: z.number().describe("Second Agent ID"),
-    },
+    "Two-way conversation between agents",
+    { agent_a: z.number(), agent_b: z.number() },
     async ({ agent_a, agent_b }: any) => {
       const entries = await chain.getConversation(agent_a, agent_b);
       return { content: [{ type: "text", text: JSON.stringify(entries, null, 2) }] };
-    }
-  );
-
-  // ============ Economy ============
-
-  server.tool(
-    "transfer_gold",
-    "Transfer gold between two Agents",
-    {
-      from_agent: z.number().describe("Sender Agent ID"),
-      to_agent: z.number().describe("Recipient Agent ID"),
-      amount: z.number().min(1).describe("Amount of gold"),
-    },
-    async ({ from_agent, to_agent, amount }: any) => {
-      const result = await chain.transferGold(from_agent, to_agent, amount);
-      return { content: [{ type: "text", text: `Transferred ${amount} gold from #${from_agent} to #${to_agent}. tx: ${result.txHash}` }] };
-    }
-  );
-
-  server.tool(
-    "get_balance",
-    "Get the gold balance of an Agent",
-    { agent_id: z.number().describe("Agent ID") },
-    async ({ agent_id }: any) => {
-      const agent = await chain.getAgent(agent_id);
-      return { content: [{ type: "text", text: `Agent #${agent_id} (${agent.name}) has ${agent.gold} gold` }] };
     }
   );
 }

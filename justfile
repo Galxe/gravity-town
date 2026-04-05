@@ -26,7 +26,7 @@ anvil-deploy \
 
 # Start agent runner
 # Usage: just agent-start [config-file]
-#   e.g.  just agent-start localhost.toml
+#   e.g.  just agent-start config/localhost.toml
 #         just agent-start /abs/path/to/config.toml
 [working-directory: "agent-runner"]
 agent-start config="config/localhost.toml":

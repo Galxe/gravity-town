@@ -2,12 +2,48 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Cartoon parchment palette */
+  --parchment:       #f5e6c8;
+  --parchment-dark:  #e8d4a8;
+  --parchment-light: #faf3e6;
+  --wood-dark:       #5c3a1e;
+  --wood-mid:        #8b5e3c;
+  --wood-light:      #a67c52;
+  --ink:             #2c1810;
+  --ink-soft:        #5a4030;
+  --ink-faded:       #8a7560;
+  --accent-green:    #4a9e5c;
+  --accent-blue:     #4a7eb5;
+  --accent-red:      #c0503a;
+  --accent-gold:     #d4a030;
+  --accent-purple:   #7b5ea7;
+  --accent-cyan:     #3a9e9e;
+  --accent-pink:     #c06090;
+}
+
 html, body {
   margin: 0;
   padding: 0;
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: #0a0e1a;
-  color: white;
+  background-color: #1a1408;
+  color: var(--ink);
+  font-family: var(--font-fredoka), system-ui, sans-serif;
+}
+
+/* Custom scrollbar for parchment panels */
+.cartoon-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.cartoon-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.cartoon-scroll::-webkit-scrollbar-thumb {
+  background: var(--wood-light);
+  border-radius: 3px;
+}
+.cartoon-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--wood-mid);
 }

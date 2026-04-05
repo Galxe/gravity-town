@@ -1,11 +1,11 @@
-/** Location color palette for sidebar indicators. */
+/** Location color palette — warm cartoon tones. */
 export const PALETTE = [
-  '#34d399', // emerald
-  '#60a5fa', // blue
-  '#fb923c', // amber
-  '#22d3ee', // cyan
-  '#a78bfa', // purple
-  '#f472b6', // pink
-  '#facc15', // gold
-  '#ef4444', // red
+  '#4a9e5c', // green
+  '#4a7eb5', // blue
+  '#d4a030', // gold
+  '#3a9e9e', // cyan
+  '#7b5ea7', // purple
+  '#c06090', // pink
+  '#c0503a', // red
+  '#8b5e3c', // wood
 ];

@@ -103,13 +103,13 @@ contract LocationLedger is Initializable, OwnableUpgradeable, UUPSUpgradeable, R
         uint256[] memory allIds = registry.getAllAgentIds();
         uint256 count = 0;
         for (uint256 i = 0; i < allIds.length; i++) {
-            (, , , uint256 loc, ,) = registry.getAgent(allIds[i]);
+            (, , , uint256 loc,) = registry.getAgent(allIds[i]);
             if (loc == locationId) count++;
         }
         uint256[] memory result = new uint256[](count);
         uint256 idx = 0;
         for (uint256 i = 0; i < allIds.length; i++) {
-            (, , , uint256 loc, ,) = registry.getAgent(allIds[i]);
+            (, , , uint256 loc,) = registry.getAgent(allIds[i]);
             if (loc == locationId) result[idx++] = allIds[i];
         }
         return result;
@@ -125,7 +125,7 @@ contract LocationLedger is Initializable, OwnableUpgradeable, UUPSUpgradeable, R
         string calldata content,
         uint256[] calldata relatedAgents
     ) external canControlAgent(agentId) returns (uint256 entryId, uint256 used, uint256 capacity) {
-        (, , , uint256 agentLoc, ,) = registry.getAgent(agentId);
+        (, , , uint256 agentLoc,) = registry.getAgent(agentId);
         require(locations[agentLoc].exists, "invalid location");
         uint256 locationId = agentLoc;
 
