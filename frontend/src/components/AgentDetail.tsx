@@ -10,7 +10,7 @@ const STAT_LABELS = ['STR', 'WIS', 'CHR', 'LCK'];
 const STAT_COLORS = ['bg-cart-red', 'bg-cart-blue', 'bg-cart-pink', 'bg-cart-gold'];
 
 function HexTerritoryPanel({ hexes }: { hexes: HexData[] }) {
-  const totalOre = hexes.reduce((s, h) => s + h.ore, 0);
+  const avgHappiness = hexes.length > 0 ? Math.round(hexes.reduce((s, h) => s + h.happiness, 0) / hexes.length) : 0;
   const totalReserve = hexes.reduce((s, h) => s + h.reserve, 0);
   const totalMines = hexes.reduce((s, h) => s + h.mineCount, 0);
   const totalArsenals = hexes.reduce((s, h) => s + h.arsenalCount, 0);
@@ -32,9 +32,9 @@ function HexTerritoryPanel({ hexes }: { hexes: HexData[] }) {
       {/* Summary */}
       <div className="grid grid-cols-4 gap-1.5 px-1 mb-2">
         <div className="bg-parchment-dark/50 p-1.5 rounded-xl border-2 border-wood/20 text-center">
-          <div className="text-[8px] uppercase font-cartoon font-semibold text-wood-light">Ore</div>
-          <div className="text-[11px] font-bold font-cartoon text-cart-gold">{totalOre}</div>
-          <div className="text-[7px] font-hand text-ink-faded">+{orePerMin}/min</div>
+          <div className="text-[8px] uppercase font-cartoon font-semibold text-wood-light">Happy</div>
+          <div className={`text-[11px] font-bold font-cartoon ${avgHappiness > 30 ? 'text-cart-green' : 'text-cart-red'}`}>{avgHappiness}%</div>
+          <div className="text-[7px] font-hand text-ink-faded">avg</div>
         </div>
         <div className="bg-parchment-dark/50 p-1.5 rounded-xl border-2 border-wood/20 text-center">
           <div className="text-[8px] uppercase font-cartoon font-semibold text-wood-light">Reserve</div>
@@ -63,7 +63,7 @@ function HexTerritoryPanel({ hexes }: { hexes: HexData[] }) {
               <Shield size={9} className="text-cart-blue ml-1" />
               <span className="text-ink-soft font-cartoon">{h.arsenalCount}</span>
             </div>
-            <span className="text-cart-gold font-hand">{h.ore}ore</span>
+            <span className={`font-hand ${h.happiness > 30 ? 'text-cart-green' : 'text-cart-red'}`}>{h.happiness}hp</span>
             <span className={`font-hand ${h.reserve > 0 ? 'text-cart-cyan' : 'text-cart-red'}`}>{h.reserve}r</span>
             <span className="text-ink-faded font-hand">{h.usedSlots}/{h.totalSlots}</span>
           </div>

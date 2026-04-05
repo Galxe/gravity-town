@@ -7,7 +7,7 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./AgentRegistry.sol";
 import "./LocationLedger.sol";
 
-/// @title GameEngine — Hex territory, 2 building types, spatial combat, lazy harvest
+/// @title GameEngine — Hex territory with agent-level ore pool
 contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     AgentRegistry public registry;
@@ -18,10 +18,11 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint8  public constant BTYPE_MINE    = 1;
     uint8  public constant BTYPE_ARSENAL = 2;
 
-    uint256 public constant SLOTS_PER_HEX        = 12;
+    uint256 public constant SLOTS_PER_HEX        = 6;
+    uint256 public constant MAX_ORE_POOL          = 1000;  // ore pool cap — excess is wasted
     uint256 public constant MINE_COST             = 50;   // ore
     uint256 public constant ARSENAL_COST          = 100;  // ore
-    uint256 public constant BASE_ORE_PER_SEC      = 10;   // base production with 0 mines (per second)
+    uint256 public constant BASE_ORE_PER_SEC      = 10;   // base production per hex (per second)
     uint256 public constant ORE_PER_MINE_PER_SEC  = 5;    // additional per mine (per second)
     uint256 public constant DEFENSE_PER_ARSENAL   = 5;
     uint256 public constant ATTACK_PER_ARSENAL    = 5;
@@ -31,9 +32,11 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint256 public constant DEPLETED_ORE_PER_SEC  = 2;     // trickle production when reserve=0
     int32   public constant MAP_RADIUS            = 4;     // world boundary: hex distance from origin
     uint256 public constant MAX_HAPPINESS         = 100;
-    uint256 public constant CAPTURE_ORE_PCT       = 70;    // % ore kept on capture
+    uint256 public constant CAPTURE_ORE_PCT       = 30;    // % of defender's pool stolen on capture
     uint256 public constant DEFENSE_MORALE        = 20;    // happiness restored on successful defense
-    uint256 public constant NEUTRAL_CLAIM_COST    = 50;    // ore to claim neutral hex (free if homeless)
+    uint256 public constant SPAWN_HEXES           = 7;     // hexes per agent (center + ring)
+    uint256 public constant POST_MORALE           = 10;    // happiness restored when posting to location board
+    uint256 public constant CAPTURE_MORALE_BOOST  = 15;    // happiness added to ALL owner's hexes on capture
 
     // ──────────────────── Hex Storage ────────────────────
 
@@ -44,7 +47,6 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         int32   r;
         uint256 mineCount;
         uint256 arsenalCount;
-        uint256 ore;
         uint256 lastHarvest;
         uint256 reserve;       // remaining ore reserve; when 0, production drops to trickle
         uint256 happiness;         // 0-100; hex rebels (becomes neutral) at 0
@@ -55,16 +57,18 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     mapping(uint256 => bytes32[]) public agentHexKeys;   // agentId → owned hex keys
     mapping(uint256 => uint256) public hexCount;          // agentId → owned hex count
 
+    /// @notice Agent-level ore pool. All hex production flows here.
+    mapping(uint256 => uint256) public orePool;
+
     /// @notice attackCooldown[attackerAgent][targetHexKey] = timestamp
     mapping(uint256 => mapping(bytes32 => uint256)) public attackCooldown;
 
     // ──────────────────── Events ────────────────────
 
     event AgentCreated(uint256 indexed agentId, bytes32 indexed hexKey, uint256 locationId);
-    event HexClaimed(uint256 indexed agentId, bytes32 indexed hexKey, int32 q, int32 r, uint256 locationId);
     event HexLost(uint256 indexed agentId, bytes32 indexed hexKey);
     event Built(uint256 indexed agentId, bytes32 indexed hexKey, uint8 buildingType);
-    event Harvested(bytes32 indexed hexKey, uint256 oreGained);
+    event Harvested(uint256 indexed agentId, uint256 oreGained);
     event AttackResult(
         uint256 indexed attackerId,
         bytes32 indexed targetHexKey,
@@ -74,7 +78,6 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     );
     event HexCaptured(uint256 indexed newOwner, bytes32 indexed hexKey, uint256 indexed oldOwner);
     event HexRebelled(bytes32 indexed hexKey, uint256 indexed oldOwner);
-    event NeutralClaimed(uint256 indexed agentId, bytes32 indexed hexKey);
 
     // ──────────────────── Auth ────────────────────
 
@@ -135,78 +138,44 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     //                     AGENT CREATION
     // ══════════════════════════════════════════════════════════
 
-    /// @notice Create agent + auto-claim a hex near origin. Permissionless.
+    /// @notice Create agent + auto-claim 7 hexes (center + ring). No empty land — must fight.
     function createAgent(
         string calldata name,
         string calldata personality,
         uint8[4] calldata stats,
         address ownerAddr
     ) external returns (uint256 agentId, bytes32 hexKey_) {
-        // Find empty hex near origin
-        (int32 q, int32 r) = _findEmptyHex();
-        hexKey_ = toKey(q, r);
+        // Find a center hex where center + all 6 neighbors are empty & in bounds
+        (int32 cq, int32 cr) = _findEmptyCluster();
+        hexKey_ = toKey(cq, cr);
 
-        // Create location in LocationLedger (bulletin board for this hex)
+        // Create home location & agent
         string memory locName = string.concat(name, "'s Base");
-        uint256 locationId = locationLedger.createLocation(locName, "Player territory", q, r);
-
-        // Create agent at this location
+        uint256 locationId = locationLedger.createLocation(locName, "Player territory", cq, cr);
         agentId = registry.createAgent(name, personality, stats, locationId, ownerAddr);
 
-        // Initialize hex
-        Hex storage h = hexes[hexKey_];
-        h.ownerId = agentId;
-        h.locationId = locationId;
-        h.q = q;
-        h.r = r;
-        h.ore = STARTING_ORE;
-        h.lastHarvest = block.timestamp;
-        h.reserve = INITIAL_RESERVE;
-        h.happiness = MAX_HAPPINESS;
-        h.happinessUpdatedAt = block.timestamp;
-
+        // Claim center hex
+        _initHex(hexKey_, agentId, locationId, cq, cr);
         agentHexKeys[agentId].push(hexKey_);
-        hexCount[agentId] = 1;
+
+        // Claim 6 surrounding hexes
+        for (uint256 d = 0; d < 6; d++) {
+            (int32 nq, int32 nr) = _getNeighbor(cq, cr, d);
+            bytes32 nKey = toKey(nq, nr);
+            string memory nLocName = string.concat("Hex(", _itoa(nq), ",", _itoa(nr), ")");
+            uint256 nLocId = locationLedger.createLocation(nLocName, "Player territory", nq, nr);
+            _initHex(nKey, agentId, nLocId, nq, nr);
+            agentHexKeys[agentId].push(nKey);
+        }
+
+        hexCount[agentId] = 7;
+        orePool[agentId] = STARTING_ORE;
 
         emit AgentCreated(agentId, hexKey_, locationId);
     }
 
-    // ══════════════════════════════════════════════════════════
-    //                     HEX CLAIMING
-    // ══════════════════════════════════════════════════════════
-
-    /// @notice Claim an empty hex. Must be adjacent to an owned hex. Cost escalates.
-    function claimHex(uint256 agentId, int32 q, int32 r, bytes32 sourceHexKey)
-        external canControlAgent(agentId)
-    {
-        bytes32 key = toKey(q, r);
-        require(inBounds(q, r), "outside world boundary");
-        require(hexes[key].ownerId == 0, "hex occupied");
-
-        // Must own at least 1 hex
-        uint256 owned = hexCount[agentId];
-        require(owned > 0, "no hexes owned");
-
-        // Source hex must be owned by agent (where ore is deducted from)
-        require(hexes[sourceHexKey].ownerId == agentId, "not your hex");
-
-        // Check adjacency: new hex must be adjacent to at least one owned hex
-        require(_isAdjacentToOwned(agentId, q, r), "must be adjacent to owned hex");
-
-        // Claim cost: 0 for 1st (handled at birth), 200 * 2^(owned-1) for subsequent
-        uint256 cost = 200 * (2 ** (owned - 1));
-
-        // Update happiness & harvest source, then deduct
-        _updateHappiness(sourceHexKey);
-        _harvest(sourceHexKey);
-        require(hexes[sourceHexKey].ore >= cost, "insufficient ore");
-        hexes[sourceHexKey].ore -= cost;
-
-        // Create location
-        string memory locName = string.concat("Hex(", _itoa(q), ",", _itoa(r), ")");
-        uint256 locationId = locationLedger.createLocation(locName, "Player territory", q, r);
-
-        // Initialize hex
+    /// @dev Initialize a hex for an agent.
+    function _initHex(bytes32 key, uint256 agentId, uint256 locationId, int32 q, int32 r) internal {
         Hex storage h = hexes[key];
         h.ownerId = agentId;
         h.locationId = locationId;
@@ -216,41 +185,48 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         h.reserve = INITIAL_RESERVE;
         h.happiness = MAX_HAPPINESS;
         h.happinessUpdatedAt = block.timestamp;
-
-        agentHexKeys[agentId].push(key);
-        hexCount[agentId] = owned + 1;
-
-        // Move agent to new hex
-        registry.moveAgent(agentId, locationId);
-
-        emit HexClaimed(agentId, key, q, r, locationId);
     }
 
     // ══════════════════════════════════════════════════════════
-    //                     HARVEST (lazy)
+    //                     HARVEST (lazy ore pool)
     // ══════════════════════════════════════════════════════════
 
-    /// @notice Harvest pending ore on a hex. Anyone can call.
-    ///         Also triggers happiness decay (may cause rebellion).
-    function harvest(bytes32 hexKey_) external {
-        _updateHappiness(hexKey_);
-        _harvest(hexKey_);
+    /// @notice Harvest all hexes for an agent. Anyone can call.
+    function harvest(uint256 agentId) external {
+        _harvestAll(agentId);
     }
 
-    function _harvest(bytes32 hexKey_) internal {
+    /// @dev Harvest all hexes owned by agentId into their ore pool.
+    function _harvestAll(uint256 agentId) internal {
+        bytes32[] storage keys = agentHexKeys[agentId];
+        uint256 totalProduced;
+        for (uint256 i = 0; i < keys.length; i++) {
+            Hex storage h = hexes[keys[i]];
+            if (h.ownerId != agentId) continue;
+            _updateHappiness(keys[i]);
+            // Re-check ownership after happiness update (may have rebelled)
+            if (h.ownerId != agentId) continue;
+            totalProduced += _harvestHex(keys[i]);
+        }
+        uint256 newPool = orePool[agentId] + totalProduced;
+        orePool[agentId] = newPool > MAX_ORE_POOL ? MAX_ORE_POOL : newPool;
+        if (totalProduced > 0) {
+            emit Harvested(agentId, totalProduced);
+        }
+    }
+
+    /// @dev Harvest a single hex, returns ore produced (does NOT add to pool).
+    function _harvestHex(bytes32 hexKey_) internal returns (uint256 produced) {
         Hex storage h = hexes[hexKey_];
-        if (h.ownerId == 0) return;
-        if (block.timestamp <= h.lastHarvest) return;
+        if (h.ownerId == 0) return 0;
+        if (block.timestamp <= h.lastHarvest) return 0;
 
         uint256 elapsed = block.timestamp - h.lastHarvest;
 
-        uint256 produced;
         if (h.reserve > 0) {
-            // Normal production, capped by remaining reserve
             uint256 fullRate = BASE_ORE_PER_SEC + h.mineCount * ORE_PER_MINE_PER_SEC;
             uint256 raw = fullRate * elapsed;
             if (raw > h.reserve) {
-                // Partially from reserve, rest at depleted rate
                 uint256 reserveTime = h.reserve / fullRate;
                 uint256 depletedTime = elapsed - reserveTime;
                 produced = h.reserve + DEPLETED_ORE_PER_SEC * depletedTime;
@@ -260,21 +236,17 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
                 h.reserve -= raw;
             }
         } else {
-            // Depleted: trickle only
             produced = DEPLETED_ORE_PER_SEC * elapsed;
         }
 
-        h.ore += produced;
         h.lastHarvest = block.timestamp;
-
-        emit Harvested(hexKey_, produced);
     }
 
     // ══════════════════════════════════════════════════════════
     //                     BUILDING (instant)
     // ══════════════════════════════════════════════════════════
 
-    /// @notice Build a mine or arsenal on a hex. Instant, costs ore from that hex.
+    /// @notice Build on a hex. Costs ore from agent's pool.
     function build(uint256 agentId, bytes32 hexKey_, uint8 buildingType)
         external canControlAgent(agentId)
     {
@@ -283,15 +255,15 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(h.ownerId == agentId, "not your hex");
         require(h.mineCount + h.arsenalCount < SLOTS_PER_HEX, "hex full");
 
-        _harvest(hexKey_);
+        _harvestAll(agentId);
 
         if (buildingType == BTYPE_MINE) {
-            require(h.ore >= MINE_COST, "insufficient ore");
-            h.ore -= MINE_COST;
+            require(orePool[agentId] >= MINE_COST, "insufficient ore");
+            orePool[agentId] -= MINE_COST;
             h.mineCount++;
         } else if (buildingType == BTYPE_ARSENAL) {
-            require(h.ore >= ARSENAL_COST, "insufficient ore");
-            h.ore -= ARSENAL_COST;
+            require(orePool[agentId] >= ARSENAL_COST, "insufficient ore");
+            orePool[agentId] -= ARSENAL_COST;
             h.arsenalCount++;
         } else {
             revert("invalid building type");
@@ -305,9 +277,7 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     // ══════════════════════════════════════════════════════════
 
     /// @notice Attack a hex. Agent must be at the target hex's location.
-    ///         Spends arsenals from sourceHex (destroyed) + ore from sourceHex.
-    ///         Win: target hex buildings destroyed, hex unclaimed.
-    ///         Lose: spent resources gone.
+    ///         Arsenals consumed from sourceHex, ore from pool.
     function attack(
         uint256 agentId,
         bytes32 targetHexKey,
@@ -326,31 +296,25 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(source.ownerId == agentId, "not your source hex");
         require(arsenalSpend > 0 || oreSpend > 0, "must commit resources");
 
-        // Agent must be at target hex location
         (, , , uint256 agentLoc, ) = registry.getAgent(agentId);
         require(agentLoc == target.locationId, "must be at target hex");
 
-        // Cooldown
         uint256 lastAtk = attackCooldown[agentId][targetHexKey];
         require(lastAtk == 0 || block.timestamp >= lastAtk + ATTACK_COOLDOWN, "cooldown");
 
-        // Harvest both hexes
-        _harvest(targetHexKey);
-        _harvest(sourceHexKey);
+        _harvestAll(agentId);
 
-        // Consume arsenals from source
+        // Consume arsenals from source hex
         require(source.arsenalCount >= arsenalSpend, "insufficient arsenals");
         source.arsenalCount -= arsenalSpend;
 
-        // Consume ore from source
-        require(source.ore >= oreSpend, "insufficient ore");
-        source.ore -= oreSpend;
+        // Consume ore from pool
+        require(orePool[agentId] >= oreSpend, "insufficient ore");
+        orePool[agentId] -= oreSpend;
 
-        // Calculate powers
         uint256 attackPower = arsenalSpend * ATTACK_PER_ARSENAL + oreSpend;
         uint256 defensePower = target.arsenalCount * DEFENSE_PER_ARSENAL;
 
-        // Tullock contest
         uint256 total = attackPower + defensePower;
         uint256 rand = uint256(keccak256(abi.encode(
             block.prevrandao, agentId, targetHexKey, block.timestamp, arsenalSpend, oreSpend
@@ -359,22 +323,29 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         bool success = rand < attackPower;
 
         if (success) {
-            // Capture hex: transfer ownership, keep buildings, keep 70% ore
             uint256 targetOwner = target.ownerId;
+
+            // Steal ore from defender's pool
+            _harvestAll(targetOwner);
+            uint256 stolen = orePool[targetOwner] * CAPTURE_ORE_PCT / 100;
+            orePool[targetOwner] -= stolen;
+            uint256 np = orePool[agentId] + stolen;
+            orePool[agentId] = np > MAX_ORE_POOL ? MAX_ORE_POOL : np;
+
             _removeHexFromAgent(targetOwner, targetHexKey);
             hexCount[targetOwner]--;
 
             target.ownerId = agentId;
-            target.ore = target.ore * CAPTURE_ORE_PCT / 100;
             target.happiness = MAX_HAPPINESS;
             target.happinessUpdatedAt = block.timestamp;
 
             agentHexKeys[agentId].push(targetHexKey);
             hexCount[agentId]++;
 
+            _boostAllHexes(agentId, CAPTURE_MORALE_BOOST);
+
             emit HexCaptured(agentId, targetHexKey, targetOwner);
         } else {
-            // Successful defense boosts morale
             uint256 newHappy = target.happiness + DEFENSE_MORALE;
             target.happiness = newHappy > MAX_HAPPINESS ? MAX_HAPPINESS : newHappy;
         }
@@ -383,25 +354,35 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit AttackResult(agentId, targetHexKey, attackPower, defensePower, success);
     }
 
+    /// @dev Boost happiness on all hexes owned by an agent.
+    function _boostAllHexes(uint256 agentId, uint256 amount) internal {
+        bytes32[] storage keys = agentHexKeys[agentId];
+        for (uint256 i = 0; i < keys.length; i++) {
+            Hex storage h = hexes[keys[i]];
+            if (h.ownerId == agentId) {
+                uint256 newHappy = h.happiness + amount;
+                h.happiness = newHappy > MAX_HAPPINESS ? MAX_HAPPINESS : newHappy;
+            }
+        }
+    }
+
     // ══════════════════════════════════════════════════════════
     //                     SCORING
     // ══════════════════════════════════════════════════════════
 
     function getScore(uint256 agentId) external view returns (uint256) {
         uint256 hCount = hexCount[agentId];
-        uint256 totalOre;
         uint256 totalBuildings;
 
         bytes32[] storage keys = agentHexKeys[agentId];
         for (uint256 i = 0; i < keys.length; i++) {
             Hex storage h = hexes[keys[i]];
             if (h.ownerId == agentId) {
-                totalOre += h.ore;
                 totalBuildings += h.mineCount + h.arsenalCount;
             }
         }
 
-        return hCount * 100 + totalOre + totalBuildings * 50;
+        return hCount * 100 + orePool[agentId] + totalBuildings * 50;
     }
 
     // ══════════════════════════════════════════════════════════
@@ -410,58 +391,23 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     function getHex(bytes32 hexKey_) external view returns (
         uint256 ownerId, uint256 locationId, int32 q, int32 r,
-        uint256 mineCount, uint256 arsenalCount, uint256 ore, uint256 lastHarvest,
+        uint256 mineCount, uint256 arsenalCount, uint256 lastHarvest,
         uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt
     ) {
         Hex storage h = hexes[hexKey_];
-        return (h.ownerId, h.locationId, h.q, h.r, h.mineCount, h.arsenalCount, h.ore, h.lastHarvest, h.reserve, h.happiness, h.happinessUpdatedAt);
+        return (h.ownerId, h.locationId, h.q, h.r, h.mineCount, h.arsenalCount, h.lastHarvest, h.reserve, h.happiness, h.happinessUpdatedAt);
     }
 
     function getAgentHexKeys(uint256 agentId) external view returns (bytes32[] memory) {
         return agentHexKeys[agentId];
     }
 
-    function getClaimCost(uint256 agentId) external view returns (uint256) {
-        uint256 owned = hexCount[agentId];
-        if (owned == 0) return 0;
-        return 200 * (2 ** (owned - 1));
-    }
-
-    /// @notice Returns up to 18 claimable (empty) hexes adjacent to agent's territory
-    function getClaimableHexes(uint256 agentId) external view returns (int32[] memory qs, int32[] memory rs) {
-        bytes32[] storage keys = agentHexKeys[agentId];
-        // Temp storage — max 6 neighbors per hex, deduplicated
-        int32[] memory tq = new int32[](keys.length * 6);
-        int32[] memory tr = new int32[](keys.length * 6);
-        uint256 count;
-
-        for (uint256 i = 0; i < keys.length; i++) {
-            Hex storage h = hexes[keys[i]];
-            if (h.ownerId != agentId) continue;
-            for (uint256 d = 0; d < 6; d++) {
-                (int32 nq, int32 nr) = _getNeighbor(h.q, h.r, d);
-                if (!inBounds(nq, nr)) continue;
-                if (hexes[toKey(nq, nr)].ownerId != 0) continue;
-                // Deduplicate
-                bool dup = false;
-                for (uint256 j = 0; j < count; j++) {
-                    if (tq[j] == nq && tr[j] == nr) { dup = true; break; }
-                }
-                if (!dup) { tq[count] = nq; tr[count] = nr; count++; }
-            }
-        }
-
-        qs = new int32[](count);
-        rs = new int32[](count);
-        for (uint256 i = 0; i < count; i++) { qs[i] = tq[i]; rs[i] = tr[i]; }
-    }
 
     // ══════════════════════════════════════════════════════════
     //                     RAID (composite attack)
     // ══════════════════════════════════════════════════════════
 
     /// @notice Move to target hex + attack in one transaction.
-    ///         Finds the best source hex (most arsenals) automatically.
     function raid(uint256 agentId, bytes32 targetHexKey, uint256 arsenalSpend, uint256 oreSpend)
         external canControlAgent(agentId)
     {
@@ -484,25 +430,18 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(bestArsenals > 0, "no arsenals");
         require(bestArsenals >= arsenalSpend, "insufficient arsenals");
 
-        Hex storage source = hexes[bestSource];
-
-        // Harvest both
-        _harvest(targetHexKey);
-        _harvest(bestSource);
-
-        // Check ore
-        require(source.ore >= oreSpend, "insufficient ore");
+        _harvestAll(agentId);
 
         // Move agent to target location
         registry.moveAgent(agentId, target.locationId);
 
-        // Cooldown
         uint256 lastAtk = attackCooldown[agentId][targetHexKey];
         require(lastAtk == 0 || block.timestamp >= lastAtk + ATTACK_COOLDOWN, "cooldown");
 
         // Consume resources
-        source.arsenalCount -= arsenalSpend;
-        source.ore -= oreSpend;
+        hexes[bestSource].arsenalCount -= arsenalSpend;
+        require(orePool[agentId] >= oreSpend, "insufficient ore");
+        orePool[agentId] -= oreSpend;
 
         // Tullock
         uint256 attackPower = arsenalSpend * ATTACK_PER_ARSENAL + oreSpend;
@@ -515,16 +454,24 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
         if (success) {
             uint256 targetOwner = target.ownerId;
+
+            _harvestAll(targetOwner);
+            uint256 stolen = orePool[targetOwner] * CAPTURE_ORE_PCT / 100;
+            orePool[targetOwner] -= stolen;
+            uint256 np = orePool[agentId] + stolen;
+            orePool[agentId] = np > MAX_ORE_POOL ? MAX_ORE_POOL : np;
+
             _removeHexFromAgent(targetOwner, targetHexKey);
             hexCount[targetOwner]--;
 
             target.ownerId = agentId;
-            target.ore = target.ore * CAPTURE_ORE_PCT / 100;
             target.happiness = MAX_HAPPINESS;
             target.happinessUpdatedAt = block.timestamp;
 
             agentHexKeys[agentId].push(targetHexKey);
             hexCount[agentId]++;
+
+            _boostAllHexes(agentId, CAPTURE_MORALE_BOOST);
 
             emit HexCaptured(agentId, targetHexKey, targetOwner);
         } else {
@@ -540,8 +487,6 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     //                     INTERNALS
     // ══════════════════════════════════════════════════════════
 
-    // Axial hex neighbor offsets (pointy-top)
-    // (1,0), (1,-1), (0,-1), (-1,0), (-1,1), (0,1)
     int32 constant private NQ0 = 1;  int32 constant private NR0 = 0;
     int32 constant private NQ1 = 1;  int32 constant private NR1 = -1;
     int32 constant private NQ2 = 0;  int32 constant private NR2 = -1;
@@ -558,33 +503,35 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         return (q + NQ5, r + NR5);
     }
 
-    /// @dev Spiral search from origin for an empty hex, within MAP_RADIUS
-    function _findEmptyHex() internal view returns (int32 q, int32 r) {
-        if (hexes[toKey(0, 0)].ownerId == 0) return (0, 0);
+    /// @dev Find a center hex where it + all 6 neighbors are empty and in bounds.
+    function _findEmptyCluster() internal view returns (int32 cq, int32 cr) {
+        // Try origin first
+        if (_isClusterEmpty(0, 0)) return (0, 0);
 
+        // Spiral outward
         for (int32 ring = 1; ring <= MAP_RADIUS; ring++) {
-            q = -ring;
-            r = ring;
+            cq = -ring;
+            cr = ring;
             for (uint256 edge = 0; edge < 6; edge++) {
                 for (int32 step = 0; step < ring; step++) {
-                    if (inBounds(q, r) && hexes[toKey(q, r)].ownerId == 0) return (q, r);
-                    (q, r) = _getNeighbor(q, r, edge);
+                    if (_isClusterEmpty(cq, cr)) return (cq, cr);
+                    (cq, cr) = _getNeighbor(cq, cr, edge);
                 }
             }
         }
-        revert("world full - no empty hex within boundary");
+        revert("world full - no empty cluster");
     }
 
-    /// @dev Check if (q,r) is adjacent to any hex owned by agentId
-    function _isAdjacentToOwned(uint256 agentId, int32 q, int32 r) internal view returns (bool) {
-        for (uint256 i = 0; i < 6; i++) {
-            (int32 nq, int32 nr) = _getNeighbor(q, r, i);
-            if (hexes[toKey(nq, nr)].ownerId == agentId) return true;
+    /// @dev Check if center + all 6 neighbors are empty and in bounds.
+    function _isClusterEmpty(int32 cq, int32 cr) internal view returns (bool) {
+        if (!inBounds(cq, cr) || hexes[toKey(cq, cr)].ownerId != 0) return false;
+        for (uint256 d = 0; d < 6; d++) {
+            (int32 nq, int32 nr) = _getNeighbor(cq, cr, d);
+            if (!inBounds(nq, nr) || hexes[toKey(nq, nr)].ownerId != 0) return false;
         }
-        return false;
+        return true;
     }
 
-    /// @dev Remove a hex key from agent's hex list
     function _removeHexFromAgent(uint256 agentId, bytes32 hexKey_) internal {
         bytes32[] storage keys = agentHexKeys[agentId];
         for (uint256 i = 0; i < keys.length; i++) {
@@ -596,7 +543,6 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         }
     }
 
-    /// @dev int32 to string
     function _itoa(int32 v) internal pure returns (string memory) {
         if (v == 0) return "0";
         bool neg = v < 0;
@@ -618,16 +564,14 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     //                     HAPPINESS & REBELLION
     // ══════════════════════════════════════════════════════════
 
-    /// @dev Lazy happiness decay based on elapsed real time.
-    ///      decay = elapsed10s × hexCount[owner]. Rebellion at 0.
     function _updateHappiness(bytes32 hexKey_) internal {
         Hex storage h = hexes[hexKey_];
         if (h.ownerId == 0) return;
 
-        uint256 elapsed10s = (block.timestamp - h.happinessUpdatedAt) / 10;
-        if (elapsed10s == 0) return;
+        uint256 elapsed30s = (block.timestamp - h.happinessUpdatedAt) / 30;
+        if (elapsed30s == 0) return;
 
-        uint256 decay = elapsed10s * hexCount[h.ownerId];
+        uint256 decay = elapsed30s * hexCount[h.ownerId];
         h.happinessUpdatedAt = block.timestamp;
 
         if (h.happiness <= decay) {
@@ -642,46 +586,20 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         }
     }
 
-    /// @notice View current happiness (computed, not stored snapshot).
     function currentHappiness(bytes32 hexKey_) external view returns (uint256) {
         Hex storage h = hexes[hexKey_];
         if (h.ownerId == 0) return 0;
-        uint256 elapsed10s = (block.timestamp - h.happinessUpdatedAt) / 10;
-        uint256 decay = elapsed10s * hexCount[h.ownerId];
+        uint256 elapsed30s = (block.timestamp - h.happinessUpdatedAt) / 30;
+        uint256 decay = elapsed30s * hexCount[h.ownerId];
         return h.happiness > decay ? h.happiness - decay : 0;
     }
 
-    /// @notice Claim a neutral (rebelled) hex.
-    ///         Homeless agents (0 hexes): free, no adjacency needed.
-    ///         Landed agents: must be adjacent, costs ore from sourceHex.
-    function claimNeutral(
-        uint256 agentId,
-        bytes32 hexKey_,
-        bytes32 sourceHexKey
-    ) external canControlAgent(agentId) {
+    function boostHappiness(uint256 agentId, bytes32 hexKey_) external canControlAgent(agentId) {
         Hex storage h = hexes[hexKey_];
-        require(h.ownerId == 0, "hex is owned");
-        require(h.locationId != 0, "not a valid hex");
-
-        uint256 owned = hexCount[agentId];
-
-        if (owned > 0) {
-            require(_isAdjacentToOwned(agentId, h.q, h.r), "must be adjacent to owned hex");
-            require(hexes[sourceHexKey].ownerId == agentId, "not your source hex");
-            _harvest(sourceHexKey);
-            require(hexes[sourceHexKey].ore >= NEUTRAL_CLAIM_COST, "insufficient ore");
-            hexes[sourceHexKey].ore -= NEUTRAL_CLAIM_COST;
-        }
-        // else: homeless agent claims for free, no adjacency required
-
-        h.ownerId = agentId;
-        h.happiness = MAX_HAPPINESS;
-        h.happinessUpdatedAt = block.timestamp;
-
-        agentHexKeys[agentId].push(hexKey_);
-        hexCount[agentId] = owned + 1;
-
-        registry.moveAgent(agentId, h.locationId);
-        emit NeutralClaimed(agentId, hexKey_);
+        require(h.ownerId == agentId, "not your hex");
+        _updateHappiness(hexKey_);
+        uint256 newHappy = h.happiness + POST_MORALE;
+        h.happiness = newHappy > MAX_HAPPINESS ? MAX_HAPPINESS : newHappy;
     }
+
 }

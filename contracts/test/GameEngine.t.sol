@@ -49,11 +49,8 @@ contract GameEngineTest is Test {
         );
         engine = GameEngine(address(engineProxy));
 
-        // Grant GameEngine operator (LocationLedger delegates to Registry's operator list)
         registry.addOperator(address(engine));
     }
-
-    // ──────────────────── Helpers ────────────────────
 
     function _createAgent(address ownerAddr) internal returns (uint256 agentId, bytes32 hexKey) {
         vm.prank(ownerAddr);
@@ -61,69 +58,74 @@ contract GameEngineTest is Test {
     }
 
     // ══════════════════════════════════════════════════
-    //                 AGENT CREATION
+    //                 AGENT CREATION (7 hex cluster)
     // ══════════════════════════════════════════════════
 
-    function test_CreateAgent() public {
+    function test_CreateAgentGets7Hexes() public {
         (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
         assertEq(agentId, 1);
         assertTrue(hexKey != bytes32(0));
 
-        // Agent exists
-        (string memory name, , , , ) = registry.getAgent(agentId);
-        assertEq(name, "Agent");
+        // Agent owns 7 hexes
+        assertEq(engine.hexCount(agentId), 7);
+        assertEq(engine.getAgentHexKeys(agentId).length, 7);
 
-        // Hex is owned
-        (uint256 owner, , , , , , uint256 ore, , , , ) = engine.getHex(hexKey);
+        // Ore pool starts at 200
+        assertEq(engine.orePool(agentId), 200);
+
+        // Center hex is owned
+        (uint256 owner, , , , , , , , , ) = engine.getHex(hexKey);
         assertEq(owner, agentId);
-        assertEq(ore, 200); // starting ore
-
-        // Agent has 1 hex
-        assertEq(engine.hexCount(agentId), 1);
     }
 
-    function test_TwoAgentsGetDifferentHexes() public {
-        (, bytes32 h1) = _createAgent(player1);
-        (, bytes32 h2) = _createAgent(player2);
-        assertTrue(h1 != h2);
+    function test_TwoAgentsGetDifferentClusters() public {
+        (uint256 a1, ) = _createAgent(player1);
+        (uint256 a2, ) = _createAgent(player2);
+
+        // Both have 7 hexes, no overlap
+        bytes32[] memory keys1 = engine.getAgentHexKeys(a1);
+        bytes32[] memory keys2 = engine.getAgentHexKeys(a2);
+        assertEq(keys1.length, 7);
+        assertEq(keys2.length, 7);
+
+        for (uint256 i = 0; i < 7; i++) {
+            for (uint256 j = 0; j < 7; j++) {
+                assertTrue(keys1[i] != keys2[j], "clusters must not overlap");
+            }
+        }
     }
 
     // ══════════════════════════════════════════════════
-    //                    HARVEST
+    //                    HARVEST (ore pool)
     // ══════════════════════════════════════════════════
 
-    function test_HarvestBaseProduction() public {
-        (, bytes32 hexKey) = _createAgent(player1);
+    function test_HarvestAllHexes() public {
+        (uint256 agentId, ) = _createAgent(player1);
 
-        // 1 second → 10 ore/sec base
         vm.warp(block.timestamp + 1);
-        engine.harvest(hexKey);
+        engine.harvest(agentId);
 
-        (, , , , , , uint256 ore, , , , ) = engine.getHex(hexKey);
-        // 200 starting + 10 base/sec * 1 sec = 210
-        assertEq(ore, 210);
+        // 200 + 7 hexes * 10 ore/sec * 1 sec = 270
+        assertEq(engine.orePool(agentId), 270);
     }
 
     function test_HarvestWithMines() public {
-        (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
+        (uint256 agentId, ) = _createAgent(player1);
+        bytes32 hexKey = engine.getAgentHexKeys(agentId)[0];
 
-        // Build 2 mines (50 ore each = 100 ore, leaves 100)
+        // Build 2 mines on first hex (costs 100 from pool)
         vm.startPrank(player1);
         engine.build(agentId, hexKey, 1);
         engine.build(agentId, hexKey, 1);
         vm.stopPrank();
 
-        (, , , , uint256 mines, , uint256 oreBefore, , , , ) = engine.getHex(hexKey);
-        assertEq(mines, 2);
-        assertEq(oreBefore, 100); // 200 - 50 - 50
+        assertEq(engine.orePool(agentId), 100); // 200 - 100
 
-        // 2 seconds
-        vm.warp(block.timestamp + 2);
-        engine.harvest(hexKey);
+        vm.warp(block.timestamp + 1);
+        engine.harvest(agentId);
 
-        (, , , , , , uint256 oreAfter, , , , ) = engine.getHex(hexKey);
-        // 100 + (10 base + 2*5 mine) * 2 sec = 100 + 40 = 140
-        assertEq(oreAfter, 140);
+        // 100 + 6*10 (base hexes) + 1*(10+2*5) (hex with 2 mines) = 100 + 60 + 20 = 180
+        assertEq(engine.orePool(agentId), 180);
     }
 
     // ══════════════════════════════════════════════════
@@ -131,37 +133,39 @@ contract GameEngineTest is Test {
     // ══════════════════════════════════════════════════
 
     function test_BuildMine() public {
-        (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
+        (uint256 agentId, ) = _createAgent(player1);
+        bytes32 hexKey = engine.getAgentHexKeys(agentId)[0];
 
         vm.prank(player1);
-        engine.build(agentId, hexKey, 1); // Mine = 50 ore
+        engine.build(agentId, hexKey, 1);
 
-        (, , , , uint256 mines, , uint256 ore, , , , ) = engine.getHex(hexKey);
+        (, , , , uint256 mines, , , , , ) = engine.getHex(hexKey);
         assertEq(mines, 1);
-        assertEq(ore, 150); // 200 - 50
+        assertEq(engine.orePool(agentId), 150);
     }
 
     function test_BuildArsenal() public {
-        (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
+        (uint256 agentId, ) = _createAgent(player1);
+        bytes32 hexKey = engine.getAgentHexKeys(agentId)[0];
 
         vm.prank(player1);
-        engine.build(agentId, hexKey, 2); // Arsenal = 100 ore
+        engine.build(agentId, hexKey, 2);
 
-        (, , , , , uint256 arsenals, uint256 ore, , , , ) = engine.getHex(hexKey);
+        (, , , , , uint256 arsenals, , , , ) = engine.getHex(hexKey);
         assertEq(arsenals, 1);
-        assertEq(ore, 100); // 200 - 100
+        assertEq(engine.orePool(agentId), 100);
     }
 
     function test_CannotExceedSlots() public {
-        (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
+        (uint256 agentId, ) = _createAgent(player1);
+        bytes32 hexKey = engine.getAgentHexKeys(agentId)[0];
 
-        // Wait enough to get ore for 12 mines (need 600 ore total, have 200, need 400 more at 10/sec → 40 sec)
+        // Wait to get enough ore (need 600, have 200 + 7*10*40 = 3000)
         vm.warp(block.timestamp + 40);
-        engine.harvest(hexKey);
+        engine.harvest(agentId);
 
-        // Build 12 mines (fills all slots)
         vm.startPrank(player1);
-        for (uint256 i = 0; i < 12; i++) {
+        for (uint256 i = 0; i < 6; i++) {
             engine.build(agentId, hexKey, 1);
         }
 
@@ -171,148 +175,113 @@ contract GameEngineTest is Test {
     }
 
     // ══════════════════════════════════════════════════
-    //                  HEX CLAIMING
-    // ══════════════════════════════════════════════════
-
-    function test_ClaimAdjacentHex() public {
-        (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
-
-        // Get the hex coordinates
-        (, , int32 q, int32 r, , , , , , , ) = engine.getHex(hexKey);
-
-        // Already have 200 ore, claim cost is 200 — no need to wait
-        vm.prank(player1);
-        engine.claimHex(agentId, q + 1, r, hexKey);
-
-        assertEq(engine.hexCount(agentId), 2);
-    }
-
-    function test_CannotClaimOccupied() public {
-        _createAgent(player1);
-        (uint256 agent2, bytes32 hex2) = _createAgent(player2);
-
-        // Try to claim agent1's hex
-        (, , int32 q1, int32 r1, , , , , , , ) = engine.getHex(engine.getAgentHexKeys(1)[0]);
-
-        // Give agent2 enough ore
-        vm.warp(block.timestamp + 5);
-        engine.harvest(hex2);
-
-        vm.prank(player2);
-        vm.expectRevert("hex occupied");
-        engine.claimHex(agent2, q1, r1, hex2);
-    }
-
-    function test_CannotClaimNonAdjacent() public {
-        (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
-
-        // Give enough ore
-        vm.warp(block.timestamp + 5);
-        engine.harvest(hexKey);
-
-        // Try to claim a hex within world bounds but not adjacent (3 steps away)
-        vm.prank(player1);
-        vm.expectRevert("must be adjacent to owned hex");
-        engine.claimHex(agentId, 3, 3, hexKey);
-    }
-
-    function test_ClaimCostEscalates() public {
-        (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
-
-        // First claim cost = 200
-        assertEq(engine.getClaimCost(agentId), 200);
-
-        (, , int32 q, int32 r, , , , , , , ) = engine.getHex(hexKey);
-
-        // Already have 200 ore for first claim
-        vm.prank(player1);
-        engine.claimHex(agentId, q + 1, r, hexKey);
-
-        // Second claim cost = 400
-        assertEq(engine.getClaimCost(agentId), 400);
-    }
-
-    // ══════════════════════════════════════════════════
     //                    COMBAT
     // ══════════════════════════════════════════════════
 
     function test_AttackRequiresPresence() public {
-        (uint256 attacker, bytes32 attackerHex) = _createAgent(player1);
+        (uint256 attacker, ) = _createAgent(player1);
         (, bytes32 targetHex) = _createAgent(player2);
 
-        // Build arsenal on attacker
+        bytes32 attackerHex = engine.getAgentHexKeys(attacker)[0];
         vm.prank(player1);
         engine.build(attacker, attackerHex, 2);
 
-        // Attack without moving to target — should fail
         vm.prank(player1);
         vm.expectRevert("must be at target hex");
         engine.attack(attacker, targetHex, attackerHex, 1, 0);
     }
 
     function test_AttackFlow() public {
-        (uint256 attacker, bytes32 attackerHex) = _createAgent(player1);
+        (uint256 attacker, ) = _createAgent(player1);
         (, bytes32 targetHex) = _createAgent(player2);
 
-        // Build arsenal
+        bytes32 attackerHex = engine.getAgentHexKeys(attacker)[0];
         vm.prank(player1);
-        engine.build(attacker, attackerHex, 2); // costs 100 ore, leaves 100
+        engine.build(attacker, attackerHex, 2);
 
-        // Move attacker to target hex location
-        (, uint256 targetLocId, , , , , , , , , ) = engine.getHex(targetHex);
+        (, uint256 targetLocId, , , , , , , , ) = engine.getHex(targetHex);
         vm.prank(player1);
         registry.moveAgent(attacker, targetLocId);
 
-        // Attack: spend 1 arsenal + 0 ore
         vm.prank(player1);
         engine.attack(attacker, targetHex, attackerHex, 1, 0);
 
-        // Arsenal consumed from attacker's hex
-        (, , , , , uint256 arsenalsLeft, , , , , ) = engine.getHex(attackerHex);
+        (, , , , , uint256 arsenalsLeft, , , , ) = engine.getHex(attackerHex);
         assertEq(arsenalsLeft, 0);
     }
 
-    function test_AttackCooldown() public {
-        (uint256 attacker, bytes32 attackerHex) = _createAgent(player1);
+    function test_CaptureTransfersHex() public {
+        (uint256 attacker, ) = _createAgent(player1);
         (uint256 defender, bytes32 targetHex) = _createAgent(player2);
 
-        // Defender builds lots of arsenals (high defense so attacks fail)
-        // Need ore for 4 arsenals (400) + 3 arsenals (300) = 700 total minus 400 starting = 300 more at 10/sec
-        vm.warp(block.timestamp + 30);
-        engine.harvest(targetHex);
-        engine.harvest(attackerHex);
-        vm.startPrank(player2);
-        engine.build(defender, targetHex, 2); // +5 defense
-        engine.build(defender, targetHex, 2); // +5 defense
-        engine.build(defender, targetHex, 2); // +5 defense
-        engine.build(defender, targetHex, 2); // +5 defense = 20 total defense
-        vm.stopPrank();
+        // Give attacker tons of ore for brute force
+        vm.warp(block.timestamp + 100);
+        engine.harvest(attacker);
+        engine.harvest(defender);
 
-        // Attacker builds arsenals
-        vm.startPrank(player1);
-        engine.build(attacker, attackerHex, 2);
-        engine.build(attacker, attackerHex, 2);
-        engine.build(attacker, attackerHex, 2);
-        vm.stopPrank();
+        bytes32 attackerHex = engine.getAgentHexKeys(attacker)[0];
 
-        // Move to target
-        (, uint256 targetLocId, , , , , , , , , ) = engine.getHex(targetHex);
+        (, uint256 targetLocId, , , , , , , , ) = engine.getHex(targetHex);
         vm.prank(player1);
         registry.moveAgent(attacker, targetLocId);
 
-        // First attack (small, likely fails against 20 defense)
+        // Attack with lots of ore to guarantee win
+        uint256 oreToSpend = engine.orePool(attacker) / 2;
+        vm.prank(player1);
+        engine.attack(attacker, targetHex, attackerHex, 0, oreToSpend);
+
+        // Check result — if attacker won, hex transferred + ore stolen
+        (uint256 newOwner, , , , , , , , , ) = engine.getHex(targetHex);
+        if (newOwner == attacker) {
+            // Attacker gained a hex
+            assertGt(engine.hexCount(attacker), 7);
+            assertLt(engine.hexCount(defender), 7);
+        }
+        // Either way both are still alive
+        assertTrue(registry.isAlive(attacker));
+        assertTrue(registry.isAlive(defender));
+    }
+
+    function test_AttackCooldown() public {
+        (uint256 attacker, ) = _createAgent(player1);
+        (uint256 defender, ) = _createAgent(player2);
+
+        vm.warp(block.timestamp + 30);
+        engine.harvest(attacker);
+        engine.harvest(defender);
+
+        bytes32 attackerHex = engine.getAgentHexKeys(attacker)[0];
+        // Use defender's last hex as target
+        bytes32 targetHex = engine.getAgentHexKeys(defender)[6];
+
+        vm.startPrank(player1);
+        engine.build(attacker, attackerHex, 2);
+        engine.build(attacker, attackerHex, 2);
+        vm.stopPrank();
+
+        // Fortify target heavily so attacker cannot win with 1 arsenal
+        vm.startPrank(player2);
+        for (uint256 i = 0; i < 6; i++) {
+            engine.build(defender, targetHex, 2); // 6 arsenals = 30 defense
+        }
+        vm.stopPrank();
+
+        (, uint256 targetLocId, , , , , , , , ) = engine.getHex(targetHex);
+        vm.prank(player1);
+        registry.moveAgent(attacker, targetLocId);
+
+        // First attack with 1 arsenal (5 power vs 30 defense — almost certainly loses)
         vm.prank(player1);
         engine.attack(attacker, targetHex, attackerHex, 1, 0);
 
-        // Second attack — cooldown regardless of win/lose
+        // Immediate retry — cooldown
         vm.prank(player1);
         vm.expectRevert("cooldown");
         engine.attack(attacker, targetHex, attackerHex, 1, 0);
 
-        // After cooldown (5 seconds)
+        // After cooldown
         vm.warp(block.timestamp + 6);
-        engine.harvest(attackerHex);
-        engine.harvest(targetHex);
+        engine.harvest(attacker);
         vm.prank(player1);
         engine.attack(attacker, targetHex, attackerHex, 1, 0);
     }
@@ -322,17 +291,16 @@ contract GameEngineTest is Test {
     // ══════════════════════════════════════════════════
 
     function test_ScoreCalculation() public {
-        (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
+        (uint256 agentId, ) = _createAgent(player1);
+        bytes32 hexKey = engine.getAgentHexKeys(agentId)[0];
 
-        // 1 hex (100) + 200 ore + 0 buildings (0) = 300
-        uint256 score = engine.getScore(agentId);
-        assertEq(score, 300);
+        // 7 hex (700) + 200 ore pool + 0 buildings = 900
+        assertEq(engine.getScore(agentId), 900);
 
-        // Build a mine: 1 hex (100) + 150 ore + 1 building (50) = 300
+        // Build a mine: 7 hex (700) + 150 pool + 1 building (50) = 900
         vm.prank(player1);
         engine.build(agentId, hexKey, 1);
-        score = engine.getScore(agentId);
-        assertEq(score, 300); // 100 + 150 + 50
+        assertEq(engine.getScore(agentId), 900);
     }
 
     // ══════════════════════════════════════════════════
@@ -340,18 +308,16 @@ contract GameEngineTest is Test {
     // ══════════════════════════════════════════════════
 
     function test_HexHasBulletinBoard() public {
-        (uint256 agentId, bytes32 hexKey) = _createAgent(player1);
+        (uint256 agentId, ) = _createAgent(player1);
+        bytes32 hexKey = engine.getAgentHexKeys(agentId)[0];
 
-        // Get location ID for the hex
-        (, uint256 locationId, , , , , , , , , ) = engine.getHex(hexKey);
+        (, uint256 locationId, , , , , , , , ) = engine.getHex(hexKey);
 
-        // Post to the hex's bulletin board
         uint256[] memory noRelated = new uint256[](0);
         vm.prank(player1);
         (uint256 entryId, , ) = locationLedger.write(agentId, 5, "action", "Built a mine", noRelated);
         assertGt(entryId, 0);
 
-        // Read it back
         (LocationLedger.Entry[] memory entries, , ) = locationLedger.readRecent(locationId, 10);
         assertEq(entries.length, 1);
     }
@@ -361,39 +327,36 @@ contract GameEngineTest is Test {
     // ══════════════════════════════════════════════════
 
     function test_FullGameLoop() public {
-        // Two players
-        (uint256 alice, bytes32 aliceHex) = _createAgent(player1);
-        (uint256 bob, bytes32 bobHex) = _createAgent(player2);
+        (uint256 alice, ) = _createAgent(player1);
+        (uint256 bob, ) = _createAgent(player2);
 
-        // Alice builds mines
+        bytes32 aliceHex = engine.getAgentHexKeys(alice)[0];
+        bytes32 bobHex = engine.getAgentHexKeys(bob)[0];
+
+        // Both build infrastructure
         vm.startPrank(player1);
-        engine.build(alice, aliceHex, 1);
-        engine.build(alice, aliceHex, 1);
+        engine.build(alice, aliceHex, 1); // mine
+        engine.build(alice, aliceHex, 1); // mine
         vm.stopPrank();
 
-        // Bob builds arsenal
         vm.prank(player2);
-        engine.build(bob, bobHex, 2);
+        engine.build(bob, bobHex, 2); // arsenal
 
-        // Time passes (5 seconds)
+        // Time passes, harvest
         vm.warp(block.timestamp + 5);
-        engine.harvest(aliceHex);
-        engine.harvest(bobHex);
+        engine.harvest(alice);
+        engine.harvest(bob);
 
         // Bob moves to Alice's hex to attack
-        (, uint256 aliceLocId, , , , , , , , , ) = engine.getHex(aliceHex);
+        (, uint256 aliceLocId, , , , , , , , ) = engine.getHex(aliceHex);
         vm.prank(player2);
         registry.moveAgent(bob, aliceLocId);
 
-        // Bob attacks with 1 arsenal
         vm.prank(player2);
         engine.attack(bob, aliceHex, bobHex, 1, 0);
 
-        // Both still alive
         assertTrue(registry.isAlive(alice));
         assertTrue(registry.isAlive(bob));
-
-        // Scores exist
         assertGt(engine.getScore(alice) + engine.getScore(bob), 0);
     }
 }

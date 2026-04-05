@@ -19,9 +19,9 @@ export interface HexData {
   r: number;
   mineCount: number;
   arsenalCount: number;
-  ore: number;
   lastHarvest: number;
   reserve: number;
+  happiness: number;
   usedSlots: number;
   totalSlots: number;
   defense: number;

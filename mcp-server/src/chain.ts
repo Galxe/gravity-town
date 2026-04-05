@@ -45,18 +45,17 @@ const GAME_ENGINE_ABI = [
   "event Harvested(bytes32 indexed hexKey, uint256 oreGained)",
   "event AttackResult(uint256 indexed attackerId, bytes32 indexed targetHexKey, uint256 attackPower, uint256 defensePower, bool success)",
   "function createAgent(string name, string personality, uint8[4] stats, address ownerAddr) returns (uint256 agentId, bytes32 hexKey)",
-  "function claimHex(uint256 agentId, int32 q, int32 r, bytes32 sourceHexKey)",
-  "function harvest(bytes32 hexKey)",
+  "function harvest(uint256 agentId)",
+  "function orePool(uint256 agentId) view returns (uint256)",
   "function build(uint256 agentId, bytes32 hexKey, uint8 buildingType)",
   "function attack(uint256 agentId, bytes32 targetHexKey, bytes32 sourceHexKey, uint256 arsenalSpend, uint256 oreSpend)",
   "function getScore(uint256 agentId) view returns (uint256)",
-  "function getHex(bytes32 hexKey) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 ore, uint256 lastHarvest, uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt)",
+  "function getHex(bytes32 hexKey) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 lastHarvest, uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt)",
   "function getAgentHexKeys(uint256 agentId) view returns (bytes32[])",
   "function hexCount(uint256 agentId) view returns (uint256)",
-  "function getClaimCost(uint256 agentId) view returns (uint256)",
   "function toKey(int32 q, int32 r) view returns (bytes32)",
-  "function getClaimableHexes(uint256 agentId) view returns (int32[] qs, int32[] rs)",
   "function raid(uint256 agentId, bytes32 targetHexKey, uint256 arsenalSpend, uint256 oreSpend)",
+  "function boostHappiness(uint256 agentId, bytes32 hexKey)",
 ];
 
 const ROUTER_ABI = [
@@ -167,11 +166,13 @@ export class ChainClient {
     const [name, personality, stats, location, createdAt] = await this.registry.getAgent(agentId);
     const score = await this.gameEngine.getScore(agentId);
     const hCount = await this.gameEngine.hexCount(agentId);
+    const ore = Number(await this.gameEngine.orePool(agentId));
     return {
       id: agentId, name, personality,
       stats: stats.map((s: bigint) => Number(s)),
       location: Number(location),
       hexCount: Number(hCount),
+      ore,
       score: Number(score),
       createdAt: Number(createdAt),
     };
@@ -191,16 +192,16 @@ export class ChainClient {
   // ============ Hex / Economy ============
 
   async getHex(hexKey: string) {
-    const [ownerId, locationId, q, r, mineCount, arsenalCount, ore, lastHarvest, reserve, happiness, happinessUpdatedAt] =
+    const [ownerId, locationId, q, r, mineCount, arsenalCount, lastHarvest, reserve, happiness, happinessUpdatedAt] =
       await this.gameEngine.getHex(hexKey);
     return {
       hexKey, ownerId: Number(ownerId), locationId: Number(locationId),
       q: Number(q), r: Number(r),
       mineCount: Number(mineCount), arsenalCount: Number(arsenalCount),
-      ore: Number(ore), lastHarvest: Number(lastHarvest),
+      lastHarvest: Number(lastHarvest),
       reserve: Number(reserve),
       happiness: Number(happiness), happinessUpdatedAt: Number(happinessUpdatedAt),
-      usedSlots: Number(mineCount) + Number(arsenalCount), totalSlots: 12,
+      usedSlots: Number(mineCount) + Number(arsenalCount), totalSlots: 6,
       defense: Number(arsenalCount) * 5,
       depleted: Number(reserve) === 0,
     };
@@ -209,26 +210,12 @@ export class ChainClient {
   async getMyHexes(agentId: number) {
     const keys: string[] = await this.gameEngine.getAgentHexKeys(agentId);
     const hexes = await Promise.all(keys.map((k) => this.getHex(k)));
-    const claimable = await this.getClaimableHexes(agentId);
-    return { hexes, claimable };
+    const ore = Number(await this.gameEngine.orePool(agentId));
+    return { ore, hexes };
   }
 
-  async claimHex(agentId: number, q: number, r: number, sourceHexKey: string) {
-    const tx = await this.gameEngine.claimHex(agentId, q, r, sourceHexKey);
-    const receipt = await tx.wait();
-    let hexKey: string | null = null;
-    const iface = this.gameEngine.interface;
-    for (const log of receipt.logs) {
-      try {
-        const parsed = iface.parseLog(log);
-        if (parsed.name === "HexClaimed") { hexKey = parsed.args.hexKey; break; }
-      } catch {}
-    }
-    return { hexKey, txHash: receipt.transactionHash };
-  }
-
-  async harvest(hexKey: string) {
-    const tx = await this.gameEngine.harvest(hexKey);
+  async harvest(agentId: number) {
+    const tx = await this.gameEngine.harvest(agentId);
     const receipt = await tx.wait();
     let oreGained = 0;
     const iface = this.gameEngine.interface;
@@ -238,13 +225,15 @@ export class ChainClient {
         if (parsed.name === "Harvested") { oreGained = Number(parsed.args.oreGained); break; }
       } catch {}
     }
-    return { oreGained, txHash: receipt.transactionHash };
+    const orePool = Number(await this.gameEngine.orePool(agentId));
+    return { oreGained, orePool, txHash: receipt.transactionHash };
   }
 
   async build(agentId: number, hexKey: string, buildingType: number) {
     const tx = await this.gameEngine.build(agentId, hexKey, buildingType);
     const receipt = await tx.wait();
-    return { buildingType: buildingType === 1 ? "Mine" : "Arsenal", txHash: receipt.transactionHash };
+    const orePool = Number(await this.gameEngine.orePool(agentId));
+    return { buildingType: buildingType === 1 ? "Mine" : "Arsenal", orePool, txHash: receipt.transactionHash };
   }
 
   async attack(agentId: number, targetHexKey: string, sourceHexKey: string, arsenalSpend: number, oreSpend: number) {
@@ -280,17 +269,6 @@ export class ChainClient {
       return { agentId, name, hexCount: hCount, score };
     }));
     return scores.sort((a, b) => b.score - a.score);
-  }
-
-  async getClaimCost(agentId: number) { return Number(await this.gameEngine.getClaimCost(agentId)); }
-
-  async getClaimableHexes(agentId: number) {
-    const [qs, rs] = await this.gameEngine.getClaimableHexes(agentId);
-    const cost = await this.getClaimCost(agentId);
-    return {
-      cost,
-      hexes: qs.map((q: bigint, i: number) => ({ q: Number(q), r: Number(rs[i]) })),
-    };
   }
 
   async raid(agentId: number, targetHexKey: string, arsenalSpend: number, oreSpend: number) {
@@ -332,6 +310,11 @@ export class ChainClient {
     const tx = await this.locationLedger.write(agentId, importance, category, content, relatedAgents);
     const receipt = await tx.wait();
     return { entryId: 0, used: 0, capacity: 128, txHash: receipt.transactionHash };
+  }
+
+  async boostHappiness(agentId: number, hexKey: string) {
+    const tx = await this.gameEngine.boostHappiness(agentId, hexKey);
+    await tx.wait();
   }
 
   async readLocation(locationId: number, count: number): Promise<BoardRead> {

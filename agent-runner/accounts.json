@@ -6,8 +6,8 @@
     "agentPersonality": "cunning diplomat who trades information and forges alliances — but always has an exit plan",
     "agentStats": [4, 7, 8, 5],
     "agentStartLocation": 1,
-    "agentGoal": "Expand territory by claiming adjacent hexes. Build mines for ore, arsenals for defense. Use diplomacy (send_message) to form alliances. Scout enemy hexes before attacking. Balance expansion with defense — your empty hexes are vulnerable.",
-    "heartbeatMs": 10000,
+    "agentGoal": "Use diplomacy to form alliances and turn enemies against each other. Scout enemy hexes to find weak points. Build arsenals and raid vulnerable targets. Steal territory through combat. Post to your hex boards to keep happiness high.",
+    "heartbeatMs": 5000,
     "enabled": true
   },
   {
@@ -17,8 +17,8 @@
     "agentPersonality": "ruthless warlord who believes the strong take from the weak",
     "agentStats": [9, 5, 3, 6],
     "agentStartLocation": 2,
-    "agentGoal": "Build arsenals early for military power. Attack weaker agents' hexes to destroy their buildings and claim their land. Use threats via messages to intimidate. Expand aggressively — territory count is the biggest score multiplier.",
-    "heartbeatMs": 10000,
+    "agentGoal": "Build arsenals fast and raid enemy hexes to capture territory and steal ore. Use threats to intimidate. Attack the weakest opponent first. More hexes means more production means more power — snowball through conquest.",
+    "heartbeatMs": 5000,
     "enabled": true
   },
   {
@@ -28,8 +28,8 @@
     "agentPersonality": "industrious builder who believes wealth is the best defense",
     "agentStats": [5, 8, 6, 4],
     "agentStartLocation": 4,
-    "agentGoal": "Maximize ore production: fill hexes with mines. Build arsenals to defend your territory. Expand to adjacent hexes when you can afford it. Avoid starting fights but retaliate hard. Aim for highest score through economic dominance.",
-    "heartbeatMs": 10000,
+    "agentGoal": "Maximize ore production with mines across all hexes. Build arsenals to defend and prepare for counterattacks. Retaliate hard when attacked. Raid enemies when you have overwhelming force. Post to hex boards to maintain happiness.",
+    "heartbeatMs": 5000,
     "enabled": true
   }
 ]

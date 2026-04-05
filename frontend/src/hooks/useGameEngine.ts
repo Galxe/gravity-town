@@ -35,7 +35,8 @@ const GAME_ENGINE_ABI = [
   'function getScore(uint256) view returns (uint256)',
   'function hexCount(uint256) view returns (uint256)',
   'function getAgentHexKeys(uint256) view returns (bytes32[])',
-  'function getHex(bytes32) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 ore, uint256 lastHarvest, uint256 reserve)',
+  'function getHex(bytes32) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 lastHarvest, uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt)',
+  'function orePool(uint256) view returns (uint256)',
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -141,15 +142,16 @@ export function useGameEngine() {
               const keys: string[] = await gameEngine.getAgentHexKeys(id);
               const hexList: HexData[] = [];
               for (const k of keys) {
-                const [ownerId, locationId, q, r, mineCount, arsenalCount, ore, lastHarvest, reserve] =
+                const [ownerId, locationId, q, r, mineCount, arsenalCount, lastHarvest, reserve, happiness, happinessUpdatedAt] =
                   await gameEngine.getHex(k);
                 const hd: HexData = {
                   hexKey: k, ownerId: Number(ownerId), locationId: Number(locationId),
                   q: Number(q), r: Number(r),
                   mineCount: Number(mineCount), arsenalCount: Number(arsenalCount),
-                  ore: Number(ore), lastHarvest: Number(lastHarvest),
+                  lastHarvest: Number(lastHarvest),
                   reserve: Number(reserve),
-                  usedSlots: Number(mineCount) + Number(arsenalCount), totalSlots: 12,
+                  happiness: Number(happiness),
+                  usedSlots: Number(mineCount) + Number(arsenalCount), totalSlots: 6,
                   defense: Number(arsenalCount) * 5,
                 };
                 hexList.push(hd);

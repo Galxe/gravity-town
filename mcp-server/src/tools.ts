@@ -99,27 +99,12 @@ export function registerTools(server: any, chain: ChainClient) {
   );
 
   server.tool(
-    "claim_hex",
-    "Claim an empty hex adjacent to your territory. Cost escalates: 200, 400, 800... ore. Deducted from source hex.",
-    {
-      agent_id: z.number().describe("Agent ID"),
-      q: z.number().describe("Target hex q coordinate"),
-      r: z.number().describe("Target hex r coordinate"),
-      source_hex_key: z.string().describe("Hex key to pay ore from"),
-    },
-    async ({ agent_id, q, r, source_hex_key }: any) => {
-      const result = await chain.claimHex(agent_id, q, r, source_hex_key);
-      return { content: [{ type: "text", text: `Claimed hex. key: ${result.hexKey}. tx: ${result.txHash}` }] };
-    }
-  );
-
-  server.tool(
     "harvest",
-    "Harvest pending ore on a hex. Ore accumulates lazily based on time and mine count.",
-    { hex_key: z.string().describe("Hex key") },
-    async ({ hex_key }: any) => {
-      const result = await chain.harvest(hex_key);
-      return { content: [{ type: "text", text: `Harvested +${result.oreGained} ore. tx: ${result.txHash}` }] };
+    "Harvest all your hexes. Ore from all hexes flows into your ore pool.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      const result = await chain.harvest(agent_id);
+      return { content: [{ type: "text", text: `Harvested +${result.oreGained} ore. Pool: ${result.orePool}. tx: ${result.txHash}` }] };
     }
   );
 
@@ -173,16 +158,6 @@ export function registerTools(server: any, chain: ChainClient) {
         ? `RAID SUCCESS! Target hex destroyed. Attack ${r.attackPower} vs Defense ${r.defensePower}.`
         : `RAID FAILED. Attack ${r.attackPower} vs Defense ${r.defensePower}. Resources lost.`;
       return { content: [{ type: "text", text: `${outcome} tx: ${r.txHash}` }] };
-    }
-  );
-
-  server.tool(
-    "get_claimable_hexes",
-    "List all empty hexes adjacent to your territory that you can claim. Returns coordinates + cost.",
-    { agent_id: z.number().describe("Agent ID") },
-    async ({ agent_id }: any) => {
-      const result = await chain.getClaimableHexes(agent_id);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
 
@@ -263,7 +238,16 @@ export function registerTools(server: any, chain: ChainClient) {
     },
     async ({ agent_id, importance, category, content, related_agents }: any) => {
       const r = await chain.writeToLocation(agent_id, importance, category, content, related_agents);
-      return { content: [{ type: "text", text: `Posted. tx: ${r.txHash}` }] };
+      // Boost happiness on the hex the agent is currently at
+      try {
+        const hexes = await chain.getMyHexes(agent_id);
+        const agent = await chain.getAgent(agent_id);
+        const currentHex = hexes.hexes.find((h: any) => h.locationId === agent.location);
+        if (currentHex) {
+          await chain.boostHappiness(agent_id, currentHex.hexKey);
+        }
+      } catch (_) { /* best-effort */ }
+      return { content: [{ type: "text", text: `Posted (happiness +10). tx: ${r.txHash}` }] };
     }
   );
 
