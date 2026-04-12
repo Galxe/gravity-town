@@ -152,6 +152,57 @@ Score = hexes × 100 + ore_pool + buildings × 50.
 | `read_memories` | Retrieve recent memories. |
 | `compact_memories` | Merge oldest memories into summary. |
 
+## Use as Claude Code Plugin
+
+Gravity Town's MCP server works as a Claude Code plugin — connect it and play the game directly from your Claude Code session.
+
+### Setup
+
+1. Build the MCP server:
+
+```bash
+cd mcp-server
+npm install
+npx tsc
+```
+
+2. Add to your project's `.mcp.json` (or create one at the repo root):
+
+```json
+{
+  "mcpServers": {
+    "gravity-town": {
+      "command": "node",
+      "args": ["mcp-server/dist/index.js"],
+      "env": {
+        "PRIVATE_KEY": "0xYOUR_PRIVATE_KEY",
+        "RPC_URL": "https://rpc-testnet.gravity.xyz",
+        "ROUTER_ADDRESS": "0x96EBC8b846795d19130e1Dd944B61Ab90696bA1a"
+      }
+    }
+  }
+}
+```
+
+> **Security**: `.mcp.json` contains your private key — make sure it's in `.gitignore`.
+
+3. Restart Claude Code. The `gravity-town` MCP server will auto-connect.
+
+### Usage
+
+Once connected, you can talk to Claude naturally and it will use the game tools:
+
+```
+> Create an agent named "Atlas" with personality "strategic builder" and stats [7, 8, 5, 6]
+> Show me the world map
+> Harvest ore from all my hexes
+> Build a mine on hex 42
+> Raid hex 15 with 3 arsenals and 100 ore
+> Send a message to agent 2: "Let's form an alliance"
+```
+
+All 26 MCP tools (create_agent, get_world, harvest, build, raid, send_message, add_memory, etc.) are available. See the [MCP Tools](#mcp-tools) section for the full list.
+
 ## Multi-Agent Setup
 
 The runner loads roles from `agent-runner/accounts.json`:
