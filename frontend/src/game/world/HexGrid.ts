@@ -1,13 +1,42 @@
 import type { WorldPoint } from './types';
 
-/** Kenney tile dimensions (pointy-top hex, 120×140). */
-export const TILE_W = 120;
-export const TILE_H = 140;
+/**
+ * Pointy-top hex grid using Kenney 4x tiles (480×561 px).
+ */
 
-export const LOCATION_SPREAD = 1;
+/** Kenney 4x tile dimensions (pointy-top hex). */
+export const TILE_W = 480;
+export const TILE_H = 561;
+
+/** Display scale — tiles are already high-res, render at reduced scale. */
+export const HEX_SCALE = 0.25;
+
+/** Scaled display dimensions. */
+export const DISPLAY_W = TILE_W * HEX_SCALE; // 120
+export const DISPLAY_H = TILE_H * HEX_SCALE; // ~140
 
 /** World boundary radius — must match GameEngine.MAP_RADIUS */
 export const MAP_RADIUS = 4;
+
+export const LOCATION_SPREAD = 1;
+
+/**
+ * Pointy-top hex: axial (q, r) → pixel position (top-left corner).
+ *   q+1 step: x += DISPLAY_W,           y += 0
+ *   r+1 step: x += DISPLAY_W / 2,       y += DISPLAY_H * 3/4
+ */
+export function hexToPixel(q: number, r: number): WorldPoint {
+  return {
+    x: DISPLAY_W * (q + r * 0.5),
+    y: DISPLAY_H * 0.75 * r,
+  };
+}
+
+/** Hex center in world coordinates. */
+export function hexCenter(q: number, r: number): WorldPoint {
+  const { x, y } = hexToPixel(q, r);
+  return { x: x + DISPLAY_W / 2, y: y + DISPLAY_H / 2 };
+}
 
 /** Axial hex distance from origin: max(|q|, |r|, |q+r|) */
 export function hexDist(q: number, r: number): number {
@@ -19,19 +48,6 @@ export function inBounds(q: number, r: number): boolean {
   return hexDist(q, r) <= MAP_RADIUS;
 }
 
-/**
- * Pointy-top hex: axial (q, r) → pixel position.
- * Derived from Kenney 120×140 tile tiling rules:
- *   q+1 step: x += TILE_W,      y += 0
- *   r+1 step: x += TILE_W / 2,  y += TILE_H * 3/4
- */
-export function hexToPixel(q: number, r: number): WorldPoint {
-  return {
-    x: TILE_W * (q + r * 0.5),
-    y: TILE_H * 0.75 * r,
-  };
-}
-
 /** 6 direct neighbors of a hex in axial coordinates. */
 export function hexNeighbors(q: number, r: number): [number, number][] {
   return [
@@ -39,6 +55,38 @@ export function hexNeighbors(q: number, r: number): [number, number][] {
     [q, r + 1], [q, r - 1],
     [q + 1, r - 1], [q - 1, r + 1],
   ];
+}
+
+/**
+ * 6 vertices of a pointy-top hex centered at (cx, cy) with given radius.
+ * Vertex 0 at top (-30°), proceeding clockwise.
+ */
+export function hexVertices(cx: number, cy: number, radius: number): { x: number; y: number }[] {
+  const pts: { x: number; y: number }[] = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 180) * (60 * i - 30);
+    pts.push({
+      x: cx + radius * Math.cos(angle),
+      y: cy + radius * Math.sin(angle),
+    });
+  }
+  return pts;
+}
+
+/**
+ * Get the neighbor of (q,r) at a given edge index (0-5).
+ * Edges are numbered matching hexVertices: edge i is between vertex i and vertex (i+1)%6.
+ * For pointy-top axial:
+ *   0: top-right (+1,-1), 1: right (+1,0), 2: bottom-right (0,+1)
+ *   3: bottom-left (-1,+1), 4: left (-1,0), 5: top-left (0,-1)
+ */
+const AXIAL_DIRS: [number, number][] = [
+  [1, -1], [1, 0], [0, 1], [-1, 1], [-1, 0], [0, -1],
+];
+
+export function hexNeighborAt(q: number, r: number, edge: number): [number, number] {
+  const [dq, dr] = AXIAL_DIRS[edge];
+  return [q + dq, r + dr];
 }
 
 /** All hex cells on a ring of given radius around (cq, cr). */

@@ -3,23 +3,25 @@ import { CameraController } from '../CameraController';
 import { StoreBridge } from '../StoreBridge';
 import { LocationCluster } from '../objects/LocationCluster';
 import { AgentSprite } from '../objects/AgentSprite';
-import { hexToPixel, TILE_W, TILE_H, MAP_RADIUS, hexRing } from '../../game/world/HexGrid';
-import { getTerrain } from '../../game/TerrainGen';
-import { generateAllTextures } from '../CartoonTextures';
+import {
+  hexToPixel, hexNeighborAt, hexVertices,
+  DISPLAY_W, DISPLAY_H, HEX_SCALE,
+} from '../../game/world/HexGrid';
+import { getTerrain, allTileNumbers, tileKey, tilePath } from '../../game/TerrainGen';
 import type { WorldLayout } from '../../game/world/types';
 
 const DRAG_THRESHOLD = 6;
-const VIEW_PAD = 3;
 
-/** Pointy-top hex step sizes in pixels. */
-const Q_STEP_X = TILE_W;        // 120
-const R_STEP_X = TILE_W / 2;    // 60
-const R_STEP_Y = TILE_H * 0.75; // 105
-
-// Owner territory colors — must match LocationCluster's OWNER_COLORS
+// Owner territory colors (Civ-style)
 const OWNER_COLORS = [
   0xc0503a, 0x4a7eb5, 0x4a9e5c, 0xd4a030,
   0x7b5ea7, 0x3a9e9e, 0xc06090, 0x8b5e3c,
+];
+
+// Border line color per owner (slightly brighter)
+const BORDER_COLORS = [
+  0xe06050, 0x6a9ed5, 0x6abe7c, 0xf4c040,
+  0x9b7ec7, 0x5abebe, 0xe080b0, 0xab7e5c,
 ];
 
 export class HexMapScene extends Phaser.Scene {
@@ -29,8 +31,8 @@ export class HexMapScene extends Phaser.Scene {
   private locationObjects = new Map<number, LocationCluster>();
   private agentObjects = new Map<number, AgentSprite>();
   private terrainSprites = new Map<string, Phaser.GameObjects.Image>();
-  private ownerOverlays = new Map<string, Phaser.GameObjects.Graphics>();
-  private gridLines = new Map<string, Phaser.GameObjects.Graphics>();
+  private territoryOverlays = new Map<string, Phaser.GameObjects.Image>();
+  private borderGraphics: Phaser.GameObjects.Graphics | null = null;
   private hexOwners = new Map<string, number>();
 
   constructor() {
@@ -38,14 +40,15 @@ export class HexMapScene extends Phaser.Scene {
   }
 
   preload() {
-    // No file loading needed — textures are generated procedurally
+    // Load all Kenney hex tiles
+    for (const num of allTileNumbers()) {
+      this.load.image(tileKey(num), tilePath(num));
+    }
   }
 
   create() {
     this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
-    // Generate all cartoon textures procedurally
-    generateAllTextures(this);
+    this.generateHexMask();
 
     this.cameraController = new CameraController(this);
     this.cameraController.centerOnOrigin();
@@ -57,9 +60,6 @@ export class HexMapScene extends Phaser.Scene {
       }
     });
 
-    // Draw world boundary ring
-    this.drawBoundary();
-
     this.bridge = new StoreBridge(this);
   }
 
@@ -67,97 +67,120 @@ export class HexMapScene extends Phaser.Scene {
     this.renderVisibleTerrain();
   }
 
+  /** Generate a white pointy-top hex mask for territory tinting. */
+  private generateHexMask() {
+    if (this.textures.exists('hex_mask')) return;
+    const r = DISPLAY_H * 0.5;
+    const gfx = this.add.graphics();
+    const verts = hexVertices(DISPLAY_W / 2, DISPLAY_H / 2, r);
+    const pts = verts.map(v => new Phaser.Geom.Point(v.x, v.y));
+    gfx.fillStyle(0xffffff, 1);
+    gfx.fillPoints(pts, true);
+    gfx.generateTexture('hex_mask', Math.ceil(DISPLAY_W), Math.ceil(DISPLAY_H));
+    gfx.destroy();
+  }
+
+  /** Only render hexes that exist on-chain (in hexOwners). */
   private renderVisibleTerrain() {
-    const wv = this.cameras.main.worldView;
-    const left = wv.x - TILE_W;
-    const right = wv.x + wv.width + TILE_W;
-    const top = wv.y - TILE_H;
-    const bottom = wv.y + wv.height + TILE_H;
-
-    const rMin = Math.floor(top / R_STEP_Y) - VIEW_PAD;
-    const rMax = Math.ceil(bottom / R_STEP_Y) + VIEW_PAD;
-    const qMin = Math.floor((left - rMax * R_STEP_X) / Q_STEP_X) - VIEW_PAD;
-    const qMax = Math.ceil((right - rMin * R_STEP_X) / Q_STEP_X) + VIEW_PAD;
-
-    // 1. Grid lines: viewport-culled, infinite background
-    const visible = new Set<string>();
-    for (let r = rMin; r <= rMax; r++) {
-      for (let q = qMin; q <= qMax; q++) {
-        const { x, y } = hexToPixel(q, r);
-        if (x < left || x > right || y < top || y > bottom) continue;
-        const key = `${q},${r}`;
-        visible.add(key);
-        if (!this.gridLines.has(key)) {
-          const g = this.add.graphics();
-          g.lineStyle(1.5, 0x8b5e3c, 0.25);
-          g.strokePoints(this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.5), true);
-          g.setDepth(-2);
-          this.gridLines.set(key, g);
-        }
-      }
-    }
-    this.gridLines.forEach((gfx, key) => {
-      if (!visible.has(key)) { gfx.destroy(); this.gridLines.delete(key); }
-    });
-
-    // 2. All hexes: always rendered (few total), never viewport-culled
     this.hexOwners.forEach((ownerId, key) => {
       const [q, r] = key.split(',').map(Number);
       const { x, y } = hexToPixel(q, r);
+      const cx = x + DISPLAY_W / 2;
+      const cy = y + DISPLAY_H / 2;
 
+      // Terrain tile
       if (!this.terrainSprites.has(key)) {
         const terrain = getTerrain(q, r);
-        const sprite = this.add.image(Math.round(x), Math.round(y), terrain.textureKey);
-        sprite.setScale(1.01);
-        sprite.setDepth(-1);
-        this.terrainSprites.set(key, sprite);
+        if (this.textures.exists(terrain.textureKey)) {
+          const sprite = this.add.image(cx, cy, terrain.textureKey);
+          sprite.setScale(HEX_SCALE);
+          sprite.setDepth(-1);
+          this.terrainSprites.set(key, sprite);
+        }
       }
 
-      if (!this.ownerOverlays.has(key)) {
-        const gfx = this.add.graphics();
-        const pts = this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.5);
-        if (ownerId > 0) {
-          const color = OWNER_COLORS[(ownerId - 1) % OWNER_COLORS.length];
-          gfx.fillStyle(color, 0.3);
-          gfx.fillPoints(pts, true);
-          gfx.lineStyle(2.5, color, 0.6);
-          gfx.strokePoints(pts, true);
-        } else {
-          // Neutral/rebelled hex — dim outline
-          gfx.fillStyle(0x555555, 0.15);
-          gfx.fillPoints(pts, true);
-          gfx.lineStyle(1.5, 0x888888, 0.3);
-          gfx.strokePoints(pts, true);
-        }
-        gfx.setDepth(0);
-        this.ownerOverlays.set(key, gfx);
+      // Territory color overlay — unifies hexes of the same owner into one region
+      if (!this.territoryOverlays.has(key) && ownerId > 0) {
+        const color = OWNER_COLORS[(ownerId - 1) % OWNER_COLORS.length];
+        const overlay = this.add.image(cx, cy, 'hex_mask');
+        overlay.setTint(color);
+        overlay.setAlpha(0.28);
+        overlay.setDepth(0);
+        this.territoryOverlays.set(key, overlay);
       }
     });
   }
 
-  /** Update hex ownership data and refresh visuals for changed hexes */
   updateHexOwners(hexOwners: Map<string, number>) {
-    // Only touch hexes whose ownership actually changed
+    // Remove terrain for hexes no longer on-chain
     this.terrainSprites.forEach((sprite, key) => {
-      if (this.hexOwners.get(key) && !hexOwners.has(key)) {
-        sprite.destroy(); this.terrainSprites.delete(key);
+      if (!hexOwners.has(key)) {
+        sprite.destroy();
+        this.terrainSprites.delete(key);
       }
     });
-    this.ownerOverlays.forEach((gfx, key) => {
+    // Refresh territory overlays for changed ownership
+    this.territoryOverlays.forEach((overlay, key) => {
       if (this.hexOwners.get(key) !== hexOwners.get(key)) {
-        gfx.destroy(); this.ownerOverlays.delete(key);
+        overlay.destroy();
+        this.territoryOverlays.delete(key);
       }
     });
     this.hexOwners = hexOwners;
+    this.drawCultureBorders();
+  }
+
+  /** Civ-style culture borders: glowing lines on edges between different owners. */
+  private drawCultureBorders() {
+    if (this.borderGraphics) this.borderGraphics.destroy();
+    this.borderGraphics = this.add.graphics();
+    this.borderGraphics.setDepth(0.5);
+
+    const hexR = DISPLAY_H * 0.5;
+
+    this.hexOwners.forEach((ownerId, key) => {
+      if (ownerId <= 0) return;
+
+      const [q, r] = key.split(',').map(Number);
+      const { x, y } = hexToPixel(q, r);
+      const cx = x + DISPLAY_W / 2;
+      const cy = y + DISPLAY_H / 2;
+      const verts = hexVertices(cx, cy, hexR);
+      const borderColor = BORDER_COLORS[(ownerId - 1) % BORDER_COLORS.length];
+
+      for (let edge = 0; edge < 6; edge++) {
+        const [nq, nr] = hexNeighborAt(q, r, edge);
+        const neighborOwner = this.hexOwners.get(`${nq},${nr}`) ?? -1;
+
+        if (neighborOwner !== ownerId) {
+          const v1 = verts[edge];
+          const v2 = verts[(edge + 1) % 6];
+
+          // Shift line slightly inward
+          const shift = 3;
+          const d1 = Math.hypot(cx - v1.x, cy - v1.y) || 1;
+          const d2 = Math.hypot(cx - v2.x, cy - v2.y) || 1;
+          const sx1 = v1.x + (cx - v1.x) * shift / d1;
+          const sy1 = v1.y + (cy - v1.y) * shift / d1;
+          const sx2 = v2.x + (cx - v2.x) * shift / d2;
+          const sy2 = v2.y + (cy - v2.y) * shift / d2;
+
+          // Outer glow
+          this.borderGraphics!.lineStyle(8, borderColor, 0.25);
+          this.borderGraphics!.lineBetween(sx1, sy1, sx2, sy2);
+          // Core line
+          this.borderGraphics!.lineStyle(3, borderColor, 0.95);
+          this.borderGraphics!.lineBetween(sx1, sy1, sx2, sy2);
+        }
+      }
+    });
   }
 
   applyLayout(layout: WorldLayout) {
     if (!this.sys?.displayList) return;
 
-    // Update hex ownership
     this.updateHexOwners(layout.hexOwners);
 
-    // Rebuild all location clusters (owner/data may have changed)
     this.locationObjects.forEach((obj) => obj.destroy());
     this.locationObjects.clear();
     for (const loc of layout.locations) {
@@ -188,43 +211,13 @@ export class HexMapScene extends Phaser.Scene {
     });
   }
 
-  /** Draw world boundary markers just outside MAP_RADIUS */
-  private drawBoundary() {
-    const gfx = this.add.graphics();
-    gfx.setDepth(0.5);
-
-    const outerRing = hexRing(0, 0, MAP_RADIUS + 1);
-    for (const [q, r] of outerRing) {
-      const { x, y } = hexToPixel(q, r);
-      gfx.fillStyle(0x1a1408, 0.6);
-      const pts = this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.48);
-      gfx.fillPoints(pts, true);
-      gfx.lineStyle(3, 0x5c3a1e, 0.5);
-      gfx.strokePoints(this.hexPoints(Math.round(x), Math.round(y), TILE_H * 0.5), true);
-    }
-  }
-
-  /** Pointy-top hex vertices */
-  private hexPoints(cx: number, cy: number, radius: number): Phaser.Geom.Point[] {
-    const pts: Phaser.Geom.Point[] = [];
-    for (let i = 0; i < 6; i++) {
-      const angle = (Math.PI / 180) * (60 * i - 30);
-      pts.push(new Phaser.Geom.Point(
-        cx + radius * Math.cos(angle),
-        cy + radius * Math.sin(angle),
-      ));
-    }
-    return pts;
-  }
-
   shutdown() {
     this.bridge.destroy();
-    this.gridLines.forEach((g) => g.destroy());
-    this.gridLines.clear();
     this.terrainSprites.forEach((s) => s.destroy());
     this.terrainSprites.clear();
-    this.ownerOverlays.forEach((g) => g.destroy());
-    this.ownerOverlays.clear();
+    this.territoryOverlays.forEach((o) => o.destroy());
+    this.territoryOverlays.clear();
+    this.borderGraphics?.destroy();
     this.locationObjects.forEach((o) => o.destroy());
     this.agentObjects.forEach((o) => o.destroy());
     this.locationObjects.clear();

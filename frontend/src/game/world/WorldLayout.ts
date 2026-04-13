@@ -1,9 +1,9 @@
 import type { Agent, LocationData, HexData } from '../../store/useGameStore';
 import type { WorldLayout, ResolvedLocation, ResolvedAgent } from './types';
-import { hexToPixel, TILE_W, LOCATION_SPREAD } from './HexGrid';
+import { hexToPixel, DISPLAY_W, DISPLAY_H, LOCATION_SPREAD } from './HexGrid';
 
 const AGENT_COLOR = '#ffffff';
-const AGENT_ORBIT = TILE_W * 0.35;
+const AGENT_ORBIT = DISPLAY_W * 0.35;
 
 export function computeWorldLayout(
   agents: Record<number, Agent>,
@@ -13,7 +13,6 @@ export function computeWorldLayout(
   const locArray = Object.values(locations);
   const resolvedLocations: ResolvedLocation[] = [];
 
-  // Build locationId → HexData lookup
   const locToHex: Record<number, HexData> = {};
   for (const h of Object.values(hexes)) {
     locToHex[h.locationId] = h;
@@ -62,12 +61,14 @@ export function computeWorldLayout(
         name: agent.name,
         locationId: locId,
         color: AGENT_COLOR,
-        position: { x: loc.center.x + dx, y: loc.center.y + dy },
+        position: {
+          x: loc.center.x + DISPLAY_W / 2 + dx,
+          y: loc.center.y + DISPLAY_H / 2 + dy,
+        },
       });
     });
   }
 
-  // Build hex ownership map: "q,r" → ownerId (0 = neutral/rebelled)
   const hexOwners = new Map<string, number>();
   for (const h of Object.values(hexes)) {
     hexOwners.set(`${h.q},${h.r}`, h.ownerId);

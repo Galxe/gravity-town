@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { useGameStore, LocationData, BoardState } from '../store/useGameStore';
 import { MapPin, ScrollText } from 'lucide-react';
 import { EntryList, UsageBadge } from './EntryList';
+import EntryModal from './EntryModal';
 import Card from './Card';
 
 export default function LocationDetail({ location, board, agents }: {
@@ -10,6 +12,8 @@ export default function LocationDetail({ location, board, agents }: {
   board: BoardState | undefined;
   agents: Record<number, { name: string }>;
 }) {
+  const [showChronicle, setShowChronicle] = useState(false);
+
   return (
     <>
       {/* Card 1: Info */}
@@ -50,24 +54,38 @@ export default function LocationDetail({ location, board, agents }: {
         </div>
       </Card>
 
-      {/* Card 2: Chronicle */}
-      <Card
-        className="flex-1 min-h-0"
-        header={
-          <div className="flex items-center gap-2">
-            <ScrollText size={13} className="text-cart-gold" />
-            <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">Chronicle</span>
-            <UsageBadge board={board} />
-          </div>
-        }
-      >
-        <EntryList
+      {/* Card 2: Chronicle (click to expand) */}
+      <div className="flex-1 min-h-0 cursor-pointer" onClick={() => setShowChronicle(true)}>
+        <Card
+          className="h-full"
+          header={
+            <div className="flex items-center gap-2">
+              <ScrollText size={13} className="text-cart-gold" />
+              <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">Chronicle</span>
+              <UsageBadge board={board} />
+              <span className="text-[9px] font-hand text-ink-faded ml-auto">click to expand</span>
+            </div>
+          }
+        >
+          <EntryList
+            entries={board?.entries || []}
+            color="gold"
+            agents={agents}
+            showAuthor
+          />
+        </Card>
+      </div>
+
+      {showChronicle && (
+        <EntryModal
+          title={`${location.name} — Chronicle`}
           entries={board?.entries || []}
-          color="gold"
           agents={agents}
+          color="gold"
           showAuthor
+          onClose={() => setShowChronicle(false)}
         />
-      </Card>
+      )}
     </>
   );
 }

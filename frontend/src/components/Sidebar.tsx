@@ -1,16 +1,19 @@
 'use client';
 
+import { useState } from 'react';
 import { useGameStore, Entry } from '../store/useGameStore';
 import { Activity, Trophy, Swords } from 'lucide-react';
 import { PALETTE } from '../game/constants';
 import { hexToPixel, LOCATION_SPREAD } from '../game/world/HexGrid';
 import Card from './Card';
+import EntryModal from './EntryModal';
 
 const COMBAT_CATEGORIES = new Set([
   'attack_sent', 'attack_received', 'settlement', 'combat', 'battle',
 ]);
 
 export default function Sidebar() {
+  const [expandedPanel, setExpandedPanel] = useState<'combat' | 'events' | null>(null);
   const agents = useGameStore((s) => s.agents);
   const locations = useGameStore((s) => s.locations);
   const locationBoards = useGameStore((s) => s.locationBoards);
@@ -167,66 +170,94 @@ export default function Sidebar() {
         )}
       </Card>
 
-      {/* Card 3: Combat Log */}
+      {/* Card 3: Combat Log (click to expand) */}
       {combatLog.length > 0 && (
+        <div className="max-h-[25%] cursor-pointer" onClick={() => setExpandedPanel('combat')}>
+          <Card
+            className="h-full"
+            header={
+              <div className="flex items-center gap-2">
+                <Swords size={13} className="text-cart-red" />
+                <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">Combat Log</span>
+                <span className="text-[9px] font-hand text-ink-faded">{combatLog.length}</span>
+                <span className="text-[9px] font-hand text-ink-faded ml-auto">click to expand</span>
+              </div>
+            }
+          >
+            <div className="space-y-1">
+              {combatLog.map((entry) => (
+                <div key={entry.id} className="text-xs px-1 pb-1.5 border-b border-wood/15 last:border-0">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="px-1.5 py-0.5 rounded-lg text-[9px] font-bold font-cartoon uppercase bg-cart-red/15 text-cart-red border border-cart-red/25">
+                      {entry.category}
+                    </span>
+                    <span className="text-ink-faded font-hand text-[10px]">
+                      {agents[entry.authorAgent]?.name || `#${entry.authorAgent}`}
+                    </span>
+                  </div>
+                  <p className="text-ink-soft leading-snug font-cartoon text-[11px]">{entry.content}</p>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Card 4: World Events (click to expand) */}
+      <div className="flex-1 min-h-0 cursor-pointer" onClick={() => setExpandedPanel('events')}>
         <Card
-          className="max-h-[25%]"
+          className="h-full"
           header={
             <div className="flex items-center gap-2">
-              <Swords size={13} className="text-cart-red" />
-              <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">Combat Log</span>
-              <span className="text-[9px] font-hand text-ink-faded">{combatLog.length}</span>
+              <Activity size={13} className="text-cart-blue" />
+              <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">World Events</span>
+              <span className="text-[9px] font-hand text-ink-faded ml-auto">click to expand</span>
             </div>
           }
         >
           <div className="space-y-1">
-            {combatLog.map((entry) => (
-              <div key={entry.id} className="text-xs px-1 pb-1.5 border-b border-wood/15 last:border-0">
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <span className="px-1.5 py-0.5 rounded-lg text-[9px] font-bold font-cartoon uppercase bg-cart-red/15 text-cart-red border border-cart-red/25">
-                    {entry.category}
-                  </span>
-                  <span className="text-ink-faded font-hand text-[10px]">
-                    {agents[entry.authorAgent]?.name || `#${entry.authorAgent}`}
-                  </span>
+            {sortedEvents.length === 0 ? (
+              <p className="text-xs text-ink-faded italic px-1 font-hand">(No events yet...)</p>
+            ) : (
+              sortedEvents.map((entry) => (
+                <div key={entry.id} className="text-xs px-1 pb-1.5 border-b border-wood/15 last:border-0">
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <span className="px-1.5 py-0.5 rounded-lg text-[9px] font-bold font-cartoon uppercase bg-cart-blue/15 text-cart-blue border border-cart-blue/25">
+                      {entry.category}
+                    </span>
+                    <span className="text-ink-faded font-hand text-[10px]">
+                      {agents[entry.authorAgent]?.name || `#${entry.authorAgent}`}
+                    </span>
+                  </div>
+                  <p className="text-ink-soft leading-snug font-cartoon text-[11px]">{entry.content}</p>
                 </div>
-                <p className="text-ink-soft leading-snug font-cartoon text-[11px]">{entry.content}</p>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </Card>
-      )}
+      </div>
 
-      {/* Card 4: World Events */}
-      <Card
-        className="flex-1 min-h-0"
-        header={
-          <div className="flex items-center gap-2">
-            <Activity size={13} className="text-cart-blue" />
-            <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">World Events</span>
-          </div>
-        }
-      >
-        <div className="space-y-1">
-          {sortedEvents.length === 0 ? (
-            <p className="text-xs text-ink-faded italic px-1 font-hand">(No events yet...)</p>
-          ) : (
-            sortedEvents.map((entry) => (
-              <div key={entry.id} className="text-xs px-1 pb-1.5 border-b border-wood/15 last:border-0">
-                <div className="flex items-center gap-1.5 mb-0.5">
-                  <span className="px-1.5 py-0.5 rounded-lg text-[9px] font-bold font-cartoon uppercase bg-cart-blue/15 text-cart-blue border border-cart-blue/25">
-                    {entry.category}
-                  </span>
-                  <span className="text-ink-faded font-hand text-[10px]">
-                    {agents[entry.authorAgent]?.name || `#${entry.authorAgent}`}
-                  </span>
-                </div>
-                <p className="text-ink-soft leading-snug font-cartoon text-[11px]">{entry.content}</p>
-              </div>
-            ))
-          )}
-        </div>
-      </Card>
+      {/* Expanded modals */}
+      {expandedPanel === 'combat' && (
+        <EntryModal
+          title="Combat Log"
+          entries={combatLog}
+          agents={agents}
+          color="red"
+          showAuthor
+          onClose={() => setExpandedPanel(null)}
+        />
+      )}
+      {expandedPanel === 'events' && (
+        <EntryModal
+          title="World Events"
+          entries={sortedEvents}
+          agents={agents}
+          color="blue"
+          showAuthor
+          onClose={() => setExpandedPanel(null)}
+        />
+      )}
 
       {/* Status bar */}
       <div className="rounded-cartoon bg-parchment/90 border-[3px] border-wood-dark/70 shadow-cartoon-sm px-3 py-2 flex items-center gap-2 pointer-events-auto">

@@ -2,7 +2,6 @@ import { createNoise2D } from 'simplex-noise';
 
 const SEED = 'gravity-town-42';
 
-/** Simple seedable PRNG (Mulberry32). */
 function mulberry32(seed: number): () => number {
   return () => {
     seed |= 0; seed = seed + 0x6D2B79F5 | 0;
@@ -20,56 +19,108 @@ function hashString(s: string): number {
 
 const noise2D = createNoise2D(mulberry32(hashString(SEED)));
 const noise2D_2 = createNoise2D(mulberry32(hashString(SEED + '-detail')));
+const noise2D_3 = createNoise2D(mulberry32(hashString(SEED + '-feature')));
 
-/** Terrain biomes ordered by elevation. */
-export type Biome = 'sand' | 'grass' | 'dirt' | 'stone';
+/**
+ * Kenney tile mapping — tile numbers to file paths.
+ *
+ * Terrain categories:
+ *   grass:  tile1-17, tile44 (flat green)
+ *   sand:   tile42 (flat), tile45-61
+ *   dirt:   tile43 (flat), tile23-39
+ *   stone:  tile40 (flat), tile79-95
+ *   mars:   tile41 (flat), tile62-78
+ *
+ * Buildings:
+ *   medieval: tile124-135, tile157-158, tile160
+ */
 
-/** Terrain tile variants per biome. */
-const VARIANTS: Record<Biome, string[]> = {
-  sand:  ['sand_05', 'sand_07'],
-  grass: ['grass_05', 'grass_07', 'grass_11', 'grass_14'],
-  dirt:  ['dirt_05', 'dirt_07', 'dirt_11'],
-  stone: ['stone_05', 'stone_07'],
+// Clean base terrain tiles only — no trees, rocks, water, or other decorations
+const GRASS_TILES = [44]; // flat green
+const SAND_TILES = [42];  // flat beige
+const DIRT_TILES = [43];  // flat brown
+const STONE_TILES = [40]; // flat gray
+const MARS_TILES = [41];  // flat red-brown
+
+// Building tile numbers
+export const BUILDING_TILES: Record<string, number> = {
+  medieval_mine: 160,
+  medieval_farm: 125,
+  medieval_house: 126,
+  medieval_cabin: 127,
+  medieval_blacksmith: 128,
+  medieval_lumber: 129,
+  medieval_tower: 131,
+  medieval_ruins: 132,
+  medieval_castle: 134,
+  medieval_smallCastle: 135,
+  medieval_windmill: 124,
+  medieval_church: 157,
+  medieval_archway: 158,
+  medieval_archery: 130,
+  medieval_openCastle: 133,
 };
 
+export type BiomeType = 'grass' | 'sand' | 'dirt' | 'stone' | 'mars';
+
 export interface TerrainTile {
-  biome: Biome;
-  variant: string;
+  biome: BiomeType;
+  tileNum: number;
   textureKey: string;
+}
+
+/** Convert tile number to asset path. */
+export function tilePath(num: number): string {
+  return `/tiles/kenney/tile${num}.png`;
+}
+
+/** Convert tile number to Phaser texture key. */
+export function tileKey(num: number): string {
+  return `kenney_${num}`;
+}
+
+/** All unique tile numbers that need preloading. */
+export function allTileNumbers(): number[] {
+  const all = new Set<number>();
+  [GRASS_TILES, SAND_TILES, DIRT_TILES, STONE_TILES, MARS_TILES]
+    .forEach(arr => arr.forEach(n => all.add(n)));
+  Object.values(BUILDING_TILES).forEach(n => all.add(n));
+  return Array.from(all);
 }
 
 /**
  * Deterministic terrain for hex coordinate (q, r).
- * Uses layered simplex noise to decide biome + variant.
  */
 export function getTerrain(q: number, r: number): TerrainTile {
-  // Pointy-top axial → cartesian for noise sampling
   const x = (q + r * 0.5) * 0.12;
   const y = r * 0.1;
 
-  const n = noise2D(x, y);
+  const elevation = noise2D(x, y);
+  const moisture = noise2D_2(x * 1.5 + 100, y * 1.5 + 100);
+  const detail = noise2D_3(x * 3, y * 3);
 
-  let biome: Biome;
-  if (n < -0.35) biome = 'sand';
-  else if (n < 0.25) biome = 'grass';
-  else if (n < 0.55) biome = 'dirt';
-  else biome = 'stone';
+  let biome: BiomeType;
 
-  const detail = noise2D_2(x * 3, y * 3);
-  const variants = VARIANTS[biome];
-  const idx = Math.abs(Math.floor((detail + 1) * 0.5 * variants.length)) % variants.length;
-  const variant = variants[idx];
-
-  return { biome, variant, textureKey: `terrain_${variant}` };
-}
-
-/** All unique texture keys that need preloading. */
-export function allTerrainTextureKeys(): { key: string; file: string }[] {
-  const result: { key: string; file: string }[] = [];
-  for (const variants of Object.values(VARIANTS)) {
-    for (const v of variants) {
-      result.push({ key: `terrain_${v}`, file: `/tiles/terrain/${v}.png` });
-    }
+  if (elevation > 0.55) {
+    biome = 'stone';
+  } else if (elevation > 0.35) {
+    biome = 'mars';
+  } else if (moisture < -0.25) {
+    biome = 'sand';
+  } else if (moisture < 0.15) {
+    biome = 'dirt';
+  } else {
+    biome = 'grass';
   }
-  return result;
+
+  const BIOME_TILE: Record<BiomeType, number> = {
+    grass: GRASS_TILES[0],
+    sand: SAND_TILES[0],
+    dirt: DIRT_TILES[0],
+    stone: STONE_TILES[0],
+    mars: MARS_TILES[0],
+  };
+  const tileNum = BIOME_TILE[biome];
+
+  return { biome, tileNum, textureKey: tileKey(tileNum) };
 }
