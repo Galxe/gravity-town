@@ -2,7 +2,9 @@
 
 import { useGameStore, Agent, BoardState, HexData } from '../store/useGameStore';
 import { User, MapPin, Brain, MessageCircle, Shield, Pickaxe, Trophy, Map } from 'lucide-react';
+import { useState } from 'react';
 import { EntryList, UsageBadge } from './EntryList';
+import EntryModal from './EntryModal';
 import { hexToPixel, LOCATION_SPREAD } from '../game/world/HexGrid';
 import Card from './Card';
 
@@ -52,8 +54,8 @@ function HexTerritoryPanel({ hexes }: { hexes: HexData[] }) {
         </div>
       </div>
 
-      {/* Per-hex list */}
-      <div className="space-y-1 px-1">
+      {/* Per-hex list (scrollable) */}
+      <div className="space-y-1 px-1 max-h-24 overflow-y-auto cartoon-scroll">
         {hexes.map((h) => (
           <div key={h.hexKey} className="flex items-center gap-2 px-2 py-1 rounded-lg bg-parchment-dark/30 border border-wood/15 text-[10px]">
             <span className="text-ink-faded font-hand w-12">({h.q},{h.r})</span>
@@ -81,6 +83,7 @@ export default function AgentDetail({ agent, locationName, memories, inbox, agen
   agents: Record<number, { name: string }>;
 }) {
   const agentHexes = useGameStore((s) => s.agentHexes[agent.id]) || [];
+  const [expandedPanel, setExpandedPanel] = useState<'memories' | 'inbox' | null>(null);
 
   return (
     <>
@@ -163,33 +166,60 @@ export default function AgentDetail({ agent, locationName, memories, inbox, agen
       {/* Card 2: Territory */}
       {agentHexes.length > 0 && <HexTerritoryPanel hexes={agentHexes} />}
 
-      {/* Card 3: Memories */}
-      <Card
-        className="flex-1 min-h-0"
-        header={
-          <div className="flex items-center gap-2">
-            <Brain size={13} className="text-cart-cyan" />
-            <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">Memories</span>
-            <UsageBadge board={memories} />
-          </div>
-        }
-      >
-        <EntryList entries={memories?.entries || []} color="cyan" agents={agents} />
-      </Card>
+      {/* Card 3: Memories (click to expand) */}
+      <div className="flex-1 min-h-0 cursor-pointer" onClick={() => setExpandedPanel('memories')}>
+        <Card
+          className="h-full"
+          header={
+            <div className="flex items-center gap-2">
+              <Brain size={13} className="text-cart-cyan" />
+              <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">Memories</span>
+              <UsageBadge board={memories} />
+              <span className="text-[9px] font-hand text-ink-faded ml-1">click to expand</span>
+            </div>
+          }
+        >
+          <EntryList entries={memories?.entries || []} color="cyan" agents={agents} />
+        </Card>
+      </div>
 
-      {/* Card 4: Inbox */}
-      <Card
-        className="flex-1 min-h-0"
-        header={
-          <div className="flex items-center gap-2">
-            <MessageCircle size={13} className="text-cart-green" />
-            <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">Inbox</span>
-            <UsageBadge board={inbox} />
-          </div>
-        }
-      >
-        <EntryList entries={inbox?.entries || []} color="green" agents={agents} showAuthor />
-      </Card>
+      {/* Card 4: Inbox (click to expand) */}
+      <div className="flex-1 min-h-0 cursor-pointer" onClick={() => setExpandedPanel('inbox')}>
+        <Card
+          className="h-full"
+          header={
+            <div className="flex items-center gap-2">
+              <MessageCircle size={13} className="text-cart-green" />
+              <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">Inbox</span>
+              <UsageBadge board={inbox} />
+              <span className="text-[9px] font-hand text-ink-faded ml-1">click to expand</span>
+            </div>
+          }
+        >
+          <EntryList entries={inbox?.entries || []} color="green" agents={agents} showAuthor />
+        </Card>
+      </div>
+
+      {/* Expanded modal via Portal */}
+      {expandedPanel === 'memories' && (
+        <EntryModal
+          title={`${agent.name} — Memories`}
+          entries={memories?.entries || []}
+          agents={agents}
+          color="cyan"
+          onClose={() => setExpandedPanel(null)}
+        />
+      )}
+      {expandedPanel === 'inbox' && (
+        <EntryModal
+          title={`${agent.name} — Inbox`}
+          entries={inbox?.entries || []}
+          agents={agents}
+          color="green"
+          showAuthor
+          onClose={() => setExpandedPanel(null)}
+        />
+      )}
     </>
   );
 }

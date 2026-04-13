@@ -1,73 +1,79 @@
 import * as Phaser from 'phaser';
 import type { ResolvedAgent } from '../../game/world/types';
 import { StoreBridge } from '../StoreBridge';
+import { DISPLAY_W } from '../../game/world/HexGrid';
 
-const MEEPLE_COLORS = ['blue', 'green', 'purple', 'red', 'yellow', 'white', 'black'];
-const MEEPLE_SCALE = 0.55;
-const SELECT_COLOR = 0xd4a030; // warm gold
+const SELECT_COLOR = 0xd4a030;
 const CLICK_THRESHOLD = 8;
+const AGENT_RADIUS = 12;
+
+const OWNER_COLORS = [
+  0xc0503a, 0x4a7eb5, 0x4a9e5c, 0xd4a030,
+  0x7b5ea7, 0x3a9e9e, 0xc06090, 0x8b5e3c,
+];
 
 export function meepleKey(agentId: number): string {
-  return `meeple_${MEEPLE_COLORS[agentId % MEEPLE_COLORS.length]}`;
+  return `agent_marker_${agentId}`;
 }
 
 export class AgentSprite extends Phaser.GameObjects.Container {
-  private sprite: Phaser.GameObjects.Image;
+  private marker: Phaser.GameObjects.Graphics;
   private label: Phaser.GameObjects.Text;
   private selectionRing: Phaser.GameObjects.Graphics;
+  private hitArea: Phaser.GameObjects.Zone;
   public agentId: number;
   private _selected = false;
   private agentData: ResolvedAgent;
+  private ownerColor: number;
 
   constructor(scene: Phaser.Scene, agent: ResolvedAgent) {
     super(scene, agent.position.x, agent.position.y);
     this.agentId = agent.id;
     this.agentData = agent;
+    this.ownerColor = OWNER_COLORS[(agent.id - 1) % OWNER_COLORS.length];
     scene.add.existing(this);
     this.setDepth(2);
 
-    // Selection ring (hidden by default)
+    // Selection ring
     this.selectionRing = scene.add.graphics();
     this.selectionRing.setVisible(false);
     this.add(this.selectionRing);
 
-    // Agent sprite (cartoon character)
-    this.sprite = scene.add.image(0, 0, meepleKey(agent.id));
-    this.sprite.setScale(MEEPLE_SCALE);
-    this.sprite.setInteractive(
-      new Phaser.Geom.Circle(32, 32, 30),
-      Phaser.Geom.Circle.Contains,
-    );
-    this.add(this.sprite);
+    // Agent marker (colored circle with border)
+    this.marker = scene.add.graphics();
+    this.drawMarker(false);
+    this.add(this.marker);
 
-    // Name label — cartoon font with warm background
-    this.label = scene.add.text(0, -(32 * MEEPLE_SCALE + 14), agent.name, {
-      fontSize: '13px',
-      fontFamily: 'Fredoka, system-ui, sans-serif',
+    // Hit area for interaction
+    this.hitArea = scene.add.zone(0, 0, AGENT_RADIUS * 3, AGENT_RADIUS * 3);
+    this.hitArea.setInteractive();
+    this.add(this.hitArea);
+
+    // Name label
+    this.label = scene.add.text(0, -(AGENT_RADIUS + 14), agent.name, {
+      fontSize: '12px',
+      fontFamily: 'system-ui, sans-serif',
       fontStyle: 'bold',
-      color: '#2c1810',
-      backgroundColor: '#f5e6c8e6',
-      padding: { x: 6, y: 3 },
+      color: '#ffffff',
+      backgroundColor: '#00000099',
+      padding: { x: 5, y: 2 },
       align: 'center',
     }).setOrigin(0.5).setVisible(false);
     this.add(this.label);
 
-    this.sprite.on('pointerover', () => {
+    this.hitArea.on('pointerover', () => {
       this.label.setVisible(true);
-      this.sprite.setScale(MEEPLE_SCALE * 1.2);
+      this.drawMarker(true);
       StoreBridge.hoverEntity({ type: 'agent', id: agent.id });
     });
-    this.sprite.on('pointerout', () => {
+    this.hitArea.on('pointerout', () => {
       if (!this._selected) {
         this.label.setVisible(false);
-        this.sprite.setScale(MEEPLE_SCALE);
-      } else {
-        this.sprite.setScale(MEEPLE_SCALE * 1.25);
+        this.drawMarker(false);
       }
       StoreBridge.hoverEntity(null);
     });
-
-    this.sprite.on('pointerup', (p: Phaser.Input.Pointer) => {
+    this.hitArea.on('pointerup', (p: Phaser.Input.Pointer) => {
       if (p.getDistance() > CLICK_THRESHOLD) return;
       const { x, y } = this.agentData.position;
       if (this._selected) {
@@ -79,19 +85,36 @@ export class AgentSprite extends Phaser.GameObjects.Container {
     });
   }
 
+  private drawMarker(hovered: boolean) {
+    this.marker.clear();
+    const r = hovered ? AGENT_RADIUS * 1.2 : AGENT_RADIUS;
+    // Shadow
+    this.marker.fillStyle(0x000000, 0.3);
+    this.marker.fillCircle(1, 2, r);
+    // Fill
+    this.marker.fillStyle(this.ownerColor, 1);
+    this.marker.fillCircle(0, 0, r);
+    // Border
+    this.marker.lineStyle(2, 0xffffff, 0.8);
+    this.marker.strokeCircle(0, 0, r);
+    // Inner shine
+    this.marker.fillStyle(0xffffff, 0.2);
+    this.marker.fillCircle(-r * 0.25, -r * 0.25, r * 0.4);
+  }
+
   setSelected(selected: boolean) {
     this._selected = selected;
     if (selected) {
-      this.sprite.setScale(MEEPLE_SCALE * 1.25);
+      this.drawMarker(true);
       this.selectionRing.clear();
-      this.selectionRing.lineStyle(4, SELECT_COLOR, 0.9);
-      this.selectionRing.strokeCircle(0, 0, 24);
-      this.selectionRing.lineStyle(3, SELECT_COLOR, 0.3);
-      this.selectionRing.strokeCircle(0, 0, 30);
+      this.selectionRing.lineStyle(3, SELECT_COLOR, 0.9);
+      this.selectionRing.strokeCircle(0, 0, AGENT_RADIUS + 6);
+      this.selectionRing.lineStyle(2, SELECT_COLOR, 0.3);
+      this.selectionRing.strokeCircle(0, 0, AGENT_RADIUS + 12);
       this.selectionRing.setVisible(true);
       this.label.setVisible(true);
     } else {
-      this.sprite.setScale(MEEPLE_SCALE);
+      this.drawMarker(false);
       this.selectionRing.setVisible(false);
       this.label.setVisible(false);
     }
@@ -104,9 +127,10 @@ export class AgentSprite extends Phaser.GameObjects.Container {
   }
 
   destroy(fromScene?: boolean) {
-    this.sprite.destroy();
+    this.marker.destroy();
     this.label.destroy();
     this.selectionRing.destroy();
+    this.hitArea.destroy();
     super.destroy(fromScene);
   }
 }
