@@ -866,9 +866,16 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         (uint256 bestId,) = highestChronicleAgent();
         require(agentId == bestId, "only highest chronicle agent can write");
 
+        // Temporarily move agent to World Bible location, write, then move back
+        (, , , uint256 originalLoc,) = registry.getAgent(agentId);
+        registry.moveAgent(agentId, worldBibleLocationId);
+
         uint256[] memory noRelated = new uint256[](0);
         (entryId,,) = locationLedger.write(agentId, 10, "world_bible", content, noRelated);
         lastBibleTimestamp = block.timestamp;
+
+        // Move agent back to their original location
+        registry.moveAgent(agentId, originalLoc);
 
         emit WorldBibleWritten(agentId, entryId);
     }
