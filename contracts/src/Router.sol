@@ -12,6 +12,7 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     address public locationLedger;
     address public inboxLedger;
     address public gameEngine;
+    address public evaluationLedger;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() { _disableInitializers(); }
@@ -21,7 +22,8 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         address _agentLedger,
         address _locationLedger,
         address _inboxLedger,
-        address _gameEngine
+        address _gameEngine,
+        address _evaluationLedger
     ) public initializer {
         __Ownable_init(msg.sender);
         registry = _registry;
@@ -29,6 +31,7 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         locationLedger = _locationLedger;
         inboxLedger = _inboxLedger;
         gameEngine = _gameEngine;
+        evaluationLedger = _evaluationLedger;
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
@@ -38,14 +41,16 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function setLocationLedger(address _v) external onlyOwner { locationLedger = _v; }
     function setInboxLedger(address _v) external onlyOwner { inboxLedger = _v; }
     function setGameEngine(address _v) external onlyOwner { gameEngine = _v; }
+    function setEvaluationLedger(address _v) external onlyOwner { evaluationLedger = _v; }
 
     function getAddresses() external view returns (
         address _registry,
         address _agentLedger,
         address _locationLedger,
         address _inboxLedger,
-        address _gameEngine
+        address _gameEngine,
+        address _evaluationLedger
     ) {
-        return (registry, agentLedger, locationLedger, inboxLedger, gameEngine);
+        return (registry, agentLedger, locationLedger, inboxLedger, gameEngine, evaluationLedger);
     }
 }

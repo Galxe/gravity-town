@@ -62,10 +62,33 @@ const GAME_ENGINE_ABI = [
   "event InciteResult(uint256 indexed agentId, bytes32 indexed targetHexKey, bool success, bool captured)",
   "function claimNeutral(uint256 agentId, bytes32 hexKey)",
   "function inciteRebellion(uint256 agentId, bytes32 targetHexKey)",
+  // Debate
+  "event DebateStarted(uint256 indexed entryId, bytes32 indexed hexKey, uint256 indexed proposerId, uint256 deadline)",
+  "event DebateVoted(uint256 indexed entryId, uint256 indexed voterId, bool support)",
+  "event DebateResolved(uint256 indexed entryId, uint256 supportCount, uint256 opposeCount, int256 happinessChange)",
+  "function startDebate(uint256 agentId, string content) returns (uint256 entryId)",
+  "function voteOnDebate(uint256 agentId, uint256 debateEntryId, bool support, string content) returns (uint256 voteEntryId)",
+  "function resolveDebate(uint256 debateEntryId)",
+  "function getDebate(uint256 debateEntryId) view returns (uint256 entryId, bytes32 hexKey, uint256 proposerId, uint256 supportCount, uint256 opposeCount, uint256 deadline, bool resolved)",
+  // Chronicle
+  "event ChronicleWritten(uint256 indexed authorId, uint256 indexed targetAgentId, uint8 rating)",
+  "function writeChronicle(uint256 authorId, uint256 targetAgentId, uint8 rating, string content) returns (uint256 entryId)",
+  "function getChronicle(uint256 agentId) view returns (int256 score, uint256 count, uint256 ratingSum)",
+  "function chronicleScore(uint256 agentId) view returns (int256)",
+  "function setAgentLedger(address _agentLedger)",
+  // World Bible
+  "event WorldBibleWritten(uint256 indexed authorId, uint256 indexed entryId)",
+  "function writeWorldBible(uint256 agentId, string content) returns (uint256 entryId)",
+  "function getWorldBible() view returns (uint256 locationId, uint256 lastTimestamp, uint256 bestAgentId, int256 bestScore)",
+  "function highestChronicleAgent() view returns (uint256 bestId, int256 bestScore)",
 ];
 
 const ROUTER_ABI = [
-  "function getAddresses() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger, address gameEngine)",
+  "function getAddresses() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger, address gameEngine, address evaluationLedger)",
+];
+
+const EVALUATION_LEDGER_ABI = [
+  `function readRecent(uint256 agentId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
 ];
 
 // ──────────────────── Types ────────────────────
@@ -111,6 +134,7 @@ export class ChainClient {
   locationLedger: ethers.Contract = null!;
   inboxLedger: ethers.Contract = null!;
   gameEngine: ethers.Contract = null!;
+  evaluationLedger: ethers.Contract = null!;
   private _ready: Promise<void>;
 
   constructor(config: ChainConfig) {
@@ -123,13 +147,14 @@ export class ChainClient {
     const signer = this.signer;
     this._ready = (async () => {
       const router = new ethers.Contract(config.routerAddress, ROUTER_ABI, provider);
-      const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr] =
+      const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr] =
         await router.getAddresses();
       this.registry = new ethers.Contract(registryAddr, AGENT_REGISTRY_ABI, signer);
       this.agentLedger = new ethers.Contract(agentLedgerAddr, AGENT_LEDGER_ABI, signer);
       this.locationLedger = new ethers.Contract(locationLedgerAddr, LOCATION_LEDGER_ABI, signer);
       this.inboxLedger = new ethers.Contract(inboxLedgerAddr, INBOX_LEDGER_ABI, signer);
       this.gameEngine = new ethers.Contract(engineAddr, GAME_ENGINE_ABI, signer);
+      this.evaluationLedger = new ethers.Contract(evalLedgerAddr, EVALUATION_LEDGER_ABI, signer);
     })();
   }
 
@@ -434,5 +459,124 @@ export class ChainClient {
     const tx = await this.inboxLedger.compact(agentId, count, importance, category, summary);
     const receipt = await tx.wait();
     return { txHash: receipt.transactionHash };
+  }
+
+  // ============ Debate ============
+
+  async startDebate(agentId: number, content: string) {
+    const tx = await this.gameEngine.startDebate(agentId, content);
+    const receipt = await tx.wait();
+    let entryId = 0;
+    let deadline = 0;
+    const iface = this.gameEngine.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "DebateStarted") {
+          entryId = Number(parsed.args.entryId);
+          deadline = Number(parsed.args.deadline);
+          break;
+        }
+      } catch {}
+    }
+    return { entryId, deadline, txHash: receipt.transactionHash };
+  }
+
+  async voteOnDebate(agentId: number, debateEntryId: number, support: boolean, content: string) {
+    const tx = await this.gameEngine.voteOnDebate(agentId, debateEntryId, support, content);
+    const receipt = await tx.wait();
+    return { txHash: receipt.transactionHash };
+  }
+
+  async resolveDebate(debateEntryId: number) {
+    const tx = await this.gameEngine.resolveDebate(debateEntryId);
+    const receipt = await tx.wait();
+    let result = { supportCount: 0, opposeCount: 0, happinessChange: 0 };
+    const iface = this.gameEngine.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "DebateResolved") {
+          result = {
+            supportCount: Number(parsed.args.supportCount),
+            opposeCount: Number(parsed.args.opposeCount),
+            happinessChange: Number(parsed.args.happinessChange),
+          };
+          break;
+        }
+      } catch {}
+    }
+    return { ...result, txHash: receipt.transactionHash };
+  }
+
+  async getDebate(debateEntryId: number) {
+    const [entryId, hexKey, proposerId, supportCount, opposeCount, deadline, resolved] =
+      await this.gameEngine.getDebate(debateEntryId);
+    return {
+      entryId: Number(entryId), hexKey, proposerId: Number(proposerId),
+      supportCount: Number(supportCount), opposeCount: Number(opposeCount),
+      deadline: Number(deadline), resolved,
+      timeLeft: Math.max(0, Number(deadline) - Math.floor(Date.now() / 1000)),
+    };
+  }
+
+  // ============ Chronicle ============
+
+  async writeChronicle(authorId: number, targetAgentId: number, rating: number, content: string) {
+    const tx = await this.gameEngine.writeChronicle(authorId, targetAgentId, rating, content);
+    const receipt = await tx.wait();
+    return { txHash: receipt.transactionHash };
+  }
+
+  async getChronicle(agentId: number) {
+    const [score, count, ratingSum] = await this.gameEngine.getChronicle(agentId);
+    return {
+      score: Number(score),
+      count: Number(count),
+      ratingSum: Number(ratingSum),
+      avgRating: Number(count) > 0 ? Number(ratingSum) / Number(count) : 0,
+    };
+  }
+
+  // ============ Evaluation Ledger ============
+
+  async readEvaluations(agentId: number, count: number): Promise<BoardRead> {
+    const [entries, used, capacity] = await this.evaluationLedger.readRecent(agentId, count);
+    return { entries: this.formatEntries(entries), used: Number(used), capacity: Number(capacity) };
+  }
+
+  // ============ World Bible ============
+
+  async writeWorldBible(agentId: number, content: string) {
+    const tx = await this.gameEngine.writeWorldBible(agentId, content);
+    const receipt = await tx.wait();
+    let entryId = 0;
+    const iface = this.gameEngine.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "WorldBibleWritten") {
+          entryId = Number(parsed.args.entryId);
+          break;
+        }
+      } catch {}
+    }
+    return { entryId, txHash: receipt.transactionHash };
+  }
+
+  async getWorldBible() {
+    const [locationId, lastTimestamp, bestAgentId, bestScore] = await this.gameEngine.getWorldBible();
+    return {
+      locationId: Number(locationId),
+      lastTimestamp: Number(lastTimestamp),
+      bestAgentId: Number(bestAgentId),
+      bestScore: Number(bestScore),
+    };
+  }
+
+  async readWorldBible(count: number): Promise<BoardRead> {
+    const { locationId } = await this.getWorldBible();
+    if (locationId === 0) return { entries: [], used: 0, capacity: 128 };
+    return this.readLocation(locationId, count);
   }
 }

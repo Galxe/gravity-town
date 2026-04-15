@@ -7,6 +7,7 @@ import "../src/AgentRegistry.sol";
 import "../src/AgentLedger.sol";
 import "../src/LocationLedger.sol";
 import "../src/InboxLedger.sol";
+import "../src/EvaluationLedger.sol";
 import "../src/GameEngine.sol";
 import "../src/Router.sol";
 
@@ -18,11 +19,12 @@ contract DeployScript is Script {
         vm.startBroadcast(deployerKey);
 
         // ──── Deploy implementations ────
-        AgentRegistry registryImpl       = new AgentRegistry();
-        AgentLedger agentLedgerImpl      = new AgentLedger();
-        LocationLedger locationLedgerImpl = new LocationLedger();
-        InboxLedger inboxLedgerImpl      = new InboxLedger();
-        Router routerImpl                = new Router();
+        AgentRegistry registryImpl         = new AgentRegistry();
+        AgentLedger agentLedgerImpl        = new AgentLedger();
+        LocationLedger locationLedgerImpl  = new LocationLedger();
+        InboxLedger inboxLedgerImpl        = new InboxLedger();
+        EvaluationLedger evalLedgerImpl    = new EvaluationLedger();
+        Router routerImpl                  = new Router();
 
         // ──── Deploy proxies ────
         ERC1967Proxy registryProxy = new ERC1967Proxy(
@@ -47,6 +49,11 @@ contract DeployScript is Script {
             abi.encodeCall(InboxLedger.initialize, (address(registry)))
         );
 
+        ERC1967Proxy evalLedgerProxy = new ERC1967Proxy(
+            address(evalLedgerImpl),
+            abi.encodeCall(EvaluationLedger.initialize, (address(registry)))
+        );
+
         // ──── Deploy GameEngine (needs registry + locationLedger) ────
         GameEngine engineImpl = new GameEngine();
         ERC1967Proxy engineProxy = new ERC1967Proxy(
@@ -63,24 +70,30 @@ contract DeployScript is Script {
                 address(agentLedgerProxy),
                 address(locationLedgerProxy),
                 address(inboxLedgerProxy),
-                address(engineProxy)
+                address(engineProxy),
+                address(evalLedgerProxy)
             ))
         );
 
         // ──── Grant GameEngine operator on Registry ────
-        // (LocationLedger delegates auth to Registry's operator list)
         registry.addOperator(address(engine));
 
-        // No pre-created locations — hexes are claimed by agents
+        // ──── Set ledgers on GameEngine ────
+        engine.setAgentLedger(address(agentLedgerProxy));
+        engine.setEvaluationLedger(address(evalLedgerProxy));
+
+        // ──── Initialize World Bible ────
+        engine.initWorldBible();
 
         vm.stopBroadcast();
 
-        console.log("Router         (proxy):", address(routerProxy));
-        console.log("AgentRegistry  (proxy):", address(registryProxy));
-        console.log("AgentLedger    (proxy):", address(agentLedgerProxy));
-        console.log("LocationLedger (proxy):", address(locationLedgerProxy));
-        console.log("InboxLedger    (proxy):", address(inboxLedgerProxy));
-        console.log("GameEngine     (proxy):", address(engineProxy));
+        console.log("Router           (proxy):", address(routerProxy));
+        console.log("AgentRegistry    (proxy):", address(registryProxy));
+        console.log("AgentLedger      (proxy):", address(agentLedgerProxy));
+        console.log("LocationLedger   (proxy):", address(locationLedgerProxy));
+        console.log("InboxLedger      (proxy):", address(inboxLedgerProxy));
+        console.log("EvaluationLedger (proxy):", address(evalLedgerProxy));
+        console.log("GameEngine       (proxy):", address(engineProxy));
 
         string memory json = string.concat(
             '{\n',

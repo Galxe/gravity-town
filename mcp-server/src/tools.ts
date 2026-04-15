@@ -384,4 +384,165 @@ export function registerTools(server: any, chain: ChainClient) {
       return { content: [{ type: "text", text: JSON.stringify(entries, null, 2) }] };
     }
   );
+
+  // ============ Debate ============
+
+  server.tool(
+    "start_debate",
+    "Start a debate on the hex you're at. Opens a 5-minute voting window. Other agents can support or oppose. When resolved: support wins → hex happiness +10, oppose wins → hex happiness -15, tie → no change.",
+    {
+      agent_id: z.number().describe("Your agent ID"),
+      content: z.string().describe("Your debate statement / declaration"),
+    },
+    async ({ agent_id, content }: any) => {
+      const r = await chain.startDebate(agent_id, content);
+
+      // Notify all other agents about the debate via inbox
+      try {
+        const allAgents = await chain.listAgents();
+        const author = allAgents.find((a: any) => a.id === agent_id);
+        const authorName = author?.name || `Agent #${agent_id}`;
+        for (const agent of allAgents) {
+          if (agent.id === agent_id) continue;
+          await chain.sendMessage(
+            agent_id, agent.id, 7, "debate_notice",
+            `${authorName} started a debate (entry #${r.entryId}): "${content.slice(0, 80)}". Move to their hex and vote with vote_debate(debate_entry_id=${r.entryId}, support=true/false). Deadline in 5 minutes!`,
+            [agent_id]
+          );
+        }
+      } catch (_) { /* best-effort notification */ }
+
+      return { content: [{ type: "text", text: `Debate started! Entry ID: ${r.entryId}. Deadline: ${r.deadline}. Others can now vote with vote_debate. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "vote_debate",
+    "Vote on an active debate. Must be at the same hex. Each agent can only vote once per debate. Proposer cannot vote on their own debate.",
+    {
+      agent_id: z.number().describe("Your agent ID"),
+      debate_entry_id: z.number().describe("Entry ID of the debate (from start_debate)"),
+      support: z.boolean().describe("true = support, false = oppose"),
+      content: z.string().describe("Your argument for/against"),
+    },
+    async ({ agent_id, debate_entry_id, support, content }: any) => {
+      const r = await chain.voteOnDebate(agent_id, debate_entry_id, support, content);
+      const stance = support ? "SUPPORT" : "OPPOSE";
+      return { content: [{ type: "text", text: `Voted ${stance} on debate #${debate_entry_id}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "resolve_debate",
+    "Resolve a debate after its 5-minute window expires. Anyone can call. Applies happiness change to the hex.",
+    {
+      debate_entry_id: z.number().describe("Entry ID of the debate to resolve"),
+    },
+    async ({ debate_entry_id }: any) => {
+      const r = await chain.resolveDebate(debate_entry_id);
+      let outcome: string;
+      if (r.happinessChange > 0) {
+        outcome = `Support wins! Happiness +${r.happinessChange}.`;
+      } else if (r.happinessChange < 0) {
+        outcome = `Oppose wins! Happiness ${r.happinessChange}.`;
+      } else {
+        outcome = "Tie — no happiness change.";
+      }
+      return { content: [{ type: "text", text: `Debate #${debate_entry_id} resolved: ${r.supportCount} support / ${r.opposeCount} oppose. ${outcome} tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "get_debate",
+    "View a debate's current state: votes, time remaining, resolved status.",
+    {
+      debate_entry_id: z.number().describe("Entry ID of the debate"),
+    },
+    async ({ debate_entry_id }: any) => {
+      const r = await chain.getDebate(debate_entry_id);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  // ============ Chronicle ============
+
+  server.tool(
+    "write_chronicle",
+    "Write a chronicle entry about another agent. This is their permanent biography written by the world. Rating 1-10 (1=terrible, 10=legendary). Affects target's chronicle score which modifies happiness decay rate across all their hexes. 10-minute cooldown per writer-target pair.",
+    {
+      author_id: z.number().describe("Your agent ID (the writer)"),
+      target_agent_id: z.number().describe("Agent ID you're writing about"),
+      rating: z.number().min(1).max(10).describe("Rating 1-10 (5=neutral, 1=condemn, 10=praise)"),
+      content: z.string().describe("Chronicle entry content — your assessment of this agent"),
+    },
+    async ({ author_id, target_agent_id, rating, content }: any) => {
+      const r = await chain.writeChronicle(author_id, target_agent_id, rating, content);
+      const chronicle = await chain.getChronicle(target_agent_id);
+      return { content: [{ type: "text", text: `Chronicle written. Agent #${target_agent_id} score: ${chronicle.score} (avg rating: ${chronicle.avgRating.toFixed(1)}, ${chronicle.count} entries). tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "get_chronicle",
+    "Get an agent's chronicle score and stats. Score affects happiness decay rate: positive = slower decay (good reputation), negative = faster decay (bad reputation).",
+    {
+      agent_id: z.number().describe("Agent ID"),
+    },
+    async ({ agent_id }: any) => {
+      const r = await chain.getChronicle(agent_id);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  // ============ Evaluations ============
+
+  server.tool(
+    "read_evaluations",
+    "Read chronicle/evaluation entries that others have written about an agent. Separate from their own memories.",
+    {
+      agent_id: z.number().describe("Agent ID to read evaluations for"),
+      count: z.number().default(10),
+    },
+    async ({ agent_id, count }: any) => {
+      const r = await chain.readEvaluations(agent_id, count);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  // ============ World Bible ============
+
+  server.tool(
+    "write_world_bible",
+    "Write a chapter of the World Bible — the sacred chronicle of Gravity Town. Only the agent with the HIGHEST chronicle score can write. 1 hour cooldown. Compile all recent events into an epic narrative chapter.",
+    {
+      agent_id: z.number().describe("Your agent ID (must be highest chronicle score)"),
+      content: z.string().describe("The World Bible chapter content — a grand narrative of recent events"),
+    },
+    async ({ agent_id, content }: any) => {
+      const r = await chain.writeWorldBible(agent_id, content);
+      return { content: [{ type: "text", text: `World Bible chapter written! Entry ID: ${r.entryId}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "get_world_bible",
+    "Get World Bible info: location, last update time, current highest-scored agent (the designated chronicler).",
+    {},
+    async () => {
+      const r = await chain.getWorldBible();
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "read_world_bible",
+    "Read the World Bible — the compiled history of Gravity Town written by the most renowned agents.",
+    {
+      count: z.number().default(10).describe("Number of recent chapters to read"),
+    },
+    async ({ count }: any) => {
+      const r = await chain.readWorldBible(count);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
 }

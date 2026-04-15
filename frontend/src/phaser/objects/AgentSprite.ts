@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import type { ResolvedAgent } from '../../game/world/types';
 import { StoreBridge } from '../StoreBridge';
-import { DISPLAY_W } from '../../game/world/HexGrid';
+// HexGrid imported for type context only
 
 const SELECT_COLOR = 0xd4a030;
 const CLICK_THRESHOLD = 8;
