@@ -298,10 +298,10 @@ export default function Sidebar() {
   };
 
   return (
-    <div className="absolute left-0 top-0 bottom-0 w-72 p-3 flex flex-col gap-3 pointer-events-none" style={{ zIndex: 10 }}>
+    <div className="absolute left-0 top-0 bottom-0 w-72 p-3 flex flex-col gap-2 pointer-events-none overflow-y-auto cartoon-scroll" style={{ zIndex: 10 }}>
       {/* Card 1: Locations & Agents */}
       <Card
-        className="max-h-[30%]"
+        className="max-h-40 flex-shrink-0"
         header={
           <>
             <h1 className="text-base font-bold tracking-tight font-cartoon text-wood-dark">
@@ -362,6 +362,7 @@ export default function Sidebar() {
 
       {/* Card 2: Scoreboard */}
       <Card
+        className="max-h-32 flex-shrink-0"
         header={
           <div className="flex items-center gap-2">
             <Trophy size={13} className="text-cart-gold" />
@@ -397,8 +398,9 @@ export default function Sidebar() {
       </Card>
 
       {/* Card 3: Active Debates */}
-      <div className="max-h-[18%] cursor-pointer" onClick={() => setExpandedPanel('debates')}>
+      <div className="flex-shrink-0 cursor-pointer" onClick={() => setExpandedPanel('debates')}>
         <Card
+          className="max-h-32"
           header={
             <div className="flex items-center gap-2">
               <MessageSquareQuote size={13} className="text-cart-gold" />
@@ -444,8 +446,9 @@ export default function Sidebar() {
       </div>
 
       {/* Card 4: Chronicles (per-agent biographies) */}
-      <div className="max-h-[20%] cursor-pointer" onClick={() => setExpandedPanel('chronicles')}>
+      <div className="flex-shrink-0 cursor-pointer" onClick={() => setExpandedPanel('chronicles')}>
         <Card
+          className="max-h-36"
           header={
             <div className="flex items-center gap-2">
               <ScrollText size={13} className="text-cart-purple" />
@@ -484,9 +487,9 @@ export default function Sidebar() {
       </div>
 
       {/* Card 5: World Events (narrative feed) */}
-      <div className="flex-1 min-h-0 cursor-pointer" onClick={() => setExpandedPanel('events')}>
+      <div className="flex-shrink-0 cursor-pointer" onClick={() => setExpandedPanel('events')}>
         <Card
-          className="h-full"
+          className="max-h-32"
           header={
             <div className="flex items-center gap-2">
               <BookOpen size={13} className="text-cart-cyan" />
@@ -508,8 +511,9 @@ export default function Sidebar() {
       </div>
 
       {/* Card 6: World Bible (bottom — the sacred text) */}
-      <div className="max-h-[15%] cursor-pointer" onClick={() => setExpandedPanel('bible')}>
+      <div className="flex-shrink-0 cursor-pointer" onClick={() => setExpandedPanel('bible')}>
         <Card
+          className="max-h-32"
           header={
             <div className="flex items-center gap-2">
               <Crown size={13} className="text-cart-gold" />
