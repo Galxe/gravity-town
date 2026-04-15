@@ -12,7 +12,9 @@ function getConfig(): ChainConfig {
   if (!privateKey) throw new Error("PRIVATE_KEY env var required");
   if (!routerAddress) throw new Error("ROUTER_ADDRESS env var required");
 
-  return { rpcUrl, privateKey, routerAddress };
+  const chainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined;
+
+  return { rpcUrl, privateKey, routerAddress, chainId };
 }
 
 async function main() {

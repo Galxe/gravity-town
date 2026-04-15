@@ -74,6 +74,7 @@ export interface ChainConfig {
   rpcUrl: string;
   privateKey: string;
   routerAddress: string;
+  chainId?: number;
 }
 
 export interface FormattedEntry {
@@ -113,10 +114,9 @@ export class ChainClient {
   private _ready: Promise<void>;
 
   constructor(config: ChainConfig) {
-    this.provider = new ethers.providers.JsonRpcProvider(config.rpcUrl, {
-      name: "gravity-testnet",
-      chainId: 7771625,
-    });
+    this.provider = config.chainId
+      ? new ethers.providers.JsonRpcProvider(config.rpcUrl, config.chainId)
+      : new ethers.providers.JsonRpcProvider(config.rpcUrl);
     this.signer = new ethers.Wallet(config.privateKey, this.provider);
 
     const provider = this.provider;
