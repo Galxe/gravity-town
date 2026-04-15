@@ -113,7 +113,10 @@ export class ChainClient {
   private _ready: Promise<void>;
 
   constructor(config: ChainConfig) {
-    this.provider = new ethers.providers.JsonRpcProvider(config.rpcUrl);
+    this.provider = new ethers.providers.JsonRpcProvider(config.rpcUrl, {
+      name: "gravity-testnet",
+      chainId: 7771625,
+    });
     this.signer = new ethers.Wallet(config.privateKey, this.provider);
 
     const provider = this.provider;
