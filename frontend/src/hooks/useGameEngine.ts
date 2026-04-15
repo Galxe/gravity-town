@@ -44,6 +44,7 @@ const GAME_ENGINE_ABI = [
   'function orePool(uint256) view returns (uint256)',
   'function inciteRebellion(uint256 agentId, bytes32 targetHexKey)',
   'function getChronicle(uint256 agentId) view returns (int256 score, uint256 count, uint256 ratingSum)',
+  'function getWorldBible() view returns (uint256 locationId, uint256 lastTimestamp, uint256 bestAgentId, int256 bestScore)',
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
