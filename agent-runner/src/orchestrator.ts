@@ -190,13 +190,24 @@ export class Orchestrator {
         return;
       }
 
-      // 5. Write to chain
-      const result = extractToolText(
-        await callMcpTool(this.client, "write_world_bible", {
-          agent_id: chroniclerId,
-          content: chapter,
-        })
-      );
+      // 5. Re-check best agent right before writing (may have changed during LLM call)
+      const freshInfo = parseToolJson(
+        await callMcpTool(this.client, "get_world_bible", {})
+      ) as { bestAgentId?: number } | null;
+      const actualChronicler = freshInfo?.bestAgentId || chroniclerId;
+      if (actualChronicler !== chroniclerId) {
+        this.log(`[bible] chronicler changed: #${chroniclerId} → #${actualChronicler} during generation`);
+      }
+
+      const writeResult = await callMcpTool(this.client, "write_world_bible", {
+        agent_id: actualChronicler,
+        content: chapter,
+      });
+
+      if (writeResult?.isError) {
+        this.log(`[bible] write rejected: ${extractToolText(writeResult)}`, true);
+        return;
+      }
 
       this.log(`[bible] chapter written by agent #${chroniclerId}: "${chapter.slice(0, 80)}..."`);
     } catch (error) {

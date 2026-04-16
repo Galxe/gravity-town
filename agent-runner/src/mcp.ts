@@ -116,6 +116,7 @@ export function applyAgentDefaults(
     "move_agent", "post_to_location", "read_inbox", "compact_inbox",
     "get_my_hexes", "get_score", "harvest",
     "build", "attack", "raid", "incite_rebellion", "claim_neutral",
+    "start_debate", "vote_debate", "write_chronicle", "get_chronicle",
   ];
 
   if (selfTools.includes(toolName) && next.agent_id === undefined) {
