@@ -22,6 +22,7 @@ interface TomlConfig {
     path?: string;
     server_url?: string;
     router_address?: string;
+    chain_id?: number;
   };
   runner?: {
     loop_delay_ms?: number;
@@ -105,11 +106,14 @@ function loadMcpServerConfig(): McpServerConfig | undefined {
   const mcpPort = cfg.mcp?.port ?? 3000;
   const mcpPath = cfg.mcp?.path || "/mcp";
 
+  const chainId = cfg.mcp?.chain_id ? Number(cfg.mcp.chain_id) : undefined;
+
   return {
     mcpServerDir: resolve(__dirname, "../../mcp-server"),
     privateKey,
     rpcUrl: cfg.mcp?.rpc_url || "http://127.0.0.1:8545",
     routerAddress,
+    chainId,
     mcpHost,
     mcpPort,
     mcpPath,

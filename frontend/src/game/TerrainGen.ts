@@ -97,7 +97,7 @@ export function getTerrain(q: number, r: number): TerrainTile {
 
   const elevation = noise2D(x, y);
   const moisture = noise2D_2(x * 1.5 + 100, y * 1.5 + 100);
-  const detail = noise2D_3(x * 3, y * 3);
+  noise2D_3(x * 3, y * 3); // detail noise (reserved for future use)
 
   let biome: BiomeType;
 

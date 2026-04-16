@@ -1,12 +1,13 @@
 'use client';
 
 import { useGameStore, Agent, BoardState, HexData } from '../store/useGameStore';
-import { User, MapPin, Brain, MessageCircle, Shield, Pickaxe, Trophy, Map } from 'lucide-react';
+import { User, MapPin, Brain, MessageCircle, Shield, Pickaxe, Trophy, Map, BookOpen } from 'lucide-react';
 import { useState } from 'react';
 import { EntryList, UsageBadge } from './EntryList';
 import EntryModal from './EntryModal';
 import { hexToPixel, LOCATION_SPREAD } from '../game/world/HexGrid';
 import Card from './Card';
+import { reputationLabel } from '../utils/narrativeFormat';
 
 const STAT_LABELS = ['STR', 'WIS', 'CHR', 'LCK'];
 const STAT_COLORS = ['bg-cart-red', 'bg-cart-blue', 'bg-cart-pink', 'bg-cart-gold'];
@@ -17,7 +18,6 @@ function HexTerritoryPanel({ hexes }: { hexes: HexData[] }) {
   const totalMines = hexes.reduce((s, h) => s + h.mineCount, 0);
   const totalArsenals = hexes.reduce((s, h) => s + h.arsenalCount, 0);
   const totalDefense = hexes.reduce((s, h) => s + h.defense, 0);
-  const orePerMin = hexes.reduce((s, h) => s + (h.reserve > 0 ? 10 + h.mineCount * 5 : 2), 0);
 
   return (
     <Card
@@ -83,7 +83,13 @@ export default function AgentDetail({ agent, locationName, memories, inbox, agen
   agents: Record<number, { name: string }>;
 }) {
   const agentHexes = useGameStore((s) => s.agentHexes[agent.id]) || [];
-  const [expandedPanel, setExpandedPanel] = useState<'memories' | 'inbox' | null>(null);
+  const chronicle = useGameStore((s) => s.chronicles[agent.id]);
+  const [expandedPanel, setExpandedPanel] = useState<'memories' | 'inbox' | 'chronicle' | null>(null);
+
+  // Chronicle entries from EvaluationLedger (separate from memories)
+  const evaluation = useGameStore((s) => s.evaluations[agent.id]);
+  const chronicleEntries = evaluation?.entries || [];
+  const rep = reputationLabel(chronicle?.score ?? 0);
 
   return (
     <>
@@ -166,7 +172,65 @@ export default function AgentDetail({ agent, locationName, memories, inbox, agen
       {/* Card 2: Territory */}
       {agentHexes.length > 0 && <HexTerritoryPanel hexes={agentHexes} />}
 
-      {/* Card 3: Memories (click to expand) */}
+      {/* Card 3: Chronicle (reputation) */}
+      <div className="cursor-pointer" onClick={() => setExpandedPanel('chronicle')}>
+        <Card
+          header={
+            <div className="flex items-center gap-2">
+              <BookOpen size={13} className="text-cart-purple" />
+              <span className="text-[11px] uppercase font-bold font-cartoon text-wood-dark">Chronicle</span>
+              {chronicleEntries.length > 0 && (
+                <span className="text-[9px] font-hand text-ink-faded">{chronicleEntries.length} entries</span>
+              )}
+              <span className="text-[9px] font-hand text-ink-faded ml-auto">click to expand</span>
+            </div>
+          }
+        >
+          <div className="px-1">
+            {/* Reputation badge */}
+            <div className="flex items-center gap-3 bg-parchment-dark/50 p-2 rounded-xl border-2 border-wood/20">
+              <div className="text-center flex-1">
+                <div className="text-[8px] uppercase font-cartoon font-semibold text-wood-light">Reputation</div>
+                <div className={`text-sm font-bold font-cartoon ${rep.color}`}>{rep.text}</div>
+              </div>
+              <div className="text-center flex-1">
+                <div className="text-[8px] uppercase font-cartoon font-semibold text-wood-light">Score</div>
+                <div className={`text-sm font-bold font-cartoon ${(chronicle?.score ?? 0) >= 0 ? 'text-cart-green' : 'text-cart-red'}`}>
+                  {(chronicle?.score ?? 0) > 0 ? '+' : ''}{chronicle?.score ?? 0}
+                </div>
+              </div>
+              <div className="text-center flex-1">
+                <div className="text-[8px] uppercase font-cartoon font-semibold text-wood-light">Avg Rating</div>
+                <div className="text-sm font-bold font-cartoon text-cart-gold">
+                  {chronicle && chronicle.count > 0 ? chronicle.avgRating.toFixed(1) : '-'} <span className="text-[9px]">/ 10</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Recent chronicle entries preview */}
+            {chronicleEntries.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {chronicleEntries.slice(-2).reverse().map((entry) => (
+                  <div key={entry.id} className="text-[10px] px-2 py-1 rounded-lg bg-cart-purple/5 border-l-[3px] border-cart-purple/30">
+                    <span className="font-cartoon text-cart-purple font-semibold">
+                      {agents[entry.relatedAgents?.[0]]?.name || 'Unknown'}
+                    </span>
+                    <span className="text-ink-faded font-hand"> rated </span>
+                    <span className="text-cart-gold">{'\u2605'.repeat(Math.min(entry.importance, 5))}</span>
+                    <p className="text-ink-soft font-hand mt-0.5 leading-tight">&ldquo;{entry.content.slice(0, 60)}{entry.content.length > 60 ? '\u2026' : ''}&rdquo;</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {chronicleEntries.length === 0 && (
+              <p className="text-[10px] text-ink-faded italic font-hand mt-1.5">No one has written about {agent.name} yet...</p>
+            )}
+          </div>
+        </Card>
+      </div>
+
+      {/* Card 4: Memories (click to expand) */}
       <div className="flex-1 min-h-0 cursor-pointer" onClick={() => setExpandedPanel('memories')}>
         <Card
           className="h-full"
@@ -216,6 +280,16 @@ export default function AgentDetail({ agent, locationName, memories, inbox, agen
           entries={inbox?.entries || []}
           agents={agents}
           color="green"
+          showAuthor
+          onClose={() => setExpandedPanel(null)}
+        />
+      )}
+      {expandedPanel === 'chronicle' && (
+        <EntryModal
+          title={`${agent.name} — Chronicle (${rep.text})`}
+          entries={chronicleEntries}
+          agents={agents}
+          color="purple"
           showAuthor
           onClose={() => setExpandedPanel(null)}
         />

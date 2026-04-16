@@ -65,6 +65,7 @@ export interface McpServerConfig {
   privateKey: string;
   rpcUrl: string;
   routerAddress: string;
+  chainId?: number;
   mcpHost: string;
   mcpPort: number;
   mcpPath: string;

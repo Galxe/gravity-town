@@ -69,6 +69,12 @@ export interface SelectedEntity {
   id: number;
 }
 
+export interface ChronicleData {
+  score: number;       // -5 to +5
+  count: number;       // total chronicle entries
+  avgRating: number;   // average rating (1-10)
+}
+
 export interface GameState {
   agents: Record<number, Agent>;
   locations: Record<number, LocationData>;
@@ -77,6 +83,9 @@ export interface GameState {
   memories: Record<number, BoardState>;
   locationBoards: Record<number, BoardState>;
   inbox: Record<number, BoardState>;
+  chronicles: Record<number, ChronicleData>; // agentId → chronicle
+  evaluations: Record<number, BoardState>;  // agentId → evaluation entries (written by others)
+  worldBible: BoardState | null;
   selectedEntity: SelectedEntity | null;
   focusTarget: FocusTarget | null;
   hoveredEntity: HoveredEntity | null;
@@ -88,6 +97,9 @@ export interface GameState {
   setMemories: (agentId: number, board: BoardState) => void;
   setLocationBoard: (locationId: number, board: BoardState) => void;
   setInbox: (agentId: number, board: BoardState) => void;
+  setChronicles: (chronicles: Record<number, ChronicleData>) => void;
+  setEvaluation: (agentId: number, board: BoardState) => void;
+  setWorldBible: (board: BoardState) => void;
   setSelectedEntity: (entity: SelectedEntity | null) => void;
   setFocusTarget: (target: FocusTarget | null) => void;
   setHoveredEntity: (entity: HoveredEntity | null) => void;
@@ -101,6 +113,9 @@ export const useGameStore = create<GameState>((set) => ({
   memories: {},
   locationBoards: {},
   inbox: {},
+  chronicles: {},
+  evaluations: {},
+  worldBible: null,
   selectedEntity: null,
   focusTarget: null,
   hoveredEntity: null,
@@ -120,6 +135,11 @@ export const useGameStore = create<GameState>((set) => ({
   setInbox: (agentId, board) => set((state) => ({
     inbox: { ...state.inbox, [agentId]: board },
   })),
+  setChronicles: (chronicles) => set({ chronicles }),
+  setEvaluation: (agentId, board) => set((state) => ({
+    evaluations: { ...state.evaluations, [agentId]: board },
+  })),
+  setWorldBible: (board) => set({ worldBible: board }),
   setSelectedEntity: (entity) => set({ selectedEntity: entity }),
   setFocusTarget: (target) => set({ focusTarget: target }),
   setHoveredEntity: (entity) => set({ hoveredEntity: entity }),

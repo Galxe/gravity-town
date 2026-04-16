@@ -52,6 +52,7 @@ export async function launchMcpServer(config: McpServerConfig): Promise<ChildPro
     PRIVATE_KEY: config.privateKey,
     RPC_URL: config.rpcUrl,
     ROUTER_ADDRESS: config.routerAddress,
+    ...(config.chainId ? { CHAIN_ID: String(config.chainId) } : {}),
     MCP_HOST: config.mcpHost,
     MCP_PORT: String(config.mcpPort),
     MCP_PATH: config.mcpPath,

@@ -6,12 +6,16 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./AgentRegistry.sol";
 import "./LocationLedger.sol";
+import "./AgentLedger.sol";
+import "./EvaluationLedger.sol";
 
 /// @title GameEngine — Hex territory with agent-level ore pool
 contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     AgentRegistry public registry;
     LocationLedger public locationLedger;
+    AgentLedger public agentLedger;
+    EvaluationLedger public evaluationLedger;
 
     // ──────────────────── Constants ────────────────────
 
@@ -30,15 +34,24 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint256 public constant STARTING_ORE          = 200;
     uint256 public constant INITIAL_RESERVE       = 2000;  // ore reserve per fresh hex
     uint256 public constant DEPLETED_ORE_PER_SEC  = 2;     // trickle production when reserve=0
-    int32   public constant MAP_RADIUS            = 4;     // world boundary: hex distance from origin
+    int32   public constant MAP_RADIUS            = 100;   // effectively unlimited — world grows as agents join
     uint256 public constant MAX_HAPPINESS         = 100;
     uint256 public constant CAPTURE_ORE_PCT       = 30;    // % of defender's pool stolen on capture
     uint256 public constant DEFENSE_MORALE        = 20;    // happiness restored on successful defense
     uint256 public constant SPAWN_HEXES           = 7;     // hexes per agent (center + ring)
-    uint256 public constant POST_MORALE           = 10;    // happiness restored when posting to location board
+    uint256 public constant POST_MORALE           = 5;     // happiness restored when posting to location board (reduced; debates are primary)
     uint256 public constant CAPTURE_MORALE_BOOST  = 15;    // happiness added to ALL owner's hexes on capture
     uint256 public constant INCITE_POWER          = 30;    // happiness reduced per successful incite
     uint256 public constant INCITE_COOLDOWN       = 30;    // seconds between incite attempts on same hex
+
+    // ──────────────────── Debate Constants ────────────────────
+    uint256 public constant DEBATE_DURATION        = 3600;   // 1 hour
+    uint256 public constant DEBATE_BOOST           = 10;    // happiness gained when support wins
+    uint256 public constant DEBATE_PENALTY         = 15;    // happiness lost when oppose wins
+
+    // ──────────────────── Chronicle Constants ────────────────────
+    uint256 public constant CHRONICLE_COOLDOWN     = 300;   // 5 minutes between same writer→target
+    int256  public constant MAX_CHRONICLE_MODIFIER = 5;     // chronicle score clamped to [-5, +5]
 
     // ──────────────────── Hex Storage ────────────────────
 
@@ -67,6 +80,41 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice attackCooldown[attackerAgent][targetHexKey] = timestamp
     mapping(uint256 => mapping(bytes32 => uint256)) public attackCooldown;
 
+    // ──────────────────── Debate Storage ────────────────────
+
+    struct Debate {
+        uint256 entryId;        // LocationLedger entry ID that started this debate
+        bytes32 hexKey;         // which hex this debate is about
+        uint256 proposerId;     // agent who started it
+        uint256 supportCount;
+        uint256 opposeCount;
+        uint256 deadline;       // block.timestamp + DEBATE_DURATION
+        bool    resolved;
+    }
+
+    mapping(uint256 => Debate) public debates;                        // entryId → Debate
+    mapping(uint256 => mapping(uint256 => bool)) public debateVoted;  // entryId → agentId → voted
+
+    // ──────────────────── Chronicle Storage ────────────────────
+
+    /// @notice Chronicle score per agent. Derived from ratings others give (1-10, midpoint 5).
+    mapping(uint256 => int256) public chronicleScore;
+    /// @notice Total number of chronicle entries received by an agent (for averaging).
+    mapping(uint256 => uint256) public chronicleCount;
+    /// @notice Sum of all ratings received (for computing average).
+    mapping(uint256 => uint256) public chronicleRatingSum;
+    /// @notice Cooldown: chronicleCooldown[writer][target] = timestamp of last write.
+    mapping(uint256 => mapping(uint256 => uint256)) public chronicleCooldown;
+
+    // ──────────────────── World Bible Storage ────────────────────
+
+    /// @notice Location ID for the World Bible board.
+    uint256 public worldBibleLocationId;
+    /// @notice Timestamp of the last World Bible entry.
+    uint256 public lastBibleTimestamp;
+    /// @notice Minimum interval between World Bible entries (1 hour).
+    uint256 public constant BIBLE_INTERVAL = 3600;
+
     // ──────────────────── Events ────────────────────
 
     event AgentCreated(uint256 indexed agentId, bytes32 indexed hexKey, uint256 locationId);
@@ -83,6 +131,11 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event HexCaptured(uint256 indexed newOwner, bytes32 indexed hexKey, uint256 indexed oldOwner);
     event HexRebelled(bytes32 indexed hexKey, uint256 indexed oldOwner);
     event InciteResult(uint256 indexed agentId, bytes32 indexed targetHexKey, bool success, bool captured);
+    event DebateStarted(uint256 indexed entryId, bytes32 indexed hexKey, uint256 indexed proposerId, uint256 deadline);
+    event DebateVoted(uint256 indexed entryId, uint256 indexed voterId, bool support);
+    event DebateResolved(uint256 indexed entryId, uint256 supportCount, uint256 opposeCount, int256 happinessChange);
+    event ChronicleWritten(uint256 indexed authorId, uint256 indexed targetAgentId, uint8 rating);
+    event WorldBibleWritten(uint256 indexed authorId, uint256 indexed entryId);
 
     // ──────────────────── Auth ────────────────────
 
@@ -110,6 +163,16 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         __Ownable_init(msg.sender);
         registry = AgentRegistry(_registry);
         locationLedger = LocationLedger(_locationLedger);
+    }
+
+    /// @notice Set agentLedger. Called once after upgrade.
+    function setAgentLedger(address _agentLedger) external onlyOwner {
+        agentLedger = AgentLedger(_agentLedger);
+    }
+
+    /// @notice Set evaluationLedger (for chronicle writes). Called once after deploy.
+    function setEvaluationLedger(address _evaluationLedger) external onlyOwner {
+        evaluationLedger = EvaluationLedger(_evaluationLedger);
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
@@ -584,6 +647,246 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     // ══════════════════════════════════════════════════════════
+    //                     DEBATE
+    // ══════════════════════════════════════════════════════════
+
+    /// @notice Start a debate on the hex you're currently at. Posts to location board.
+    function startDebate(
+        uint256 agentId,
+        string calldata content
+    ) external canControlAgent(agentId) returns (uint256 entryId) {
+        (, , , uint256 agentLoc,) = registry.getAgent(agentId);
+
+        // Find which hex this location belongs to
+        bytes32 hexKey_ = _hexKeyForLocation(agentLoc);
+        require(hexKey_ != bytes32(0), "not at a hex");
+
+        _updateHappiness(hexKey_);
+        Hex storage h = hexes[hexKey_];
+        require(h.ownerId != 0, "hex unclaimed");
+
+        // Post to location board with category "debate"
+        uint256[] memory noRelated = new uint256[](0);
+        (entryId,,) = locationLedger.write(agentId, 7, "debate", content, noRelated);
+
+        // Create debate record
+        debates[entryId] = Debate({
+            entryId: entryId,
+            hexKey: hexKey_,
+            proposerId: agentId,
+            supportCount: 0,
+            opposeCount: 0,
+            deadline: block.timestamp + DEBATE_DURATION,
+            resolved: false
+        });
+
+        emit DebateStarted(entryId, hexKey_, agentId, block.timestamp + DEBATE_DURATION);
+    }
+
+    /// @notice Vote on an active debate. Must be at the same hex.
+    function voteOnDebate(
+        uint256 agentId,
+        uint256 debateEntryId,
+        bool support,
+        string calldata content
+    ) external canControlAgent(agentId) returns (uint256 voteEntryId) {
+        Debate storage d = debates[debateEntryId];
+        require(d.entryId != 0, "debate not found");
+        require(!d.resolved, "debate already resolved");
+        require(block.timestamp <= d.deadline, "debate expired");
+        require(d.proposerId != agentId, "proposer cannot vote");
+        require(!debateVoted[debateEntryId][agentId], "already voted");
+
+        // Remote voting allowed — no need to be at the hex
+
+        debateVoted[debateEntryId][agentId] = true;
+
+        if (support) {
+            d.supportCount++;
+        } else {
+            d.opposeCount++;
+        }
+
+        // Post vote to location board for visibility
+        string memory category = support ? "support" : "oppose";
+        uint256[] memory related = new uint256[](1);
+        related[0] = d.proposerId;
+        (voteEntryId,,) = locationLedger.write(agentId, 5, category, content, related);
+
+        emit DebateVoted(debateEntryId, agentId, support);
+    }
+
+    /// @notice Resolve a debate after its deadline. Anyone can call.
+    function resolveDebate(uint256 debateEntryId) external {
+        Debate storage d = debates[debateEntryId];
+        require(d.entryId != 0, "debate not found");
+        require(!d.resolved, "already resolved");
+        require(block.timestamp > d.deadline, "debate still active");
+
+        d.resolved = true;
+        _updateHappiness(d.hexKey);
+        Hex storage h = hexes[d.hexKey];
+
+        int256 happinessChange = int256(0);
+
+        if (h.ownerId != 0) {
+            if (d.supportCount > d.opposeCount) {
+                uint256 newHappy = h.happiness + DEBATE_BOOST;
+                h.happiness = newHappy > MAX_HAPPINESS ? MAX_HAPPINESS : newHappy;
+                happinessChange = int256(DEBATE_BOOST);
+            } else if (d.opposeCount > d.supportCount) {
+                if (h.happiness <= DEBATE_PENALTY) {
+                    h.happiness = 0;
+                    uint256 oldOwner = h.ownerId;
+                    h.ownerId = 0;
+                    _removeHexFromAgent(oldOwner, d.hexKey);
+                    hexCount[oldOwner]--;
+                    emit HexRebelled(d.hexKey, oldOwner);
+                } else {
+                    h.happiness -= DEBATE_PENALTY;
+                }
+                happinessChange = -int256(DEBATE_PENALTY);
+            }
+            // equal votes: no change
+        }
+
+        emit DebateResolved(debateEntryId, d.supportCount, d.opposeCount, happinessChange);
+    }
+
+    /// @notice View a debate's state.
+    function getDebate(uint256 debateEntryId) external view returns (
+        uint256 entryId, bytes32 hexKey, uint256 proposerId,
+        uint256 supportCount, uint256 opposeCount,
+        uint256 deadline, bool resolved
+    ) {
+        Debate storage d = debates[debateEntryId];
+        return (d.entryId, d.hexKey, d.proposerId, d.supportCount, d.opposeCount, d.deadline, d.resolved);
+    }
+
+    /// @dev Find the hex key for a given locationId. Returns bytes32(0) if none.
+    function _hexKeyForLocation(uint256 locationId) internal view returns (bytes32) {
+        for (uint256 i = 0; i < allHexKeys.length; i++) {
+            if (hexes[allHexKeys[i]].locationId == locationId) {
+                return allHexKeys[i];
+            }
+        }
+        return bytes32(0);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //                     CHRONICLE
+    // ══════════════════════════════════════════════════════════
+
+    /// @notice Write a chronicle entry about another agent. Rating 1-10.
+    ///         Stored in target's AgentLedger. Affects target's chronicle score.
+    function writeChronicle(
+        uint256 authorId,
+        uint256 targetAgentId,
+        uint8 rating,
+        string calldata content
+    ) external canControlAgent(authorId) returns (uint256 entryId) {
+        require(authorId != targetAgentId, "cannot chronicle yourself");
+        require(rating >= 1 && rating <= 10, "rating must be 1-10");
+
+        // Cooldown check
+        uint256 lastWrite = chronicleCooldown[authorId][targetAgentId];
+        require(lastWrite == 0 || block.timestamp >= lastWrite + CHRONICLE_COOLDOWN, "chronicle cooldown");
+        chronicleCooldown[authorId][targetAgentId] = block.timestamp;
+
+        // Write to target's EvaluationLedger (separate from their memories)
+        uint256[] memory related = new uint256[](1);
+        related[0] = authorId;
+        (entryId,,) = evaluationLedger.write(
+            targetAgentId, authorId, rating, "chronicle", content, related
+        );
+
+        // Update chronicle score
+        chronicleCount[targetAgentId]++;
+        chronicleRatingSum[targetAgentId] += rating;
+        _recalcChronicleScore(targetAgentId);
+
+        emit ChronicleWritten(authorId, targetAgentId, rating);
+    }
+
+    /// @dev Recalculate chronicle score from average rating. Midpoint = 5.
+    function _recalcChronicleScore(uint256 agentId) internal {
+        if (chronicleCount[agentId] == 0) {
+            chronicleScore[agentId] = 0;
+            return;
+        }
+        // avg in range [1,10], midpoint 5 → modifier in [-4, +5]
+        // We clamp to [-MAX_CHRONICLE_MODIFIER, +MAX_CHRONICLE_MODIFIER]
+        int256 avg = int256(chronicleRatingSum[agentId] / chronicleCount[agentId]);
+        int256 mod_ = avg - 5;
+        if (mod_ > MAX_CHRONICLE_MODIFIER) mod_ = MAX_CHRONICLE_MODIFIER;
+        if (mod_ < -MAX_CHRONICLE_MODIFIER) mod_ = -MAX_CHRONICLE_MODIFIER;
+        chronicleScore[agentId] = mod_;
+    }
+
+    /// @notice Get chronicle info for an agent.
+    function getChronicle(uint256 agentId) external view returns (
+        int256 score, uint256 count, uint256 ratingSum
+    ) {
+        return (chronicleScore[agentId], chronicleCount[agentId], chronicleRatingSum[agentId]);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //                     WORLD BIBLE
+    // ══════════════════════════════════════════════════════════
+
+    /// @notice Initialize the World Bible location. Called once after deploy.
+    function initWorldBible() external onlyOwner {
+        require(worldBibleLocationId == 0, "already initialized");
+        worldBibleLocationId = locationLedger.createLocation("World Bible", "The sacred chronicle of Gravity Town, written by the most renowned agent", 0, 0);
+    }
+
+    /// @notice Find the agent with the highest chronicle score.
+    function highestChronicleAgent() public view returns (uint256 bestId, int256 bestScore) {
+        bytes32[] storage keys = allHexKeys;
+        // Collect unique agent IDs from hex ownership
+        for (uint256 i = 0; i < keys.length; i++) {
+            uint256 ownerId = hexes[keys[i]].ownerId;
+            if (ownerId == 0) continue;
+            int256 s = chronicleScore[ownerId];
+            if (bestId == 0 || s > bestScore) {
+                bestId = ownerId;
+                bestScore = s;
+            }
+        }
+    }
+
+    /// @notice Write a World Bible entry. Only the highest-scored agent can write. 1 hour cooldown.
+    function writeWorldBible(
+        uint256 agentId,
+        string calldata content
+    ) external canControlAgent(agentId) returns (uint256 entryId) {
+        require(worldBibleLocationId != 0, "world bible not initialized");
+        require(block.timestamp >= lastBibleTimestamp + BIBLE_INTERVAL, "bible cooldown");
+
+        (uint256 bestId,) = highestChronicleAgent();
+        require(agentId == bestId, "only highest chronicle agent can write");
+
+        // Temporarily move agent to World Bible location, write, then move back
+        (, , , uint256 originalLoc,) = registry.getAgent(agentId);
+        registry.moveAgent(agentId, worldBibleLocationId);
+
+        uint256[] memory noRelated = new uint256[](0);
+        (entryId,,) = locationLedger.write(agentId, 10, "world_bible", content, noRelated);
+        lastBibleTimestamp = block.timestamp;
+
+        // Move agent back to their original location
+        registry.moveAgent(agentId, originalLoc);
+
+        emit WorldBibleWritten(agentId, entryId);
+    }
+
+    /// @notice Get World Bible info.
+    function getWorldBible() external view returns (uint256 locationId, uint256 lastTimestamp, uint256 bestAgentId, int256 bestScore) {
+        (bestAgentId, bestScore) = highestChronicleAgent();
+        return (worldBibleLocationId, lastBibleTimestamp, bestAgentId, bestScore);
+    }
+
+    // ══════════════════════════════════════════════════════════
     //                     INTERNALS
     // ══════════════════════════════════════════════════════════
 
@@ -671,7 +974,7 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 elapsed30s = (block.timestamp - h.happinessUpdatedAt) / 30;
         if (elapsed30s == 0) return;
 
-        uint256 decay = elapsed30s * hexCount[h.ownerId];
+        uint256 decay = _calcDecay(elapsed30s, h.ownerId);
         h.happinessUpdatedAt = block.timestamp;
 
         if (h.happiness <= decay) {
@@ -686,11 +989,29 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         }
     }
 
+    /// @dev Calculate decay for a given number of 30s ticks and agent.
+    ///      Formula: baseDecay = elapsed30s * (1 + hexCount/3), then subtract chronicle bonus.
+    function _calcDecay(uint256 elapsed30s, uint256 agentId) internal view returns (uint256) {
+        uint256 hCount = hexCount[agentId];
+        uint256 baseDecay = elapsed30s * (1 + hCount / 3);
+        int256 cScore = chronicleScore[agentId];
+
+        if (cScore > 0) {
+            uint256 bonus = uint256(cScore) * elapsed30s;
+            if (bonus >= baseDecay) return elapsed30s; // minimum 1 per tick
+            return baseDecay - bonus;
+        } else if (cScore < 0) {
+            uint256 penalty = uint256(-cScore) * elapsed30s;
+            return baseDecay + penalty;
+        }
+        return baseDecay;
+    }
+
     function currentHappiness(bytes32 hexKey_) external view returns (uint256) {
         Hex storage h = hexes[hexKey_];
         if (h.ownerId == 0) return 0;
         uint256 elapsed30s = (block.timestamp - h.happinessUpdatedAt) / 30;
-        uint256 decay = elapsed30s * hexCount[h.ownerId];
+        uint256 decay = _calcDecay(elapsed30s, h.ownerId);
         return h.happiness > decay ? h.happiness - decay : 0;
     }
 

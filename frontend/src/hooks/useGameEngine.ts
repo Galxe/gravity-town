@@ -1,12 +1,14 @@
 import { useEffect, useRef } from 'react';
 import { JsonRpcProvider, Contract } from 'ethers';
-import { useGameStore, Agent, LocationData, Entry, BoardState, HexData } from '../store/useGameStore';
+import { useGameStore, Agent, LocationData, Entry, BoardState, HexData, ChronicleData } from '../store/useGameStore';
 
 const RPC_URL     = process.env.NEXT_PUBLIC_RPC_URL        || 'http://127.0.0.1:8545';
 const ROUTER_ADDR = process.env.NEXT_PUBLIC_ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000';
 
+const ENTRY_TUPLE = 'tuple(uint256 id, uint256 authorAgent, uint256 blockNumber, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)';
+
 const ROUTER_ABI = [
-  'function getAddresses() view returns (address, address, address, address, address)',
+  'function getAddresses() view returns (address, address, address, address, address, address)',
 ];
 
 const REGISTRY_ABI = [
@@ -14,7 +16,9 @@ const REGISTRY_ABI = [
   'function getAllAgentIds() view returns (uint256[])',
 ];
 
-const ENTRY_TUPLE = 'tuple(uint256 id, uint256 authorAgent, uint256 blockNumber, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)';
+const EVALUATION_LEDGER_ABI = [
+  `function readRecent(uint256 agentId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
+];
 
 const AGENT_LEDGER_ABI = [
   `function readRecent(uint256 agentId, uint256 count) view returns (${ENTRY_TUPLE}[] entries, uint256 used, uint256 capacity)`,
@@ -39,6 +43,8 @@ const GAME_ENGINE_ABI = [
   'function getHex(bytes32) view returns (uint256 ownerId, uint256 locationId, int32 q, int32 r, uint256 mineCount, uint256 arsenalCount, uint256 lastHarvest, uint256 reserve, uint256 happiness, uint256 happinessUpdatedAt)',
   'function orePool(uint256) view returns (uint256)',
   'function inciteRebellion(uint256 agentId, bytes32 targetHexKey)',
+  'function getChronicle(uint256 agentId) view returns (int256 score, uint256 count, uint256 ratingSum)',
+  'function getWorldBible() view returns (uint256 locationId, uint256 lastTimestamp, uint256 bestAgentId, int256 bestScore)',
 ];
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -63,6 +69,9 @@ export function useGameEngine() {
   const setMemories = useGameStore((s) => s.setMemories);
   const setLocationBoard = useGameStore((s) => s.setLocationBoard);
   const setInbox = useGameStore((s) => s.setInbox);
+  const setChronicles = useGameStore((s) => s.setChronicles);
+  const setEvaluation = useGameStore((s) => s.setEvaluation);
+  const setWorldBible = useGameStore((s) => s.setWorldBible);
 
   const isFetching = useRef(false);
 
@@ -73,18 +82,20 @@ export function useGameEngine() {
     let locationLedger: Contract;
     let inboxLedger: Contract;
     let gameEngine: Contract;
+    let evaluationLedger: Contract;
     let resolved = false;
 
     const resolveContracts = async () => {
       if (resolved) return;
       const router = new Contract(ROUTER_ADDR, ROUTER_ABI, provider);
-      const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr] =
+      const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr] =
         await router.getAddresses();
       registry = new Contract(registryAddr, REGISTRY_ABI, provider);
       agentLedger = new Contract(agentLedgerAddr, AGENT_LEDGER_ABI, provider);
       locationLedger = new Contract(locationLedgerAddr, LOCATION_LEDGER_ABI, provider);
       inboxLedger = new Contract(inboxLedgerAddr, INBOX_LEDGER_ABI, provider);
       gameEngine = new Contract(engineAddr, GAME_ENGINE_ABI, provider);
+      evaluationLedger = new Contract(evalLedgerAddr, EVALUATION_LEDGER_ABI, provider);
       resolved = true;
     };
 
@@ -140,7 +151,7 @@ export function useGameEngine() {
             const keys: string[] = await gameEngine.getAllHexKeys();
             const agentHexMap: Record<number, HexData[]> = {};
             await Promise.all(keys.map(async (k: string) => {
-              const [ownerId, locationId, q, r, mineCount, arsenalCount, lastHarvest, reserve, happiness, happinessUpdatedAt] =
+              const [ownerId, locationId, q, r, mineCount, arsenalCount, lastHarvest, reserve, happiness] =
                 await gameEngine.getHex(k);
               const hd: HexData = {
                 hexKey: k, ownerId: Number(ownerId), locationId: Number(locationId),
@@ -180,6 +191,44 @@ export function useGameEngine() {
             const raw = await inboxLedger.readRecent(id, 10);
             setInbox(id, parseBoardResult(raw));
           })),
+          // Chronicles
+          (async () => {
+            const chronicleMap: Record<number, ChronicleData> = {};
+            await Promise.all(agentIds.map(async (aId: bigint) => {
+              const id = Number(aId);
+              try {
+                const [score, count, ratingSum] = await gameEngine.getChronicle(id);
+                const c = Number(count);
+                chronicleMap[id] = {
+                  score: Number(score),
+                  count: c,
+                  avgRating: c > 0 ? Number(ratingSum) / c : 0,
+                };
+              } catch {
+                chronicleMap[id] = { score: 0, count: 0, avgRating: 0 };
+              }
+            }));
+            setChronicles(chronicleMap);
+          })(),
+          // Evaluations (separate from memories)
+          Promise.all(agentIds.map(async (aId: bigint) => {
+            const id = Number(aId);
+            try {
+              const raw = await evaluationLedger.readRecent(id, 20);
+              setEvaluation(id, parseBoardResult(raw));
+            } catch { /* evaluation ledger may not exist on old deploys */ }
+          })),
+          // World Bible
+          (async () => {
+            try {
+              const [wbLocationId] = await gameEngine.getWorldBible();
+              const locId = Number(wbLocationId);
+              if (locId > 0) {
+                const raw = await locationLedger.readRecent(locId, 20);
+                setWorldBible(parseBoardResult(raw));
+              }
+            } catch { /* world bible may not exist */ }
+          })(),
         ]);
 
         setWorldData(newAgents, newLocs, allHexes);
@@ -193,5 +242,5 @@ export function useGameEngine() {
     pullData();
     const interval = setInterval(pullData, 5000);
     return () => clearInterval(interval);
-  }, [setWorldData, setAgentHexes, setMemories, setLocationBoard, setInbox]);
+  }, [setWorldData, setAgentHexes, setMemories, setLocationBoard, setInbox, setChronicles, setEvaluation, setWorldBible]);
 }

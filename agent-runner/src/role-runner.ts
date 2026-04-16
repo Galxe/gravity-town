@@ -9,6 +9,7 @@ import {
   extractTextContent,
   stringify,
   nowIso,
+  ApiRateLimiter,
 } from "./llm.js";
 
 export type RoleStatus = "idle" | "thinking" | "acting" | "compressing" | "stopped";
@@ -28,6 +29,7 @@ export class RoleRunner {
   private accountConfig: AccountConfig;
   private mcpTools: McpTool[];
   private toolDefs: ToolDefinition[];
+  private rateLimiter: ApiRateLimiter;
 
   /** Persistent conversation history across cycles */
   private conversationHistory: Message[] = [];
@@ -45,7 +47,8 @@ export class RoleRunner {
     globalConfig: GlobalConfig,
     accountConfig: AccountConfig,
     agentId: number,
-    mcpTools: McpTool[]
+    mcpTools: McpTool[],
+    rateLimiter: ApiRateLimiter
   ) {
     this.client = client;
     this.globalConfig = globalConfig;
@@ -55,6 +58,7 @@ export class RoleRunner {
     this.label = accountConfig.label;
     this.mcpTools = mcpTools;
     this.toolDefs = createToolDefinitions(agentId, mcpTools);
+    this.rateLimiter = rateLimiter;
 
     this.heartbeatMs = accountConfig.heartbeatMs ?? globalConfig.defaultLoopDelayMs;
     this.maxToolRoundsPerCycle = accountConfig.maxToolRoundsPerCycle ?? globalConfig.defaultMaxToolRoundsPerCycle;
@@ -175,6 +179,8 @@ export class RoleRunner {
     ].join("\n");
 
     const model = this.accountConfig.llmModel || this.globalConfig.llmModel;
+    await this.rateLimiter.acquire(this.accountId);
+    this.log("API call acquired (memory compression)");
     const completion = await createChatCompletion(
       this.globalConfig.llmApiKey,
       this.globalConfig.llmBaseUrl,
@@ -231,6 +237,8 @@ export class RoleRunner {
 
     for (let round = 1; round <= this.maxToolRoundsPerCycle; round += 1) {
       this._status = "thinking";
+      await this.rateLimiter.acquire(this.accountId);
+      this.log(`API call acquired (round ${round}/${this.maxToolRoundsPerCycle})`);
       const completion = await createChatCompletion(
         this.globalConfig.llmApiKey,
         this.globalConfig.llmBaseUrl,
