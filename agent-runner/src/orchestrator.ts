@@ -73,19 +73,42 @@ export class Orchestrator {
     const enabled = accounts.filter((a) => a.enabled);
     this.log(`starting ${enabled.length} role(s)...`);
 
-    for (let i = 0; i < enabled.length; i++) {
-      const account = enabled[i];
+    // Phase 1: Create/resolve all agents on-chain BEFORE starting any cycles.
+    // This prevents concurrent agent cycles from interfering with agent creation RPCs.
+    const resolved: Array<{ account: AccountConfig; agentId: number }> = [];
+    for (const account of enabled) {
       try {
-        const runner = await this.addRole(account);
-        // Stagger: each agent starts offset by heartbeat / N so they spread evenly
-        if (i > 0) {
-          const staggerMs = Math.round(runner.heartbeatMs / enabled.length) * i;
-          runner.rescheduleWithDelay(staggerMs);
-          this.log(`staggered "${account.label}" by ${staggerMs}ms`);
-        }
+        const agentId = await ensureAgent(this.client, {
+          agentId: account.agentId,
+          agentName: account.agentName,
+          agentPersonality: account.agentPersonality,
+          agentStats: account.agentStats,
+          agentStartLocation: account.agentStartLocation,
+        });
+        this.log(`resolved "${account.label}" → agent #${agentId}`);
+        resolved.push({ account, agentId });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        this.log(`failed to start role "${account.label}": ${message}`, true);
+        this.log(`failed to resolve "${account.label}": ${message}`, true);
+      }
+    }
+
+    // Phase 2: Create runners and start cycles with staggering.
+    for (let i = 0; i < resolved.length; i++) {
+      const { account, agentId } = resolved[i];
+      const runner = new RoleRunner(
+        this.client,
+        this.globalConfig,
+        account,
+        agentId,
+        this.mcpTools,
+        this.rateLimiter
+      );
+      this.runners.set(account.id, runner);
+      runner.start();
+      if (i > 0) {
+        const staggerMs = Math.round(runner.heartbeatMs / resolved.length) * i;
+        runner.rescheduleWithDelay(staggerMs);
       }
     }
 
