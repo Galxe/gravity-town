@@ -193,6 +193,11 @@ export class ChainClient {
         }
       } catch {}
     }
+    // Fallback: if event parsing failed, look up the agent by name
+    if (!agentId) {
+      const id = await this.findAgentByName(name, ownerAddr);
+      if (id > 0) agentId = String(id);
+    }
     return { agentId, hexKey, txHash: receipt.transactionHash };
   }
 
