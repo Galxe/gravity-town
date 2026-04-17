@@ -42,6 +42,34 @@ gravity-deploy:
     echo "  2. just agent-start config/gravity.toml"
     echo "  3. just frontend-start gravity"
 
+# Upgrade contracts on Gravity Testnet (keeps proxy addresses, only swaps implementations)
+[working-directory: "contracts"]
+gravity-upgrade:
+    #!/usr/bin/env bash
+    source ../agent-runner/config/gravity.env 2>/dev/null || true
+    PRIVATE_KEY=${PRIVATE_KEY:-"0x859b68e0eddb79598540a35dcd0f7cf4df7c7b8cad35151177439268566cbfa9"} \
+    ROUTER_ADDRESS=$(grep -o '0x[0-9a-fA-F]*' ../frontend/config/gravity.json | head -1) \
+    forge script script/Upgrade.s.sol \
+        --rpc-url https://rpc-testnet.gravity.xyz \
+        --broadcast \
+        -v
+    echo ""
+    echo "All implementations upgraded. Proxy addresses unchanged."
+
+# Upgrade contracts on local Anvil
+[working-directory: "contracts"]
+anvil-upgrade:
+    #!/usr/bin/env bash
+    PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
+    ROUTER_ADDRESS=$(grep -o '0x[0-9a-fA-F]*' ../deployed-addresses.json) \
+    NO_PROXY="*" HTTP_PROXY="" HTTPS_PROXY="" \
+    forge script script/Upgrade.s.sol \
+        --rpc-url http://127.0.0.1:8545 \
+        --broadcast \
+        -v
+    echo ""
+    echo "All implementations upgraded. Proxy addresses unchanged."
+
 # -- Agent runner --
 
 # Start agent runner
