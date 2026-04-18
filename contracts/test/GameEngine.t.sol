@@ -474,6 +474,176 @@ contract GameEngineTest is Test {
     }
 
     // ══════════════════════════════════════════════════
+    //              UNIFIED DEBATE (normal + oracle)
+    // ══════════════════════════════════════════════════
+
+    function _startNormalDebate(uint256 agentId, address owner) internal returns (uint256 entryId) {
+        bytes32 hexKey = engine.getAgentHexKeys(agentId)[0];
+        (, uint256 locId, , , , , , , , ) = engine.getHex(hexKey);
+        vm.prank(owner);
+        registry.moveAgent(agentId, locId);
+        vm.prank(owner);
+        entryId = engine.startDebate(agentId, "This hex is the best!");
+    }
+
+    function test_NormalDebateWithFreeVote() public {
+        (uint256 a1, ) = _createAgent(player1);
+        (uint256 a2, ) = _createAgent(player2);
+
+        uint256 entryId = _startNormalDebate(a1, player1);
+
+        // Vote with 0 ore (free)
+        vm.prank(player2);
+        engine.voteOnDebate(a2, entryId, true, "I agree", 0);
+
+        (,,, uint256 sup, uint256 opp, uint256 deadline, bool resolved,
+         bool isOracle, uint256 supOre, uint256 oppOre, bool expired) = engine.getDebate(entryId);
+        assertEq(sup, 1);
+        assertEq(opp, 0);
+        assertFalse(isOracle);
+        assertEq(supOre, 0);
+        assertFalse(resolved);
+
+        // Resolve after deadline
+        vm.warp(block.timestamp + 3601);
+        engine.resolveDebate(entryId, false); // outcomeOverride ignored for normal debates
+        (,,,,, , resolved,,,, ) = engine.getDebate(entryId);
+        assertTrue(resolved);
+    }
+
+    function test_NormalDebateWithOreBet() public {
+        (uint256 a1, ) = _createAgent(player1);
+        (uint256 a2, ) = _createAgent(player2);
+
+        uint256 entryId = _startNormalDebate(a1, player1);
+
+        // Vote with ore
+        uint256 oreBefore = engine.orePool(a2);
+        vm.prank(player2);
+        engine.voteOnDebate(a2, entryId, true, "I agree and put my ore on it", 50);
+        assertEq(engine.orePool(a2), oreBefore - 50);
+
+        (,,,,,,,, uint256 supOre, uint256 oppOre,) = engine.getDebate(entryId);
+        assertEq(supOre, 50);
+        assertEq(oppOre, 0);
+
+        // Resolve — support wins, no tax (normal debate), a2 gets ore back
+        vm.warp(block.timestamp + 3601);
+        engine.resolveDebate(entryId, false);
+        // a2 is only bettor on winning side, gets 50 back (no loser pool)
+        assertEq(engine.orePool(a2), oreBefore);
+    }
+
+    function test_OracleDebateFullLifecycle() public {
+        (uint256 oracle, ) = _createAgent(player1);
+        (uint256 bettor1, ) = _createAgent(player2);
+        address player3 = address(0x3);
+        (uint256 bettor2, ) = _createAgent(player3);
+
+        engine.setOracleAgent(oracle);
+
+        // Oracle starts a debate (auto-detected as oracle debate, 4hr)
+        uint256 entryId = _startNormalDebate(oracle, player1);
+
+        (,,,,, uint256 deadline,,bool isOracle,,,) = engine.getDebate(entryId);
+        assertTrue(isOracle);
+        assertEq(deadline, block.timestamp + 14400); // 4hr
+
+        // Bettor1 votes YES with 50 ore
+        uint256 b1OreBefore = engine.orePool(bettor1);
+        vm.prank(player2);
+        engine.voteOnDebate(bettor1, entryId, true, "BTC will moon", 50);
+        assertEq(engine.orePool(bettor1), b1OreBefore - 50);
+
+        // Bettor2 votes NO with 100 ore
+        uint256 b2OreBefore = engine.orePool(bettor2);
+        vm.prank(player3);
+        engine.voteOnDebate(bettor2, entryId, false, "BTC will dump", 100);
+        assertEq(engine.orePool(bettor2), b2OreBefore - 100);
+
+        // Check totals
+        (,,,,,,,, uint256 supOre, uint256 oppOre,) = engine.getDebate(entryId);
+        assertEq(supOre, 50);
+        assertEq(oppOre, 100);
+
+        // Fast-forward past 4hr deadline
+        vm.warp(block.timestamp + 14401);
+
+        // Resolve: oracle says support (YES) wins
+        uint256 oracleOreBefore = engine.orePool(oracle);
+        uint256 b1OreBeforeResolve = engine.orePool(bettor1);
+        engine.resolveDebate(entryId, true);
+
+        // Oracle gets 10% tax: 100 * 10% = 10
+        assertGe(engine.orePool(oracle), oracleOreBefore + 10);
+        // Bettor1 gets 50 + 90 = 140
+        assertEq(engine.orePool(bettor1), b1OreBeforeResolve + 140);
+        // Bettor2 lost everything
+        assertEq(engine.orePool(bettor2), b2OreBefore - 100);
+    }
+
+    function test_OracleDebateRequiresOreBet() public {
+        (uint256 oracle, ) = _createAgent(player1);
+        (uint256 bettor, ) = _createAgent(player2);
+        engine.setOracleAgent(oracle);
+
+        uint256 entryId = _startNormalDebate(oracle, player1);
+
+        // Free vote on oracle debate should fail
+        vm.prank(player2);
+        vm.expectRevert("oracle debate requires ore bet");
+        engine.voteOnDebate(bettor, entryId, true, "free vote", 0);
+    }
+
+    function test_OracleCannotVoteOwnDebate() public {
+        (uint256 oracle, ) = _createAgent(player1);
+        engine.setOracleAgent(oracle);
+
+        uint256 entryId = _startNormalDebate(oracle, player1);
+
+        vm.prank(player1);
+        vm.expectRevert("proposer cannot vote");
+        engine.voteOnDebate(oracle, entryId, true, "I vote for myself", 50);
+    }
+
+    function test_OracleDebateExpireRefunds() public {
+        (uint256 oracle, ) = _createAgent(player1);
+        (uint256 bettor, ) = _createAgent(player2);
+        engine.setOracleAgent(oracle);
+
+        uint256 entryId = _startNormalDebate(oracle, player1);
+
+        uint256 oreBefore = engine.orePool(bettor);
+        vm.prank(player2);
+        engine.voteOnDebate(bettor, entryId, true, "I bet", 50);
+        assertEq(engine.orePool(bettor), oreBefore - 50);
+
+        // Cannot expire during grace
+        vm.warp(block.timestamp + 14401);
+        vm.expectRevert("grace period active");
+        engine.expireDebate(entryId);
+
+        // After 24hr grace
+        vm.warp(block.timestamp + 86400);
+        engine.expireDebate(entryId);
+
+        // Full refund
+        assertEq(engine.orePool(bettor), oreBefore);
+
+        (,,,,,,,,,, bool expired) = engine.getDebate(entryId);
+        assertTrue(expired);
+    }
+
+    function test_NormalDebateCannotExpire() public {
+        (uint256 a1, ) = _createAgent(player1);
+        uint256 entryId = _startNormalDebate(a1, player1);
+
+        vm.warp(block.timestamp + 3601 + 86400);
+        vm.expectRevert("only oracle debates can expire");
+        engine.expireDebate(entryId);
+    }
+
+    // ══════════════════════════════════════════════════
     //              FULL GAME LOOP
     // ══════════════════════════════════════════════════
 

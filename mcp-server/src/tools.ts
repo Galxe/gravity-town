@@ -1,6 +1,7 @@
 // MCP Tool definitions — hex territory economy
 import { z } from "zod";
 import { ChainClient } from "./chain.js";
+import { searchWeb } from "./web.js";
 
 export function registerTools(server: any, chain: ChainClient) {
   // ============ Agent ============
@@ -389,57 +390,66 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "start_debate",
-    "Start a debate on the hex you're at. Opens a 5-minute voting window. Other agents can support or oppose. When resolved: support wins → hex happiness +10, oppose wins → hex happiness -15, tie → no change.",
+    "Start a debate on the hex you're at. Normal agents get a 1-hour debate. The Oracle agent automatically gets a 4-hour oracle debate where voters must bet ore. When resolved: support wins → happiness +10, oppose wins → happiness -15. If ore was bet, winners split losers' pool.",
     {
       agent_id: z.number().describe("Your agent ID"),
-      content: z.string().describe("Your debate statement / declaration"),
+      content: z.string().describe("Your debate statement / prediction question"),
     },
     async ({ agent_id, content }: any) => {
       const r = await chain.startDebate(agent_id, content);
+      const debate = await chain.getDebate(r.entryId);
+      const typeLabel = debate.isOracle ? "Oracle debate (4hr, ore bets required)" : "Normal debate (1hr)";
 
-      // Notify all other agents about the debate via inbox
+      // Notify all other agents
       try {
         const allAgents = await chain.listAgents();
         const author = allAgents.find((a: any) => a.id === agent_id);
         const authorName = author?.name || `Agent #${agent_id}`;
+        const category = debate.isOracle ? "prediction_notice" : "debate_notice";
+        const betHint = debate.isOracle
+          ? ` Bet ore with vote_debate(debate_entry_id=${r.entryId}, support=true/false, ore_amount=10-500).`
+          : ` Vote with vote_debate(debate_entry_id=${r.entryId}, support=true/false).`;
         for (const agent of allAgents) {
           if (agent.id === agent_id) continue;
           await chain.sendMessage(
-            agent_id, agent.id, 7, "debate_notice",
-            `${authorName} started a debate (entry #${r.entryId}): "${content.slice(0, 80)}". Move to their hex and vote with vote_debate(debate_entry_id=${r.entryId}, support=true/false). Deadline in 5 minutes!`,
+            agent_id, agent.id, 7, category,
+            `${authorName} started a ${debate.isOracle ? "prediction" : "debate"} (entry #${r.entryId}): "${content.slice(0, 80)}".${betHint}`,
             [agent_id]
           );
         }
       } catch (_) { /* best-effort notification */ }
 
-      return { content: [{ type: "text", text: `Debate started! Entry ID: ${r.entryId}. Deadline: ${r.deadline}. Others can now vote with vote_debate. tx: ${r.txHash}` }] };
+      return { content: [{ type: "text", text: `${typeLabel} started! Entry ID: ${r.entryId}. Deadline: ${r.deadline}. tx: ${r.txHash}` }] };
     }
   );
 
   server.tool(
     "vote_debate",
-    "Vote on an active debate. Must be at the same hex. Each agent can only vote once per debate. Proposer cannot vote on their own debate.",
+    "Vote on an active debate. Each agent votes once. Proposer cannot vote. Optionally bet ore (0 = free vote). Oracle debates REQUIRE ore bets (min 10, max 500). Winners split losers' ore pool when resolved.",
     {
       agent_id: z.number().describe("Your agent ID"),
       debate_entry_id: z.number().describe("Entry ID of the debate (from start_debate)"),
       support: z.boolean().describe("true = support, false = oppose"),
       content: z.string().describe("Your argument for/against"),
+      ore_amount: z.number().min(0).max(500).default(0).describe("Ore to bet (0 = free vote, 10-500 for ore bet). Oracle debates require >= 10."),
     },
-    async ({ agent_id, debate_entry_id, support, content }: any) => {
-      const r = await chain.voteOnDebate(agent_id, debate_entry_id, support, content);
+    async ({ agent_id, debate_entry_id, support, content, ore_amount }: any) => {
+      const r = await chain.voteOnDebate(agent_id, debate_entry_id, support, content, ore_amount || 0);
       const stance = support ? "SUPPORT" : "OPPOSE";
-      return { content: [{ type: "text", text: `Voted ${stance} on debate #${debate_entry_id}. tx: ${r.txHash}` }] };
+      const betInfo = ore_amount > 0 ? ` (bet ${ore_amount} ore)` : "";
+      return { content: [{ type: "text", text: `Voted ${stance}${betInfo} on debate #${debate_entry_id}. tx: ${r.txHash}` }] };
     }
   );
 
   server.tool(
     "resolve_debate",
-    "Resolve a debate after its 5-minute window expires. Anyone can call. Applies happiness change to the hex.",
+    "Resolve a debate after its deadline. Normal debates: anyone can call, outcome by vote count. Oracle debates: only operator can call, must specify outcome_override (true=support wins, false=oppose wins). Settles ore bets + applies happiness.",
     {
       debate_entry_id: z.number().describe("Entry ID of the debate to resolve"),
+      outcome_override: z.boolean().default(false).describe("For oracle debates: true = support wins, false = oppose wins. Ignored for normal debates."),
     },
-    async ({ debate_entry_id }: any) => {
-      const r = await chain.resolveDebate(debate_entry_id);
+    async ({ debate_entry_id, outcome_override }: any) => {
+      const r = await chain.resolveDebate(debate_entry_id, outcome_override || false);
       let outcome: string;
       if (r.happinessChange > 0) {
         outcome = `Support wins! Happiness +${r.happinessChange}.`;
@@ -454,13 +464,28 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "get_debate",
-    "View a debate's current state: votes, time remaining, resolved status.",
+    "View a debate's current state: votes, ore pools, time remaining, oracle status, resolved status.",
     {
       debate_entry_id: z.number().describe("Entry ID of the debate"),
     },
     async ({ debate_entry_id }: any) => {
       const r = await chain.getDebate(debate_entry_id);
       return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  // ============ Web Search ============
+
+  server.tool(
+    "web_search",
+    "Search the web for current news and events. Returns top results with titles, URLs, and snippets. Useful for the Oracle agent to find real-world events for prediction markets, and to verify outcomes.",
+    {
+      query: z.string().describe("Search query"),
+      max_results: z.number().default(5).describe("Max results to return (1-10)"),
+    },
+    async ({ query, max_results }: any) => {
+      const results = await searchWeb(query, max_results);
+      return { content: [{ type: "text", text: JSON.stringify(results, null, 2) }] };
     }
   );
 

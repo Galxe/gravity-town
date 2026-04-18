@@ -45,9 +45,14 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint256 public constant INCITE_COOLDOWN       = 30;    // seconds between incite attempts on same hex
 
     // ──────────────────── Debate Constants ────────────────────
-    uint256 public constant DEBATE_DURATION        = 3600;   // 1 hour
+    uint256 public constant DEBATE_DURATION        = 3600;   // 1 hour (normal debate)
+    uint256 public constant ORACLE_DEBATE_DURATION = 14400;  // 4 hours (oracle prediction debate)
     uint256 public constant DEBATE_BOOST           = 10;    // happiness gained when support wins
     uint256 public constant DEBATE_PENALTY         = 15;    // happiness lost when oppose wins
+    uint256 public constant DEBATE_MIN_BET         = 10;    // min ore bet per vote
+    uint256 public constant DEBATE_MAX_BET         = 500;   // max ore bet per vote
+    uint256 public constant DEBATE_TAX_PCT         = 10;    // 10% of loser pool goes to oracle (oracle debates only)
+    uint256 public constant DEBATE_EXPIRE_GRACE    = 86400; // 24hr grace for oracle to resolve
 
     // ──────────────────── Chronicle Constants ────────────────────
     uint256 public constant CHRONICLE_COOLDOWN     = 300;   // 5 minutes between same writer→target
@@ -95,6 +100,17 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     mapping(uint256 => Debate) public debates;                        // entryId → Debate
     mapping(uint256 => mapping(uint256 => bool)) public debateVoted;  // entryId → agentId → voted
 
+    // ──────────────────── Debate Ore Betting (extension) ────────────────────
+    // Votes can optionally include ore bets. Ore is deducted on vote, distributed on resolve.
+    mapping(uint256 => mapping(uint256 => uint256)) public debateBetSupport;  // entryId → agentId → ore on support
+    mapping(uint256 => mapping(uint256 => uint256)) public debateBetOppose;   // entryId → agentId → ore on oppose
+    mapping(uint256 => uint256) public debateTotalSupportOre;                 // entryId → total ore on support
+    mapping(uint256 => uint256) public debateTotalOpposeOre;                  // entryId → total ore on oppose
+    mapping(uint256 => uint256[]) public debateBettors;                       // entryId → bettor agentIds
+    mapping(uint256 => mapping(uint256 => bool)) public debateHasBet;         // entryId → agentId → hasBet
+    mapping(uint256 => bool) public debateIsOracle;                           // entryId → oracle-created debate
+    mapping(uint256 => bool) public debateExpired;                            // entryId → expired (refund mode)
+
     // ──────────────────── Chronicle Storage ────────────────────
 
     /// @notice Chronicle score per agent. Derived from ratings others give (1-10, midpoint 5).
@@ -115,6 +131,9 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice Minimum interval between World Bible entries (1 hour).
     uint256 public constant BIBLE_INTERVAL = 3600;
 
+    /// @notice Designated oracle agent ID (set by owner/operator)
+    uint256 public oracleAgentId;
+
     // ──────────────────── Events ────────────────────
 
     event AgentCreated(uint256 indexed agentId, bytes32 indexed hexKey, uint256 locationId);
@@ -132,8 +151,9 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event HexRebelled(bytes32 indexed hexKey, uint256 indexed oldOwner);
     event InciteResult(uint256 indexed agentId, bytes32 indexed targetHexKey, bool success, bool captured);
     event DebateStarted(uint256 indexed entryId, bytes32 indexed hexKey, uint256 indexed proposerId, uint256 deadline);
-    event DebateVoted(uint256 indexed entryId, uint256 indexed voterId, bool support);
+    event DebateVoted(uint256 indexed entryId, uint256 indexed voterId, bool support, uint256 oreAmount);
     event DebateResolved(uint256 indexed entryId, uint256 supportCount, uint256 opposeCount, int256 happinessChange);
+    event DebateExpired(uint256 indexed entryId);
     event ChronicleWritten(uint256 indexed authorId, uint256 indexed targetAgentId, uint8 rating);
     event WorldBibleWritten(uint256 indexed authorId, uint256 indexed entryId);
 
@@ -647,17 +667,23 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     // ══════════════════════════════════════════════════════════
-    //                     DEBATE
+    //                     DEBATE (unified: normal + oracle)
     // ══════════════════════════════════════════════════════════
 
-    /// @notice Start a debate on the hex you're currently at. Posts to location board.
+    /// @notice Set the designated oracle agent. Only operator/owner.
+    function setOracleAgent(uint256 agentId) external onlyOperatorOrOwner {
+        oracleAgentId = agentId;
+    }
+
+    /// @notice Start a debate on the hex you're currently at.
+    ///         If caller is the oracle agent, creates an oracle debate (4hr, ore bets, oracle resolves).
+    ///         Otherwise creates a normal debate (1hr, vote-only, anyone resolves).
     function startDebate(
         uint256 agentId,
         string calldata content
     ) external canControlAgent(agentId) returns (uint256 entryId) {
         (, , , uint256 agentLoc,) = registry.getAgent(agentId);
 
-        // Find which hex this location belongs to
         bytes32 hexKey_ = _hexKeyForLocation(agentLoc);
         require(hexKey_ != bytes32(0), "not at a hex");
 
@@ -665,76 +691,123 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         Hex storage h = hexes[hexKey_];
         require(h.ownerId != 0, "hex unclaimed");
 
-        // Post to location board with category "debate"
+        bool isOracle = (agentId == oracleAgentId && oracleAgentId != 0);
+        uint256 duration = isOracle ? ORACLE_DEBATE_DURATION : DEBATE_DURATION;
+
         uint256[] memory noRelated = new uint256[](0);
         (entryId,,) = locationLedger.write(agentId, 7, "debate", content, noRelated);
 
-        // Create debate record
         debates[entryId] = Debate({
             entryId: entryId,
             hexKey: hexKey_,
             proposerId: agentId,
             supportCount: 0,
             opposeCount: 0,
-            deadline: block.timestamp + DEBATE_DURATION,
+            deadline: block.timestamp + duration,
             resolved: false
         });
 
-        emit DebateStarted(entryId, hexKey_, agentId, block.timestamp + DEBATE_DURATION);
+        if (isOracle) {
+            debateIsOracle[entryId] = true;
+        }
+
+        emit DebateStarted(entryId, hexKey_, agentId, block.timestamp + duration);
     }
 
-    /// @notice Vote on an active debate. Must be at the same hex.
+    /// @notice Vote on an active debate. Optionally bet ore (0 = free vote).
+    ///         For oracle debates, ore bets are required (min 10, max 500).
     function voteOnDebate(
         uint256 agentId,
         uint256 debateEntryId,
         bool support,
-        string calldata content
+        string calldata content,
+        uint256 oreAmount
     ) external canControlAgent(agentId) returns (uint256 voteEntryId) {
         Debate storage d = debates[debateEntryId];
         require(d.entryId != 0, "debate not found");
         require(!d.resolved, "debate already resolved");
-        require(block.timestamp <= d.deadline, "debate expired");
+        require(!debateExpired[debateEntryId], "debate expired");
+        require(block.timestamp <= d.deadline, "voting closed");
         require(d.proposerId != agentId, "proposer cannot vote");
         require(!debateVoted[debateEntryId][agentId], "already voted");
 
-        // Remote voting allowed — no need to be at the hex
-
-        debateVoted[debateEntryId][agentId] = true;
-
-        if (support) {
-            d.supportCount++;
-        } else {
-            d.opposeCount++;
+        // Oracle debates: oracle cannot vote, ore bet required
+        if (debateIsOracle[debateEntryId]) {
+            require(agentId != oracleAgentId, "oracle cannot vote");
+            require(oreAmount >= DEBATE_MIN_BET, "oracle debate requires ore bet");
         }
 
-        // Post vote to location board for visibility
+        // Validate ore bet if any
+        if (oreAmount > 0) {
+            require(oreAmount >= DEBATE_MIN_BET, "below min bet");
+            require(oreAmount <= DEBATE_MAX_BET, "above max bet");
+            require(orePool[agentId] >= oreAmount, "insufficient ore");
+            orePool[agentId] -= oreAmount;
+
+            if (support) {
+                debateBetSupport[debateEntryId][agentId] += oreAmount;
+                debateTotalSupportOre[debateEntryId] += oreAmount;
+            } else {
+                debateBetOppose[debateEntryId][agentId] += oreAmount;
+                debateTotalOpposeOre[debateEntryId] += oreAmount;
+            }
+
+            if (!debateHasBet[debateEntryId][agentId]) {
+                debateHasBet[debateEntryId][agentId] = true;
+                debateBettors[debateEntryId].push(agentId);
+            }
+        }
+
+        debateVoted[debateEntryId][agentId] = true;
+        if (support) { d.supportCount++; } else { d.opposeCount++; }
+
         string memory category = support ? "support" : "oppose";
         uint256[] memory related = new uint256[](1);
         related[0] = d.proposerId;
         (voteEntryId,,) = locationLedger.write(agentId, 5, category, content, related);
 
-        emit DebateVoted(debateEntryId, agentId, support);
+        emit DebateVoted(debateEntryId, agentId, support, oreAmount);
     }
 
-    /// @notice Resolve a debate after its deadline. Anyone can call.
-    function resolveDebate(uint256 debateEntryId) external {
+    /// @notice Resolve a debate after its deadline.
+    ///         Normal debates: anyone can call, outcome by vote count.
+    ///         Oracle debates: only operator can call, must pass outcomeOverride.
+    function resolveDebate(uint256 debateEntryId, bool outcomeOverride) external {
         Debate storage d = debates[debateEntryId];
         require(d.entryId != 0, "debate not found");
         require(!d.resolved, "already resolved");
+        require(!debateExpired[debateEntryId], "already expired");
         require(block.timestamp > d.deadline, "debate still active");
 
+        bool isOracle = debateIsOracle[debateEntryId];
+        if (isOracle) {
+            require(_isOperator(msg.sender), "only operator for oracle debate");
+        }
+
         d.resolved = true;
+
+        // Determine winner: oracle debates use outcomeOverride, normal use vote count
+        bool supportWins;
+        bool opposeWins;
+        if (isOracle) {
+            supportWins = outcomeOverride;
+            opposeWins = !outcomeOverride;
+        } else {
+            supportWins = d.supportCount > d.opposeCount;
+            opposeWins = d.opposeCount > d.supportCount;
+        }
+
+        // 1. Apply happiness change
         _updateHappiness(d.hexKey);
         Hex storage h = hexes[d.hexKey];
-
         int256 happinessChange = int256(0);
 
         if (h.ownerId != 0) {
-            if (d.supportCount > d.opposeCount) {
+            if (supportWins) {
                 uint256 newHappy = h.happiness + DEBATE_BOOST;
                 h.happiness = newHappy > MAX_HAPPINESS ? MAX_HAPPINESS : newHappy;
                 happinessChange = int256(DEBATE_BOOST);
-            } else if (d.opposeCount > d.supportCount) {
+            } else if (opposeWins) {
                 if (h.happiness <= DEBATE_PENALTY) {
                     h.happiness = 0;
                     uint256 oldOwner = h.ownerId;
@@ -747,20 +820,97 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
                 }
                 happinessChange = -int256(DEBATE_PENALTY);
             }
-            // equal votes: no change
+        }
+
+        // 2. Settle ore bets (if any)
+        uint256 totalSupOre = debateTotalSupportOre[debateEntryId];
+        uint256 totalOppOre = debateTotalOpposeOre[debateEntryId];
+
+        if (totalSupOre + totalOppOre > 0) {
+            uint256 winPool = supportWins ? totalSupOre : totalOppOre;
+            uint256 losePool = supportWins ? totalOppOre : totalSupOre;
+
+            // Oracle debates: 10% tax to oracle
+            uint256 tax = isOracle ? (losePool * DEBATE_TAX_PCT) / 100 : 0;
+            uint256 distributable = losePool - tax;
+
+            if (isOracle && tax > 0) {
+                uint256 newOracleOre = orePool[oracleAgentId] + tax;
+                orePool[oracleAgentId] = newOracleOre > MAX_ORE_POOL ? MAX_ORE_POOL : newOracleOre;
+            }
+
+            if (winPool > 0) {
+                uint256[] storage bettors = debateBettors[debateEntryId];
+                for (uint256 i = 0; i < bettors.length; i++) {
+                    uint256 aid = bettors[i];
+                    uint256 winBet = supportWins
+                        ? debateBetSupport[debateEntryId][aid]
+                        : debateBetOppose[debateEntryId][aid];
+                    if (winBet > 0) {
+                        uint256 payout = winBet + (distributable * winBet) / winPool;
+                        uint256 newOre = orePool[aid] + payout;
+                        orePool[aid] = newOre > MAX_ORE_POOL ? MAX_ORE_POOL : newOre;
+                    }
+                }
+            } else if (isOracle) {
+                // No winners in oracle debate — oracle gets distributable
+                uint256 bonus = orePool[oracleAgentId] + distributable;
+                orePool[oracleAgentId] = bonus > MAX_ORE_POOL ? MAX_ORE_POOL : bonus;
+            } else {
+                // No winners in normal debate — refund all
+                _refundDebateBettors(debateEntryId);
+            }
         }
 
         emit DebateResolved(debateEntryId, d.supportCount, d.opposeCount, happinessChange);
     }
 
-    /// @notice View a debate's state.
+    /// @notice Expire an oracle debate that wasn't resolved. Refunds all bettors.
+    ///         Anyone can call after deadline + 24hr grace period. Only for oracle debates.
+    function expireDebate(uint256 debateEntryId) external {
+        Debate storage d = debates[debateEntryId];
+        require(d.entryId != 0, "debate not found");
+        require(!d.resolved, "already resolved");
+        require(!debateExpired[debateEntryId], "already expired");
+        require(debateIsOracle[debateEntryId], "only oracle debates can expire");
+        require(block.timestamp >= d.deadline + DEBATE_EXPIRE_GRACE, "grace period active");
+
+        debateExpired[debateEntryId] = true;
+        _refundDebateBettors(debateEntryId);
+
+        emit DebateExpired(debateEntryId);
+    }
+
+    /// @dev Refund all ore bettors for a debate.
+    function _refundDebateBettors(uint256 debateEntryId) internal {
+        uint256[] storage bettors = debateBettors[debateEntryId];
+        for (uint256 i = 0; i < bettors.length; i++) {
+            uint256 aid = bettors[i];
+            uint256 refund = debateBetSupport[debateEntryId][aid] + debateBetOppose[debateEntryId][aid];
+            if (refund > 0) {
+                uint256 newOre = orePool[aid] + refund;
+                orePool[aid] = newOre > MAX_ORE_POOL ? MAX_ORE_POOL : newOre;
+            }
+        }
+    }
+
+    /// @notice View a debate's state (unified).
     function getDebate(uint256 debateEntryId) external view returns (
         uint256 entryId, bytes32 hexKey, uint256 proposerId,
         uint256 supportCount, uint256 opposeCount,
-        uint256 deadline, bool resolved
+        uint256 deadline, bool resolved,
+        bool isOracle, uint256 totalSupportOre, uint256 totalOpposeOre, bool expired
     ) {
         Debate storage d = debates[debateEntryId];
-        return (d.entryId, d.hexKey, d.proposerId, d.supportCount, d.opposeCount, d.deadline, d.resolved);
+        return (
+            d.entryId, d.hexKey, d.proposerId,
+            d.supportCount, d.opposeCount,
+            d.deadline, d.resolved,
+            debateIsOracle[debateEntryId],
+            debateTotalSupportOre[debateEntryId],
+            debateTotalOpposeOre[debateEntryId],
+            debateExpired[debateEntryId]
+        );
     }
 
     /// @dev Find the hex key for a given locationId. Returns bytes32(0) if none.

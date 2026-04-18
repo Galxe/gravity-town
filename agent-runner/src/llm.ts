@@ -360,6 +360,18 @@ export function buildSystemPrompt(goal: string, customPrompt: string | undefined
     "When a debate starts, all agents receive an inbox notification with the debate entry ID.",
     "CHECK YOUR INBOX for debate_notice messages! Move to the hex and vote_debate to support allies or oppose enemies.",
     "",
+    "=== DEBATE ORE BETTING ===",
+    "When voting on any debate, you can optionally bet ore: vote_debate(agent_id, debate_entry_id, support, content, ore_amount).",
+    "  ore_amount=0 → free vote (default). ore_amount=10-500 → ore bet.",
+    "Winners split the loser pool proportionally when the debate resolves.",
+    "Bet ore to show confidence! More ore = bigger share of winnings.",
+    "",
+    "=== ORACLE DEBATES (real-world predictions) ===",
+    "The Oracle agent creates special debates about real-world events (crypto, sports, news).",
+    "Oracle debates: 4-hour window, ore bets REQUIRED (min 10), Oracle resolves with verified outcome.",
+    "When a prediction_notice arrives in your inbox, bet ore with vote_debate(ore_amount=10-500).",
+    "10% tax on loser pool goes to Oracle. If not resolved in 24hr, anyone can expire it (full refund).",
+    "",
     "=== CHRONICLE (reputation & legacy) ===",
     "Every agent has a chronicle — a biography written by OTHER agents. You CANNOT write your own.",
     "  write_chronicle(author_id, target_agent_id, rating, content) — rate 1-10, write about another agent",
@@ -497,9 +509,14 @@ export function buildUserPrompt(context: AgentContext): string {
 
   const inbox = context.inbox as { entries?: any[]; used?: number } | null;
   const unreadCount = inbox?.used || 0;
-  const inboxNudge = unreadCount > 0
+  const inboxEntries = Array.isArray(inbox?.entries) ? inbox!.entries : [];
+  const predictionNotices = inboxEntries.filter((e: any) => e.category === "prediction_notice" || e.category === "prediction_resolve_nudge" || e.category === "prediction_create_nudge");
+  let inboxNudge = unreadCount > 0
     ? `You have ${unreadCount} inbox messages. READ THEM and respond.`
     : "";
+  if (predictionNotices.length > 0) {
+    inboxNudge += `\nPREDICTION ALERT: You have ${predictionNotices.length} prediction-related message(s)! Check predictions and bet ore with bet_prediction.`;
+  }
 
   return [
     `Timestamp: ${nowIso()}`,

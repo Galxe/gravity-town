@@ -13,6 +13,7 @@ export class Orchestrator {
   private runners: Map<string, RoleRunner> = new Map();
   private rateLimiter: ApiRateLimiter;
   private bibleTimer: ReturnType<typeof setInterval> | null = null;
+  private predictionTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(globalConfig: GlobalConfig) {
     this.globalConfig = globalConfig;
@@ -116,6 +117,8 @@ export class Orchestrator {
 
     // Start World Bible timer (every 1 hour)
     this.startBibleTimer();
+    // Start Prediction Market timer (every 4 hours)
+    this.startPredictionTimer();
   }
 
   // ──────────────────── World Bible ────────────────────
@@ -239,10 +242,97 @@ export class Orchestrator {
     }
   }
 
+  // ──────────────────── Prediction Timer ────────────────────
+
+  private startPredictionTimer(): void {
+    // First nudge after 5 minutes, then every 4 hours
+    const initialDelay = 5 * 60 * 1000;
+    const interval = 4 * 60 * 60 * 1000;
+
+    const start = () => {
+      this.nudgeOracle();
+      this.predictionTimer = setInterval(() => this.nudgeOracle(), interval);
+    };
+    const handle = setTimeout(start, initialDelay) as unknown;
+    // Store for cleanup — overwrite once the interval starts
+    this.predictionTimer = handle as ReturnType<typeof setInterval>;
+
+    this.log(`Prediction timer: first nudge in 5min, then every 4h`);
+  }
+
+  private async nudgeOracle(): Promise<void> {
+    try {
+      // Find Oracle runner
+      const oracleRunner = Array.from(this.runners.values()).find(
+        (r) => r.label === "Oracle"
+      );
+      if (!oracleRunner) {
+        this.log("[prediction] Oracle agent not found among runners");
+        return;
+      }
+
+      const oracleId = oracleRunner.agentId;
+
+      // Check for unresolved oracle debates by scanning recent debate entry IDs
+      let hasActiveOracleDebate = false;
+      let unresolvedPastDeadline = false;
+      let unresolvedId = 0;
+
+      // Scan recent debate entry IDs (check last 20)
+      for (let tryId = 1; tryId <= 20; tryId++) {
+        try {
+          const debate = parseToolJson(
+            await callMcpTool(this.client, "get_debate", { debate_entry_id: tryId })
+          ) as { entryId?: number; resolved?: boolean; expired?: boolean; isOracle?: boolean; timeLeft?: number } | null;
+
+          if (!debate || debate.entryId === 0) continue;
+          if (!debate.isOracle) continue;
+          if (debate.resolved || debate.expired) continue;
+
+          hasActiveOracleDebate = true;
+          if (debate.timeLeft === 0) {
+            unresolvedPastDeadline = true;
+            unresolvedId = tryId;
+          }
+        } catch {
+          break;
+        }
+      }
+
+      if (unresolvedPastDeadline) {
+        this.log(`[prediction] nudging Oracle to resolve debate #${unresolvedId}`);
+        await callMcpTool(this.client, "send_message", {
+          from_agent: oracleId,
+          to_agent: oracleId,
+          importance: 9,
+          category: "prediction_resolve_nudge",
+          content: `URGENT: Oracle debate #${unresolvedId} is past deadline and needs resolution. Use web_search to verify the outcome, then call resolve_debate(debate_entry_id=${unresolvedId}, outcome_override=true/false).`,
+          related_agents: [],
+        });
+      } else if (!hasActiveOracleDebate) {
+        this.log("[prediction] nudging Oracle to create a new oracle debate");
+        await callMcpTool(this.client, "send_message", {
+          from_agent: oracleId,
+          to_agent: oracleId,
+          importance: 7,
+          category: "prediction_create_nudge",
+          content: "No active oracle debates. Use web_search to find interesting current events and create a new prediction debate with start_debate.",
+          related_agents: [],
+        });
+      } else {
+        this.log("[prediction] active oracle debate in progress, no nudge needed");
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.log(`[prediction] nudge failed: ${msg}`, true);
+    }
+  }
+
   /** Stop all roles and disconnect */
   async shutdown(): Promise<void> {
     this.log("shutting down...");
     if (this.bibleTimer) clearInterval(this.bibleTimer);
+    if (this.predictionTimer) clearInterval(this.predictionTimer);
     for (const [id, runner] of this.runners) {
       runner.stop();
     }
