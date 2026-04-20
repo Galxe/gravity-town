@@ -62,14 +62,18 @@ const GAME_ENGINE_ABI = [
   "event InciteResult(uint256 indexed agentId, bytes32 indexed targetHexKey, bool success, bool captured)",
   "function claimNeutral(uint256 agentId, bytes32 hexKey)",
   "function inciteRebellion(uint256 agentId, bytes32 targetHexKey)",
-  // Debate
+  // Debate (unified: normal + oracle)
   "event DebateStarted(uint256 indexed entryId, bytes32 indexed hexKey, uint256 indexed proposerId, uint256 deadline)",
-  "event DebateVoted(uint256 indexed entryId, uint256 indexed voterId, bool support)",
+  "event DebateVoted(uint256 indexed entryId, uint256 indexed voterId, bool support, uint256 oreAmount)",
   "event DebateResolved(uint256 indexed entryId, uint256 supportCount, uint256 opposeCount, int256 happinessChange)",
+  "event DebateExpired(uint256 indexed entryId)",
+  "function setOracleAgent(uint256 agentId)",
   "function startDebate(uint256 agentId, string content) returns (uint256 entryId)",
-  "function voteOnDebate(uint256 agentId, uint256 debateEntryId, bool support, string content) returns (uint256 voteEntryId)",
-  "function resolveDebate(uint256 debateEntryId)",
-  "function getDebate(uint256 debateEntryId) view returns (uint256 entryId, bytes32 hexKey, uint256 proposerId, uint256 supportCount, uint256 opposeCount, uint256 deadline, bool resolved)",
+  "function voteOnDebate(uint256 agentId, uint256 debateEntryId, bool support, string content, uint256 oreAmount) returns (uint256 voteEntryId)",
+  "function resolveDebate(uint256 debateEntryId, bool outcomeOverride)",
+  "function expireDebate(uint256 debateEntryId)",
+  "function getDebate(uint256 debateEntryId) view returns (uint256 entryId, bytes32 hexKey, uint256 proposerId, uint256 supportCount, uint256 opposeCount, uint256 deadline, bool resolved, bool isOracle, uint256 totalSupportOre, uint256 totalOpposeOre, bool expired)",
+  "function oracleAgentId() view returns (uint256)",
   // Chronicle
   "event ChronicleWritten(uint256 indexed authorId, uint256 indexed targetAgentId, uint8 rating)",
   "function writeChronicle(uint256 authorId, uint256 targetAgentId, uint8 rating, string content) returns (uint256 entryId)",
@@ -487,14 +491,14 @@ export class ChainClient {
     return { entryId, deadline, txHash: receipt.transactionHash };
   }
 
-  async voteOnDebate(agentId: number, debateEntryId: number, support: boolean, content: string) {
-    const tx = await this.gameEngine.voteOnDebate(agentId, debateEntryId, support, content);
+  async voteOnDebate(agentId: number, debateEntryId: number, support: boolean, content: string, oreAmount: number) {
+    const tx = await this.gameEngine.voteOnDebate(agentId, debateEntryId, support, content, oreAmount);
     const receipt = await tx.wait();
     return { txHash: receipt.transactionHash };
   }
 
-  async resolveDebate(debateEntryId: number) {
-    const tx = await this.gameEngine.resolveDebate(debateEntryId);
+  async resolveDebate(debateEntryId: number, outcomeOverride: boolean) {
+    const tx = await this.gameEngine.resolveDebate(debateEntryId, outcomeOverride);
     const receipt = await tx.wait();
     let result = { supportCount: 0, opposeCount: 0, happinessChange: 0 };
     const iface = this.gameEngine.interface;
@@ -515,14 +519,21 @@ export class ChainClient {
   }
 
   async getDebate(debateEntryId: number) {
-    const [entryId, hexKey, proposerId, supportCount, opposeCount, deadline, resolved] =
+    const [entryId, hexKey, proposerId, supportCount, opposeCount, deadline, resolved, isOracle, totalSupportOre, totalOpposeOre, expired] =
       await this.gameEngine.getDebate(debateEntryId);
     return {
       entryId: Number(entryId), hexKey, proposerId: Number(proposerId),
       supportCount: Number(supportCount), opposeCount: Number(opposeCount),
       deadline: Number(deadline), resolved,
+      isOracle, totalSupportOre: Number(totalSupportOre), totalOpposeOre: Number(totalOpposeOre), expired,
       timeLeft: Math.max(0, Number(deadline) - Math.floor(Date.now() / 1000)),
     };
+  }
+
+  async expireDebate(debateEntryId: number) {
+    const tx = await this.gameEngine.expireDebate(debateEntryId);
+    const receipt = await tx.wait();
+    return { txHash: receipt.transactionHash };
   }
 
   // ============ Chronicle ============
@@ -583,5 +594,17 @@ export class ChainClient {
     const { locationId } = await this.getWorldBible();
     if (locationId === 0) return { entries: [], used: 0, capacity: 128 };
     return this.readLocation(locationId, count);
+  }
+
+  // ============ Oracle ============
+
+  async setOracleAgent(agentId: number) {
+    const tx = await this.gameEngine.setOracleAgent(agentId);
+    const receipt = await tx.wait();
+    return { txHash: receipt.transactionHash };
+  }
+
+  async getOracleAgentId(): Promise<number> {
+    return Number(await this.gameEngine.oracleAgentId());
   }
 }

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useGameStore, Entry } from '../store/useGameStore';
-import { BookOpen, Trophy, Swords, ScrollText, MessageSquareQuote, Crown } from 'lucide-react';
+import { BookOpen, Trophy, ScrollText, MessageSquareQuote, Crown } from 'lucide-react';
 import { PALETTE } from '../game/constants';
 import { hexToPixel, LOCATION_SPREAD } from '../game/world/HexGrid';
 import Card from './Card';
