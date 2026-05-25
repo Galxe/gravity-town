@@ -140,6 +140,9 @@ export class ChainClient {
   gameEngine: ethers.Contract = null!;
   evaluationLedger: ethers.Contract = null!;
   private _ready: Promise<void>;
+  /** Last oracle debate created this session — surfaced to agents every cycle so
+   *  betting visibility does not depend on the perishable inbox notice. */
+  lastOracleDebateId: number = 0;
 
   constructor(config: ChainConfig) {
     this.provider = config.chainId
@@ -537,6 +540,25 @@ export class ChainClient {
       isOracle, totalSupportOre: Number(totalSupportOre), totalOpposeOre: Number(totalOpposeOre), expired,
       timeLeft: Math.max(0, Number(deadline) - Math.floor(Date.now() / 1000)),
     };
+  }
+
+  /** Record the most recent oracle debate so it can be surfaced to all agents. */
+  noteOracleDebate(entryId: number) {
+    this.lastOracleDebateId = entryId;
+  }
+
+  /** Return the current active (unresolved, unexpired, not-yet-deadline) oracle
+   *  debate, or null. Lets agents see and bet on it every cycle regardless of
+   *  inbox churn. */
+  async getActiveOracleDebate() {
+    if (!this.lastOracleDebateId) return null;
+    try {
+      const d = await this.getDebate(this.lastOracleDebateId);
+      if (!d.entryId || d.resolved || d.expired || d.timeLeft <= 0) return null;
+      return d;
+    } catch {
+      return null;
+    }
   }
 
   async expireDebate(debateEntryId: number) {

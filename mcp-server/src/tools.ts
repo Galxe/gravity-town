@@ -400,24 +400,27 @@ export function registerTools(server: any, chain: ChainClient) {
       const debate = await chain.getDebate(r.entryId);
       const typeLabel = debate.isOracle ? "Oracle debate (4hr, ore bets required)" : "Normal debate (1hr)";
 
-      // Notify all other agents
-      try {
-        const allAgents = await chain.listAgents();
-        const author = allAgents.find((a: any) => a.id === agent_id);
-        const authorName = author?.name || `Agent #${agent_id}`;
-        const category = debate.isOracle ? "prediction_notice" : "debate_notice";
-        const betHint = debate.isOracle
-          ? ` Bet ore with vote_debate(debate_entry_id=${r.entryId}, support=true/false, ore_amount=10-500).`
-          : ` Vote with vote_debate(debate_entry_id=${r.entryId}, support=true/false).`;
-        for (const agent of allAgents) {
-          if (agent.id === agent_id) continue;
-          await chain.sendMessage(
-            agent_id, agent.id, 7, category,
-            `${authorName} started a ${debate.isOracle ? "prediction" : "debate"} (entry #${r.entryId}): "${content.slice(0, 80)}".${betHint}`,
-            [agent_id]
-          );
-        }
-      } catch (_) { /* best-effort notification */ }
+      // Notify agents — ONLY oracle debates broadcast globally. Normal debates are
+      // discoverable via read_location at their hex; broadcasting all of them floods
+      // the 64-slot inboxes and evicts the long-lived oracle prediction notices
+      // before their 4h betting window closes.
+      if (debate.isOracle) {
+        chain.noteOracleDebate(r.entryId);
+        try {
+          const allAgents = await chain.listAgents();
+          const author = allAgents.find((a: any) => a.id === agent_id);
+          const authorName = author?.name || `Agent #${agent_id}`;
+          const betHint = ` Bet ore with vote_debate(debate_entry_id=${r.entryId}, support=true/false, ore_amount=10-500). Winners split the losers' ore pool.`;
+          for (const agent of allAgents) {
+            if (agent.id === agent_id) continue;
+            await chain.sendMessage(
+              agent_id, agent.id, 9, "prediction_notice",
+              `${authorName} started a prediction (entry #${r.entryId}): "${content.slice(0, 80)}".${betHint}`,
+              [agent_id]
+            );
+          }
+        } catch (_) { /* best-effort notification */ }
+      }
 
       return { content: [{ type: "text", text: `${typeLabel} started! Entry ID: ${r.entryId}. Deadline: ${r.deadline}. tx: ${r.txHash}` }] };
     }
@@ -471,6 +474,16 @@ export function registerTools(server: any, chain: ChainClient) {
     async ({ debate_entry_id }: any) => {
       const r = await chain.getDebate(debate_entry_id);
       return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "get_active_oracle_debate",
+    "Get the current active Oracle prediction debate (if any) — the prophecy open for ore betting right now. Returns null if none is active. Use this each cycle to find prophecies to bet on without relying on inbox notices.",
+    {},
+    async () => {
+      const r = await chain.getActiveOracleDebate();
+      return { content: [{ type: "text", text: JSON.stringify(r) }] };
     }
   );
 

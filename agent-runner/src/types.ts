@@ -52,6 +52,7 @@ export interface AgentContext {
   locationBoard: unknown;
   inbox: unknown;
   myHexes: unknown;       // agent's owned hex territories
+  activeOracleDebate?: unknown;  // current open Oracle prediction (for betting), or null
 }
 
 export interface AgentSnapshot {
