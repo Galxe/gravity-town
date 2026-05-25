@@ -206,8 +206,17 @@ export class ChainClient {
   }
 
   async findAgentByName(name: string, ownerAddr: string): Promise<number> {
-    const id = Number(await this.registry.getAgentByName(ownerAddr, name));
-    return id; // 0 = not found
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        const id = Number(await this.registry.getAgentByName(ownerAddr, name));
+        return id; // 0 = not found
+      } catch (err) {
+        lastErr = err;
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
+    throw lastErr;
   }
 
   async getAgentsByOwner(ownerAddr: string) {

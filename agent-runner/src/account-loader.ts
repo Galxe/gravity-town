@@ -23,6 +23,7 @@ interface TomlConfig {
     server_url?: string;
     router_address?: string;
     chain_id?: number;
+    tavily_api_key?: string;
   };
   runner?: {
     loop_delay_ms?: number;
@@ -108,6 +109,9 @@ function loadMcpServerConfig(): McpServerConfig | undefined {
 
   const chainId = cfg.mcp?.chain_id ? Number(cfg.mcp.chain_id) : undefined;
 
+  // Tavily key enables the web_search tool. Config wins, then env fallback.
+  const tavilyApiKey = cfg.mcp?.tavily_api_key || process.env.TAVILY_API_KEY || undefined;
+
   return {
     mcpServerDir: resolve(__dirname, "../../mcp-server"),
     privateKey,
@@ -117,6 +121,7 @@ function loadMcpServerConfig(): McpServerConfig | undefined {
     mcpHost,
     mcpPort,
     mcpPath,
+    tavilyApiKey,
   };
 }
 
@@ -168,6 +173,7 @@ export function loadAccounts(): AccountConfig[] {
       agentStartLocation: acc.agentStartLocation ?? 1,
       agentGoal: acc.agentGoal || "Observe the world, interact with other agents, leave valuable memories, and drive the world state forward.",
       agentSystemPrompt: acc.agentSystemPrompt,
+      agentSystemPromptMode: acc.agentSystemPromptMode,
       llmModel: acc.llmModel,
       heartbeatMs: acc.heartbeatMs,
       maxToolRoundsPerCycle: acc.maxToolRoundsPerCycle,

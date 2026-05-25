@@ -20,6 +20,11 @@ router_address = "0x96EBC8b846795d19130e1Dd944B61Ab90696bA1a"
 # private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 # router_address is auto-loaded from ../deployed-addresses.json after `just anvil-deploy`
 
+# Tavily web search key — enables the web_search tool used by the Oracle agent for
+# real-world prophecies (out-of-game prediction markets). Free tier at https://tavily.com.
+# Optional: leave unset (or use env TAVILY_API_KEY) to disable web search.
+# tavily_api_key = "tvly-..."
+
 # MCP server bind settings
 host = "127.0.0.1"
 port = 3005
