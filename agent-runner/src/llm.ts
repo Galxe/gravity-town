@@ -300,8 +300,23 @@ export async function createChatCompletion(
   }
 }
 
-export function buildSystemPrompt(goal: string, customPrompt: string | undefined, context: AgentContext): string {
+export function buildSystemPrompt(
+  goal: string,
+  customPrompt: string | undefined,
+  context: AgentContext,
+  mode: "append" | "replace" = "append"
+): string {
   const self = (typeof context.self === "object" && context.self ? context.self : {}) as AgentSnapshot;
+  if (mode === "replace" && customPrompt) {
+    const preamble = [
+      "You are an autonomous agent in Gravity Town — a hex-territory PvP world on-chain.",
+      `You are ${self.name || "unknown"}.`,
+      "Behave like an in-world character, not an assistant. ALWAYS call tools — do not describe intentions.",
+      goal ? `Operator goal: ${goal}` : "",
+      "",
+    ].filter(Boolean).join("\n");
+    return `${preamble}\n${customPrompt}`;
+  }
   const lines = [
     "You are an autonomous agent in Gravity Town — a hex-territory PvP world on-chain.",
     `You are ${self.name || "unknown"}. You arrived in this world with nothing but your wits.`,

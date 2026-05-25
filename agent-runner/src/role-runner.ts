@@ -217,7 +217,8 @@ export class RoleRunner {
       content: buildSystemPrompt(
         this.accountConfig.agentGoal,
         this.accountConfig.agentSystemPrompt,
-        context
+        context,
+        this.accountConfig.agentSystemPromptMode ?? "append"
       ),
     };
 

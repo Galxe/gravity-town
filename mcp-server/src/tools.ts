@@ -474,6 +474,28 @@ export function registerTools(server: any, chain: ChainClient) {
     }
   );
 
+  server.tool(
+    "set_oracle_agent",
+    "Designate the on-chain Oracle agent (operator/owner only). Once set, that agent's start_debate creates 4-hour oracle debates with required ore bets. Pass agent_id=0 to clear.",
+    {
+      agent_id: z.number().describe("Agent ID to designate as Oracle (0 to clear)"),
+    },
+    async ({ agent_id }: any) => {
+      const r = await chain.setOracleAgent(agent_id);
+      return { content: [{ type: "text", text: `Oracle agent set to #${agent_id}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "get_oracle_agent",
+    "Get the currently designated on-chain Oracle agent ID (0 = none set).",
+    {},
+    async () => {
+      const id = await chain.getOracleAgentId();
+      return { content: [{ type: "text", text: JSON.stringify({ oracleAgentId: id }) }] };
+    }
+  );
+
   // ============ Web Search ============
 
   server.tool(

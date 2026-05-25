@@ -69,6 +69,7 @@ export interface McpServerConfig {
   mcpHost: string;
   mcpPort: number;
   mcpPath: string;
+  tavilyApiKey?: string;  // enables the web_search tool (Oracle real-world prophecies)
 }
 
 export type LlmApiType = "openai" | "anthropic" | "auto";
@@ -96,6 +97,7 @@ export interface AccountConfig {
   agentStartLocation: number;
   agentGoal: string;
   agentSystemPrompt?: string;
+  agentSystemPromptMode?: "append" | "replace";
   llmModel?: string;
   heartbeatMs?: number;
   maxToolRoundsPerCycle?: number;

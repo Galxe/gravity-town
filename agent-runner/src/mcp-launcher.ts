@@ -56,6 +56,8 @@ export async function launchMcpServer(config: McpServerConfig): Promise<ChildPro
     MCP_HOST: config.mcpHost,
     MCP_PORT: String(config.mcpPort),
     MCP_PATH: config.mcpPath,
+    // Tavily key for the web_search tool (Oracle real-world prophecies). Optional.
+    ...(config.tavilyApiKey ? { TAVILY_API_KEY: config.tavilyApiKey } : {}),
     // Ensure no proxy interferes with local RPC connections
     HTTP_PROXY: "",
     HTTPS_PROXY: "",

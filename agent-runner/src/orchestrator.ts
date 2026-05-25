@@ -14,6 +14,7 @@ export class Orchestrator {
   private rateLimiter: ApiRateLimiter;
   private bibleTimer: ReturnType<typeof setInterval> | null = null;
   private predictionTimer: ReturnType<typeof setInterval> | null = null;
+  private lastOracleDebateId: number = 0;
 
   constructor(globalConfig: GlobalConfig) {
     this.globalConfig = globalConfig;
@@ -94,6 +95,10 @@ export class Orchestrator {
       }
     }
 
+    // Phase 1.5: Designate the on-chain Oracle agent so its debates become
+    // 4hr ore-betting oracle debates (otherwise they degrade to normal debates).
+    await this.designateOracle(resolved);
+
     // Phase 2: Create runners and start cycles with staggering.
     for (let i = 0; i < resolved.length; i++) {
       const { account, agentId } = resolved[i];
@@ -119,6 +124,34 @@ export class Orchestrator {
     this.startBibleTimer();
     // Start Prediction Market timer (every 4 hours)
     this.startPredictionTimer();
+  }
+
+  /**
+   * Ensure the on-chain oracleAgentId points at our Oracle role. Idempotent —
+   * skips the tx if already set. Requires the MCP wallet to be operator/owner.
+   */
+  private async designateOracle(
+    resolved: Array<{ account: AccountConfig; agentId: number }>
+  ): Promise<void> {
+    const oracle = resolved.find((r) => r.account.label === "Oracle");
+    if (!oracle) {
+      this.log("[oracle] no Oracle role among accounts — skipping designation");
+      return;
+    }
+    try {
+      const current = parseToolJson(
+        await callMcpTool(this.client, "get_oracle_agent", {})
+      ) as { oracleAgentId?: number } | null;
+      if (current?.oracleAgentId === oracle.agentId) {
+        this.log(`[oracle] already designated → agent #${oracle.agentId}`);
+        return;
+      }
+      const res = await callMcpTool(this.client, "set_oracle_agent", { agent_id: oracle.agentId });
+      this.log(`[oracle] designated agent #${oracle.agentId} as Oracle: ${extractToolText(res).slice(0, 120)}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.log(`[oracle] designation failed (oracle debates will degrade to normal): ${msg}`, true);
+    }
   }
 
   // ──────────────────── World Bible ────────────────────
@@ -245,86 +278,113 @@ export class Orchestrator {
   // ──────────────────── Prediction Timer ────────────────────
 
   private startPredictionTimer(): void {
-    // First nudge after 5 minutes, then every 4 hours
+    // First tick after 5 minutes, then every 1 hour
     const initialDelay = 5 * 60 * 1000;
-    const interval = 4 * 60 * 60 * 1000;
+    const interval = 60 * 60 * 1000;
 
     const start = () => {
-      this.nudgeOracle();
-      this.predictionTimer = setInterval(() => this.nudgeOracle(), interval);
+      this.tickOraclePriest();
+      this.predictionTimer = setInterval(() => this.tickOraclePriest(), interval);
     };
     const handle = setTimeout(start, initialDelay) as unknown;
-    // Store for cleanup — overwrite once the interval starts
     this.predictionTimer = handle as ReturnType<typeof setInterval>;
 
-    this.log(`Prediction timer: first nudge in 5min, then every 4h`);
+    this.log(`Oracle priest timer: first tick in 5min, then every 1h`);
   }
 
-  private async nudgeOracle(): Promise<void> {
+  /**
+   * Orchestrator-as-priest: deterministically drives Oracle debates without
+   * relying on the Oracle LLM. If the last-known oracle debate is still live,
+   * do nothing. If it's past deadline and unresolved, nudge the Oracle LLM to
+   * resolve (outcome judgement still needs human/LLM/web input). If there is
+   * no known active debate, start a fresh one from a chain-state template.
+   */
+  private async tickOraclePriest(): Promise<void> {
     try {
-      // Find Oracle runner
       const oracleRunner = Array.from(this.runners.values()).find(
         (r) => r.label === "Oracle"
       );
       if (!oracleRunner) {
-        this.log("[prediction] Oracle agent not found among runners");
+        this.log("[priest] Oracle agent not found among runners");
         return;
       }
-
       const oracleId = oracleRunner.agentId;
 
-      // Check for unresolved oracle debates by scanning recent debate entry IDs
-      let hasActiveOracleDebate = false;
-      let unresolvedPastDeadline = false;
-      let unresolvedId = 0;
+      // Check status of the last debate we started
+      if (this.lastOracleDebateId > 0) {
+        const d = parseToolJson(
+          await callMcpTool(this.client, "get_debate", {
+            debate_entry_id: this.lastOracleDebateId,
+          })
+        ) as { entryId?: number; resolved?: boolean; expired?: boolean; isOracle?: boolean; timeLeft?: number } | null;
 
-      // Scan recent debate entry IDs (check last 20)
-      for (let tryId = 1; tryId <= 20; tryId++) {
-        try {
-          const debate = parseToolJson(
-            await callMcpTool(this.client, "get_debate", { debate_entry_id: tryId })
-          ) as { entryId?: number; resolved?: boolean; expired?: boolean; isOracle?: boolean; timeLeft?: number } | null;
-
-          if (!debate || debate.entryId === 0) continue;
-          if (!debate.isOracle) continue;
-          if (debate.resolved || debate.expired) continue;
-
-          hasActiveOracleDebate = true;
-          if (debate.timeLeft === 0) {
-            unresolvedPastDeadline = true;
-            unresolvedId = tryId;
+        if (d && d.entryId && d.entryId > 0 && d.isOracle) {
+          if (!d.resolved && !d.expired && (d.timeLeft ?? 0) > 0) {
+            this.log(`[priest] debate #${this.lastOracleDebateId} still live (timeLeft=${d.timeLeft}s), skipping`);
+            return;
           }
-        } catch {
-          break;
+          if (!d.resolved && !d.expired && (d.timeLeft ?? 0) === 0) {
+            this.log(`[priest] nudging Oracle to resolve debate #${this.lastOracleDebateId}`);
+            await callMcpTool(this.client, "send_message", {
+              from_agent: oracleId,
+              to_agent: oracleId,
+              importance: 9,
+              category: "prediction_resolve_nudge",
+              content: `Oracle debate #${this.lastOracleDebateId} past deadline. Verify outcome (web_search or chain state), then call resolve_debate(debate_entry_id=${this.lastOracleDebateId}, outcome_override=true/false).`,
+              related_agents: [],
+            });
+            // fall through and start a new one — don't stall the feed
+          }
         }
       }
 
-      if (unresolvedPastDeadline) {
-        this.log(`[prediction] nudging Oracle to resolve debate #${unresolvedId}`);
-        await callMcpTool(this.client, "send_message", {
-          from_agent: oracleId,
-          to_agent: oracleId,
-          importance: 9,
-          category: "prediction_resolve_nudge",
-          content: `URGENT: Oracle debate #${unresolvedId} is past deadline and needs resolution. Use web_search to verify the outcome, then call resolve_debate(debate_entry_id=${unresolvedId}, outcome_override=true/false).`,
-          related_agents: [],
-        });
-      } else if (!hasActiveOracleDebate) {
-        this.log("[prediction] nudging Oracle to create a new oracle debate");
-        await callMcpTool(this.client, "send_message", {
-          from_agent: oracleId,
-          to_agent: oracleId,
-          importance: 7,
-          category: "prediction_create_nudge",
-          content: "No active oracle debates. Use web_search to find interesting current events and create a new prediction debate with start_debate.",
-          related_agents: [],
-        });
+      // Start a new oracle debate
+      const content = await this.generateProphecy();
+      const result = await callMcpTool(this.client, "start_debate", {
+        agent_id: oracleId,
+        content,
+      });
+      const text = extractToolText(result);
+      const match = /Entry ID: (\d+)/.exec(text);
+      if (match) {
+        this.lastOracleDebateId = Number(match[1]);
+        this.log(`[priest] started oracle debate #${this.lastOracleDebateId}: "${content.slice(0, 80)}"`);
       } else {
-        this.log("[prediction] active oracle debate in progress, no nudge needed");
+        this.log(`[priest] start_debate response unparseable: ${text.slice(0, 160)}`, true);
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      this.log(`[prediction] nudge failed: ${msg}`, true);
+      this.log(`[priest] tick failed: ${msg}`, true);
+    }
+  }
+
+  private async generateProphecy(): Promise<string> {
+    try {
+      const [scoreboard, world] = await Promise.all([
+        callMcpTool(this.client, "get_scoreboard").then(parseToolJson),
+        callMcpTool(this.client, "get_world").then(parseToolJson),
+      ]);
+      const sb = Array.isArray(scoreboard) ? (scoreboard as Array<{ agentId: number; name: string; hexCount: number; score: number }>) : [];
+      const top = sb[0];
+      const hexCount = Array.isArray((world as any)?.hexes) ? (world as any).hexes.length : 0;
+      const templates: string[] = [];
+      if (top) {
+        templates.push(
+          `The Oracle gazes upon ${top.name} — will ${top.name} still top the scoreboard when this prophecy is sealed?`,
+          `Dark omens — will any warlord surpass ${top.score + 200} total score before the Oracle next speaks?`
+        );
+      }
+      if (hexCount > 0) {
+        templates.push(
+          `War drums echo across ${hexCount} claimed hexes. Will more than ${hexCount + 3} hexes bear a banner when this prophecy expires?`
+        );
+      }
+      templates.push(
+        "The Oracle foresees conquest — will more than 3 battles be fought before this prophecy is resolved?"
+      );
+      return templates[Math.floor(Math.random() * templates.length)];
+    } catch {
+      return "The Oracle foresees — will the balance of power shift before this prophecy is resolved?";
     }
   }
 
