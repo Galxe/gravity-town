@@ -384,7 +384,9 @@ export function buildSystemPrompt(
     "=== ORACLE DEBATES (real-world predictions) ===",
     "The Oracle agent creates special debates about real-world events (crypto, sports, news).",
     "Oracle debates: 4-hour window, ore bets REQUIRED (min 10), Oracle resolves with verified outcome.",
-    "When a prediction_notice arrives in your inbox, bet ore with vote_debate(ore_amount=10-500).",
+    "The ACTIVE ORACLE PROPHECY (if any) is shown to you every cycle in the user prompt — you do NOT need an inbox notice to bet.",
+    "BETTING IS +EV WHEN YOU HAVE AN EDGE: winners split the LOSERS' ore pool proportionally, so a confident correct bet multiplies your ore. Idle ore is wasted ore (pool caps at 1000) — a sharp prediction bet is one of the best uses of surplus ore.",
+    "When you see an active prophecy you have a read on, bet with vote_debate(debate_entry_id, support=true/false, ore_amount=10-500). You vote once.",
     "10% tax on loser pool goes to Oracle. If not resolved in 24hr, anyone can expire it (full refund).",
     "",
     "=== CHRONICLE (reputation & legacy) ===",
@@ -530,7 +532,23 @@ export function buildUserPrompt(context: AgentContext): string {
     ? `You have ${unreadCount} inbox messages. READ THEM and respond.`
     : "";
   if (predictionNotices.length > 0) {
-    inboxNudge += `\nPREDICTION ALERT: You have ${predictionNotices.length} prediction-related message(s)! Check predictions and bet ore with bet_prediction.`;
+    inboxNudge += `\nPREDICTION ALERT: You have ${predictionNotices.length} prediction-related message(s)! Check predictions and bet ore with vote_debate.`;
+  }
+
+  // Active Oracle prophecy — surfaced every cycle so betting never depends on the
+  // perishable inbox notice (which the debate-notice flood evicts quickly).
+  const aod = context.activeOracleDebate as
+    | { entryId?: number; timeLeft?: number; totalSupportOre?: number; totalOpposeOre?: number; proposerId?: number }
+    | null;
+  let oraclePrompt = "";
+  if (aod && aod.entryId && Number(self.id || 0) !== Number(aod.proposerId)) {
+    const mins = Math.round((aod.timeLeft || 0) / 60);
+    oraclePrompt = [
+      "=== ACTIVE ORACLE PROPHECY — open for betting NOW ===",
+      `Prophecy #${aod.entryId} closes in ~${mins} min. Pool so far: support ${aod.totalSupportOre || 0} ore / oppose ${aod.totalOpposeOre || 0} ore.`,
+      `If you have a read on it, BET: vote_debate(agent_id, debate_entry_id=${aod.entryId}, support=true/false, content, ore_amount=10-500).`,
+      "Winners split the losers' ore pool proportionally — a confident, correct bet GROWS your ore. You vote once.",
+    ].join("\n");
   }
 
   return [
@@ -539,6 +557,7 @@ export function buildUserPrompt(context: AgentContext): string {
     phaseDirective,
     happinessWarning,
     inboxNudge,
+    oraclePrompt,
     "",
     "IMPORTANT: Call tools — don't describe intentions. TAKE ACTION NOW.",
     "IMPORTANT: Vary your actions each cycle. Harvest + build + (scout or raid or diplomacy or post).",
