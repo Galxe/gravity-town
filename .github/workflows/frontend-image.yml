@@ -38,8 +38,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set image name
-        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}/frontend" >> "$GITHUB_ENV"
+      - name: Set image name and short SHA
+        run: |
+          echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}/frontend" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -51,6 +53,6 @@ jobs:
             APP_CONFIG=${{ env.APP_CONFIG }}
           tags: |
             ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:sha-${{ env.SHORT_SHA }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
