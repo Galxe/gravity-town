@@ -2,6 +2,7 @@
 # Sensitive / local config — DO NOT COMMIT
 # ============================================================
 agent-runner/config/*.toml
+agent-runner/config/*.env
 frontend/config/*.json
 .mcp.json
 !frontend/config/gravity.json
