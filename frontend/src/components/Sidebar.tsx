@@ -8,6 +8,7 @@ import { PALETTE } from '../game/constants';
 import { hexToPixel, LOCATION_SPREAD } from '../game/world/HexGrid';
 import Card from './Card';
 import EntryModal from './EntryModal';
+import NetworkPicker from './NetworkPicker';
 import { formatNarrative, timeAgo, reputationLabel, type NarrativeEvent } from '../utils/narrativeFormat';
 
 const COMBAT_CATEGORIES = new Set([
@@ -299,6 +300,8 @@ export default function Sidebar() {
 
   return (
     <div className="absolute left-0 top-0 bottom-0 w-72 p-3 flex flex-col gap-2 pointer-events-none overflow-y-auto cartoon-scroll" style={{ zIndex: 10 }}>
+      <NetworkPicker />
+
       {/* Card 1: Locations & Agents */}
       <Card
         className="max-h-40 flex-shrink-0"
