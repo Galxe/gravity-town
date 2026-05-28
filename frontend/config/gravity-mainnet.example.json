@@ -1,0 +1,6 @@
+{
+  "rpc_url": "https://mainnet-rpc.gravity.xyz",
+  "wss_url": "",
+  "chain_id": 127001,
+  "router_address": "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a"
+}

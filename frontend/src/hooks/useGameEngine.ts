@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { JsonRpcProvider, Contract } from 'ethers';
 import { useGameStore, Agent, LocationData, Entry, BoardState, HexData, ChronicleData } from '../store/useGameStore';
+import { getActiveNetwork } from '../lib/networks';
 
-const RPC_URL     = process.env.NEXT_PUBLIC_RPC_URL        || 'http://127.0.0.1:8545';
-const ROUTER_ADDR = process.env.NEXT_PUBLIC_ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000';
+// Build-time fallbacks — used only when NEXT_PUBLIC_NETWORKS is empty (e.g. single-network deploy).
+const FALLBACK_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL        || 'http://127.0.0.1:8545';
+const FALLBACK_ROUTER  = process.env.NEXT_PUBLIC_ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000';
+const FALLBACK_CHAIN   = process.env.NEXT_PUBLIC_CHAIN_ID ? Number(process.env.NEXT_PUBLIC_CHAIN_ID) : undefined;
 
 const ENTRY_TUPLE = 'tuple(uint256 id, uint256 authorAgent, uint256 blockNumber, uint256 timestamp, uint8 importance, string category, string content, uint256[] relatedAgents)';
 
@@ -76,7 +79,14 @@ export function useGameEngine() {
   const isFetching = useRef(false);
 
   useEffect(() => {
-    const provider = new JsonRpcProvider(RPC_URL);
+    const active = getActiveNetwork();
+    const RPC_URL     = active?.rpc_url        ?? FALLBACK_RPC_URL;
+    const ROUTER_ADDR = active?.router_address ?? FALLBACK_ROUTER;
+    const CHAIN_ID    = active?.chain_id       ?? FALLBACK_CHAIN;
+
+    const provider = CHAIN_ID
+      ? new JsonRpcProvider(RPC_URL, CHAIN_ID)
+      : new JsonRpcProvider(RPC_URL);
     let registry: Contract;
     let agentLedger: Contract;
     let locationLedger: Contract;
