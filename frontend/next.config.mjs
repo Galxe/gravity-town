@@ -58,6 +58,11 @@ const networks = NETWORK_FILES.map(({ key, label, file }) => {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Required by frontend/Dockerfile (COPY --from=builder /app/out). Without this,
+  // `next build` emits .next/ instead of out/, the Docker build fails on the COPY,
+  // and the frontend-image workflow can't push a new tag to ghcr. PR #25
+  // accidentally dropped this line; restoring here.
+  output: 'export',
   env: {
     NEXT_PUBLIC_RPC_URL: cfg.rpc_url,
     NEXT_PUBLIC_WSS_URL: cfg.wss_url || '',
