@@ -63,6 +63,8 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     /// @notice Extended getter including ArenaEngine. Front-end and side-system
     ///         clients should prefer this once they've upgraded their decoder.
+    /// TODO PR #2: migrate chain.ts to call router.arenaEngine() directly and
+    ///             deprecate this v2 suffix once nothing else reads the tuple.
     function getAddressesV2() external view returns (
         address _registry,
         address _agentLedger,

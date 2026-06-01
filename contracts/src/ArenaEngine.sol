@@ -131,6 +131,9 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         return addr == registry.operator() || registry.operators(addr) || addr == owner();
     }
 
+    // TODO PR #2: support EOA-only players for ABCD-D (跨身份) — current
+    //             check requires the caller to either be an operator or
+    //             registered as the agent's owner.
     modifier canControlAgent(uint256 agentId) {
         require(
             _isOperator(msg.sender) || msg.sender == registry.agentOwner(agentId),
@@ -332,6 +335,8 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256[] memory ids = new uint256[](n);
         for (uint256 i = 0; i < n; i++) ids[i] = pool[i];
 
+        // TODO: replace block.prevrandao with VRF or commit-reveal before
+        // adding any prize pool. Miner/validator can grind this.
         uint256 seed = uint256(keccak256(abi.encode(
             block.prevrandao, bucketId, block.timestamp, n
         )));
@@ -346,6 +351,9 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         for (uint256 k = 0; k < pairs; k++) {
             uint256 a = ids[2 * k];
             uint256 d = ids[2 * k + 1];
+            // TODO: use keccak(seed, k) instead of seed ^ k when matchmaking gas
+            //       allows — the XOR mix here is cheap but locally predictable
+            //       if you know `seed`.
             _createMatch(a, d, seed ^ uint256(k + 1));
             matchesCreated++;
         }
@@ -384,7 +392,9 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     /// @notice Deterministic combat replay for a settled or unsettled match.
-    ///         View-only — does not touch storage.
+    ///         View-only — does not touch storage. Returns the full turn-by-turn
+    ///         trace alongside the winner. Use this for frontends and replays;
+    ///         settlement uses `_simulateInternal` directly to skip trace alloc.
     function simulateMatch(uint256 matchId) public view returns (Turn[] memory turns, uint256 winnerAgentId) {
         Match storage m = _matches[matchId];
         require(m.attackerId != 0, "no match");
@@ -395,16 +405,54 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             uint256(m.seed)
         );
 
+        Turn[] memory buf = new Turn[](128);
+        uint256 turnCount;
+        (winnerAgentId, turnCount) = _runCombat(state, m.attackerId, m.defenderId, uint256(m.seed), buf);
+
+        // Copy trimmed buffer
+        turns = new Turn[](turnCount);
+        for (uint256 i = 0; i < turnCount; i++) turns[i] = buf[i];
+    }
+
+    /// @dev Trace-less winner-only simulator used by settleMatch. Same combat
+    ///      loop as simulateMatch but skips the 128-slot turn buffer alloc and
+    ///      per-turn writes. Saves ~5-10k gas on settlement.
+    function _simulateInternal(
+        uint8[SLOTS] memory leftBench,
+        int16[SLOTS] memory leftAtkOverride,
+        int16[SLOTS] memory leftHpOverride,
+        uint8[SLOTS] memory rightBench,
+        int16[SLOTS] memory rightAtkOverride,
+        int16[SLOTS] memory rightHpOverride,
+        uint256 seed,
+        uint256 leftAgentId,
+        uint256 rightAgentId
+    ) internal pure returns (uint256 winnerAgentId) {
+        AbilityLib.BattleState memory state = _buildBattleState(
+            leftBench, leftAtkOverride, leftHpOverride,
+            rightBench, rightAtkOverride, rightHpOverride,
+            seed
+        );
+        Turn[] memory nullBuf; // length 0 — _runCombat skips writes
+        (winnerAgentId, ) = _runCombat(state, leftAgentId, rightAgentId, seed, nullBuf);
+    }
+
+    /// @dev Shared combat loop. If `buf` is empty the trace step is skipped,
+    ///      otherwise turns are written until `buf` fills.
+    function _runCombat(
+        AbilityLib.BattleState memory state,
+        uint256 attackerAgentId,
+        uint256 defenderAgentId,
+        uint256 seed,
+        Turn[] memory buf
+    ) internal pure returns (uint256 winnerAgentId, uint256 turnCount) {
         // ON_START for everyone (left then right)
         state = AbilityLib.triggerAllOnStart(state);
 
-        // Allocate trace buffer — 5v5 with ability extensions plausibly under 64 turns.
-        Turn[] memory buf = new Turn[](128);
-        uint256 turnCount;
-
-        // Combat loop: alternate hits between sides. Pick highest-ATK alive on each side;
-        // defender always picks slot[0]-most-alive (front line). Tiebreak: lowest slot.
-        // This matches the spike spec: "attack 大的先动, 左→右对位".
+        // Combat loop: alternate hits between sides. Pick highest-ATK alive on
+        // each side; defender always picks slot[0]-most-alive (front line).
+        // Tiebreak: lowest slot. This matches the spike spec: "attack 大的先动,
+        // 左→右对位".
         uint8 active = AbilityLib.SIDE_LEFT;
         uint256 safety = 0;
         while (
@@ -438,21 +486,15 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         bool leftAlive = AbilityLib.sideHasLiving(state, AbilityLib.SIDE_LEFT);
         bool rightAlive = AbilityLib.sideHasLiving(state, AbilityLib.SIDE_RIGHT);
         if (leftAlive && !rightAlive) {
-            winnerAgentId = m.attackerId;
+            winnerAgentId = attackerAgentId;
         } else if (!leftAlive && rightAlive) {
-            winnerAgentId = m.defenderId;
+            winnerAgentId = defenderAgentId;
         } else {
-            // Draw — either both sides survived the 200-turn cap or wiped on the
-            // same turn. Pick a winner from a hash of (seed, "draw") so we don't
-            // introduce a systematic bias toward attacker or defender. Still
-            // deterministic for the same matchId.
-            uint256 coin = uint256(keccak256(abi.encode(m.seed, "draw"))) & 1;
-            winnerAgentId = coin == 0 ? m.attackerId : m.defenderId;
+            // Draw — pick a winner from keccak(seed, "draw") so there's no
+            // systematic attacker-vs-defender bias. Deterministic for the seed.
+            uint256 coin = uint256(keccak256(abi.encode(seed, "draw"))) & 1;
+            winnerAgentId = coin == 0 ? attackerAgentId : defenderAgentId;
         }
-
-        // Copy trimmed buffer
-        turns = new Turn[](turnCount);
-        for (uint256 i = 0; i < turnCount; i++) turns[i] = buf[i];
     }
 
     function _buildBattleState(
@@ -529,7 +571,12 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(m.attackerId != 0, "no match");
         require(!m.settled, "already settled");
 
-        ( , uint256 winnerId) = simulateMatch(matchId);
+        // Settle path skips the per-turn trace buffer — we only need the winner.
+        uint256 winnerId = _simulateInternal(
+            m.attackerBench, m.attackerAtkOverride, m.attackerHpOverride,
+            m.defenderBench, m.defenderAtkOverride, m.defenderHpOverride,
+            uint256(m.seed), m.attackerId, m.defenderId
+        );
         uint256 loserId = winnerId == m.attackerId ? m.defenderId : m.attackerId;
 
         m.settled = true;
@@ -555,6 +602,15 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit MatchSettled(matchId, winnerId, newWinElo, newLoseElo);
     }
 
+    /// @dev Symmetric ELO update: winner gains the same delta the loser drops.
+    ///      Intentional spike simplification — under K=32 and bucket-bounded
+    ///      matchmaking this is stable enough for the autobattler, and avoids
+    ///      the fixed-point logistic that "proper" Elo needs. The
+    ///      `test_elo_symmetric_*` tests pin this behavior as a contract so
+    ///      changes are explicit.
+    /// TODO PR #2: switch to asymmetric logistic expected-score (fixed-point
+    ///      Q16.16 sigmoid). Symmetric K=32 over-rewards upsets at high
+    ///      ELO gap.
     function _eloUpdate(uint16 winnerElo, uint16 loserElo)
         internal pure returns (uint16 newWinner, uint16 newLoser)
     {
@@ -570,7 +626,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (deltaW < 1) deltaW = 1;
         if (deltaW > 31) deltaW = 31;
 
-        int256 deltaL = deltaW; // symmetric for spike
+        int256 deltaL = deltaW; // symmetric — see fn-level NatSpec.
 
         int256 nw = int256(uint256(winnerElo)) + deltaW;
         int256 nl = int256(uint256(loserElo)) - deltaL;
@@ -666,5 +722,14 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     function bucketOf(uint256 agentId) external view returns (uint16) {
         return _bucketOf[agentId];
+    }
+
+    /// @notice Preview the ELO change for a hypothetical (winner, loser) ELO pair.
+    ///         Useful for clients to display "+X / -X" ahead of a settle, and for
+    ///         tests to pin down the symmetric-K=32 contract.
+    function previewEloUpdate(uint16 winnerElo, uint16 loserElo)
+        external pure returns (uint16 newWinner, uint16 newLoser)
+    {
+        return _eloUpdate(winnerElo, loserElo);
     }
 }
