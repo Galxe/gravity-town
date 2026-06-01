@@ -17,7 +17,7 @@ library UnitCatalog {
         string memory name,
         uint16 atk,
         uint16 hp,
-        uint16 cost,
+        uint16 unitCost,
         AbilityLib.Ability memory ability
     ) {
         // Tier 1 — cost 3 ──────────────────────────────────────────
