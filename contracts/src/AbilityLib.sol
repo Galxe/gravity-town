@@ -362,4 +362,68 @@ library AbilityLib {
         }
         return false;
     }
+
+    // ──────────────────── Bench-phase ability processing ────────────────────
+
+    /// @notice Apply a TRIG_ON_BUY / TRIG_ON_SELL ability directly to the bench
+    ///         stat-overlay arrays. Used by ArenaEngine.buy/sell so ability
+    ///         effects persist into the eventual battle.
+    /// @dev Only effects that make sense in the shop phase are honored:
+    ///        - EFF_ADD_ATK  → writes to atkOverride
+    ///        - EFF_ADD_HP   → writes to hpOverride
+    ///      All other effects (DEAL_DAMAGE, SUMMON, BUFF_NEIGHBOR) are ignored
+    ///      here — they only make sense in combat. Targeting honored:
+    ///        - TGT_SELF, TGT_LEFT_NEIGHBOR, TGT_RIGHT_NEIGHBOR, TGT_ALL_ALLIES.
+    ///      TGT_RANDOM_ENEMY is a no-op (no opponent in shop phase).
+    ///      Empty bench slots (type 0) are skipped for ALL_ALLIES; left/right
+    ///      neighbor are applied unconditionally so an empty neighbor slot
+    ///      simply absorbs nothing on later materialize.
+    function applyBenchAbility(
+        uint8[SLOTS] memory bench,
+        int16[SLOTS] memory atkOverride,
+        int16[SLOTS] memory hpOverride,
+        uint8 casterSlot,
+        Ability memory ability,
+        uint8 expectedTrigger
+    ) internal pure returns (int16[SLOTS] memory, int16[SLOTS] memory) {
+        if (ability.triggerEvent != expectedTrigger) return (atkOverride, hpOverride);
+        Effect memory eff = ability.effect;
+        if (eff.effectType != EFF_ADD_ATK && eff.effectType != EFF_ADD_HP) {
+            return (atkOverride, hpOverride);
+        }
+
+        if (eff.target == TGT_SELF) {
+            (atkOverride, hpOverride) = _benchApply(atkOverride, hpOverride, casterSlot, eff);
+        } else if (eff.target == TGT_LEFT_NEIGHBOR) {
+            if (casterSlot > 0) {
+                (atkOverride, hpOverride) = _benchApply(atkOverride, hpOverride, casterSlot - 1, eff);
+            }
+        } else if (eff.target == TGT_RIGHT_NEIGHBOR) {
+            if (casterSlot < SLOTS - 1) {
+                (atkOverride, hpOverride) = _benchApply(atkOverride, hpOverride, casterSlot + 1, eff);
+            }
+        } else if (eff.target == TGT_ALL_ALLIES) {
+            for (uint8 i = 0; i < SLOTS; i++) {
+                if (bench[i] != 0 && i != casterSlot) {
+                    (atkOverride, hpOverride) = _benchApply(atkOverride, hpOverride, i, eff);
+                }
+            }
+        }
+        // TGT_RANDOM_ENEMY: silently dropped (no opponent on bench).
+        return (atkOverride, hpOverride);
+    }
+
+    function _benchApply(
+        int16[SLOTS] memory atkOverride,
+        int16[SLOTS] memory hpOverride,
+        uint8 slot,
+        Effect memory eff
+    ) private pure returns (int16[SLOTS] memory, int16[SLOTS] memory) {
+        if (eff.effectType == EFF_ADD_ATK) {
+            atkOverride[slot] = atkOverride[slot] + int16(uint16(eff.magnitude));
+        } else if (eff.effectType == EFF_ADD_HP) {
+            hpOverride[slot] = hpOverride[slot] + int16(uint16(eff.magnitude));
+        }
+        return (atkOverride, hpOverride);
+    }
 }

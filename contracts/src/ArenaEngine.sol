@@ -38,6 +38,12 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @dev Packed-ish ghost record. The 5-slot bench stores unit type ids;
     ///      static stats come from UnitCatalog. Frozen tracks "shop frozen"
     ///      bits — a 5-bit mask is enough for the spike (no real shop pool yet).
+    ///      atkOverride/hpOverride hold persistent buy/sell ability buffs that
+    ///      stack on top of the base UnitCatalog stats when the ghost goes into
+    ///      battle. Without these the ability would re-fire and the +ATK / +HP
+    ///      would be lost on every materialize.
+    /// TODO: add `uint16 season` field before launching seasons (storage slot
+    ///       already aligned).
     struct Ghost {
         uint8[SLOTS] bench;        // 0 == empty
         uint16       elo;
@@ -45,6 +51,8 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint16       frozenMask;   // bit i set → shop slot i frozen across rolls
         uint64       shopSeed;     // rolled by `roll`
         bool         exists;
+        int16[SLOTS] atkOverride;  // persistent +ATK from ON_BUY / ON_SELL
+        int16[SLOTS] hpOverride;   // persistent +HP  from ON_BUY / ON_SELL
     }
 
     mapping(uint256 => Ghost) internal _ghosts;
@@ -62,11 +70,18 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     /// @dev A Match records who fought + the seed used. Combat itself is
     ///      reconstructed view-only from the seed + the two snapshotted ghosts.
+    ///      We snapshot both the bench AND the persistent stat overlays so the
+    ///      buy/sell buffs survive into combat (and a later buy/sell can't
+    ///      retroactively change a queued match).
     struct Match {
         uint256 attackerId;
         uint256 defenderId;
         uint8[SLOTS] attackerBench;
         uint8[SLOTS] defenderBench;
+        int16[SLOTS] attackerAtkOverride;
+        int16[SLOTS] attackerHpOverride;
+        int16[SLOTS] defenderAtkOverride;
+        int16[SLOTS] defenderHpOverride;
         uint64  seed;
         uint64  createdAt;
         bool    settled;
@@ -138,11 +153,15 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         Ghost storage g = _getOrInitGhost(agentId);
         require(g.bench[toSlot] == 0, "slot occupied");
 
-        ( , , , uint16 unitCost, ) = UnitCatalog.getUnit(unitType);
+        ( , , , uint16 unitCost, AbilityLib.Ability memory ability) = UnitCatalog.getUnit(unitType);
         gameEngine.spendOre(agentId, unitCost);
 
         g.bench[toSlot] = unitType;
         g.lastUpdate = uint64(block.timestamp);
+
+        // Fire ON_BUY ability into the persistent bench stat overlay so
+        // self / neighbor / all-ally buffs survive into the eventual battle.
+        _applyBenchAbility(g, toSlot, ability, AbilityLib.TRIG_ON_BUY);
 
         emit UnitBought(agentId, unitType, toSlot, unitCost);
     }
@@ -152,40 +171,52 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         external canControlAgent(agentId)
     {
         require(slot < SLOTS, "bad slot");
-        Ghost storage g = _ghosts[agentId];
-        require(g.exists, "no ghost");
+        Ghost storage g = _getOrInitGhost(agentId);
         uint8 unitType = g.bench[slot];
         require(unitType != 0, "empty slot");
 
-        ( , , , uint16 unitCost, ) = UnitCatalog.getUnit(unitType);
+        ( , , , uint16 unitCost, AbilityLib.Ability memory ability) = UnitCatalog.getUnit(unitType);
         uint16 refund = unitCost / 2;
 
+        // Fire ON_SELL ability BEFORE clearing the bench so neighbors/allies are
+        // still present for targeting. The overlay for `slot` itself is then
+        // cleared below — selling the unit removes its own persistent buffs.
+        _applyBenchAbility(g, slot, ability, AbilityLib.TRIG_ON_SELL);
+
         g.bench[slot] = 0;
+        g.atkOverride[slot] = 0;
+        g.hpOverride[slot] = 0;
         g.lastUpdate = uint64(block.timestamp);
 
         if (refund > 0) {
-            // Refund directly to orePool — GameEngine has no public credit hook,
-            // and we don't want to round-trip through GameEngine for a refund.
-            // Spike judgment: ArenaEngine is registered as operator on GameEngine,
-            // so for now we just emit and skip the credit. See README note below.
-            // TODO(post-spike): expose GameEngine.refundOre(agentId, amount).
+            gameEngine.refundOre(agentId, refund);
         }
 
         emit UnitSold(agentId, slot, refund);
     }
 
     /// @notice Swap two bench positions. Either or both may be empty.
+    ///         Persistent ATK/HP overlays travel with the unit — so a unit
+    ///         that was buffed at slot 0 keeps its buffs when moved to slot 2.
     function move(uint256 agentId, uint8 fromSlot, uint8 toSlot)
         external canControlAgent(agentId)
     {
         require(fromSlot < SLOTS && toSlot < SLOTS, "bad slot");
         require(fromSlot != toSlot, "same slot");
-        Ghost storage g = _ghosts[agentId];
-        require(g.exists, "no ghost");
+        Ghost storage g = _getOrInitGhost(agentId);
 
         uint8 tmp = g.bench[fromSlot];
         g.bench[fromSlot] = g.bench[toSlot];
         g.bench[toSlot] = tmp;
+
+        int16 tmpAtk = g.atkOverride[fromSlot];
+        g.atkOverride[fromSlot] = g.atkOverride[toSlot];
+        g.atkOverride[toSlot] = tmpAtk;
+
+        int16 tmpHp = g.hpOverride[fromSlot];
+        g.hpOverride[fromSlot] = g.hpOverride[toSlot];
+        g.hpOverride[toSlot] = tmpHp;
+
         g.lastUpdate = uint64(block.timestamp);
 
         emit UnitMoved(agentId, fromSlot, toSlot);
@@ -326,6 +357,10 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         m.defenderId = defenderId;
         m.attackerBench = _ghosts[attackerId].bench;
         m.defenderBench = _ghosts[defenderId].bench;
+        m.attackerAtkOverride = _ghosts[attackerId].atkOverride;
+        m.attackerHpOverride = _ghosts[attackerId].hpOverride;
+        m.defenderAtkOverride = _ghosts[defenderId].atkOverride;
+        m.defenderHpOverride = _ghosts[defenderId].hpOverride;
         m.seed = uint64(uint256(keccak256(abi.encode(seedMix, attackerId, defenderId))));
         m.createdAt = uint64(block.timestamp);
         emit MatchCreated(mid, attackerId, defenderId, m.seed);
@@ -351,7 +386,9 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(m.attackerId != 0, "no match");
 
         AbilityLib.BattleState memory state = _buildBattleState(
-            m.attackerBench, m.defenderBench, uint256(m.seed)
+            m.attackerBench, m.attackerAtkOverride, m.attackerHpOverride,
+            m.defenderBench, m.defenderAtkOverride, m.defenderHpOverride,
+            uint256(m.seed)
         );
 
         // ON_START for everyone (left then right)
@@ -413,22 +450,34 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     function _buildBattleState(
         uint8[SLOTS] memory leftBench,
+        int16[SLOTS] memory leftAtkOverride,
+        int16[SLOTS] memory leftHpOverride,
         uint8[SLOTS] memory rightBench,
+        int16[SLOTS] memory rightAtkOverride,
+        int16[SLOTS] memory rightHpOverride,
         uint256 seed
     ) internal pure returns (AbilityLib.BattleState memory state) {
         for (uint8 i = 0; i < SLOTS; i++) {
-            state.left[i] = _materialize(leftBench[i]);
-            state.right[i] = _materialize(rightBench[i]);
+            state.left[i] = _materialize(leftBench[i], leftAtkOverride[i], leftHpOverride[i]);
+            state.right[i] = _materialize(rightBench[i], rightAtkOverride[i], rightHpOverride[i]);
         }
         state.seed = seed;
     }
 
-    function _materialize(uint8 unitType) internal pure returns (AbilityLib.Unit memory u) {
+    function _materialize(uint8 unitType, int16 atkOverride, int16 hpOverride)
+        internal pure returns (AbilityLib.Unit memory u)
+    {
         if (unitType == 0) return u; // empty
         ( , uint16 atk, uint16 hp, , AbilityLib.Ability memory ab) = UnitCatalog.getUnit(unitType);
+        // Apply persistent buy/sell overlay. Floor at 0 so a negative buff
+        // (none exist today but future debuffs might) can't underflow uint16.
+        int32 finalAtk = int32(uint32(atk)) + int32(atkOverride);
+        int32 finalHp = int32(uint32(hp)) + int32(hpOverride);
+        if (finalAtk < 0) finalAtk = 0;
+        if (finalHp < 1) finalHp = 1; // a live unit must have at least 1 HP
         u.unitType = unitType;
-        u.atk = atk;
-        u.hp = hp;
+        u.atk = uint16(uint32(finalAtk));
+        u.hp = uint16(uint32(finalHp));
         u.alive = true;
         u.spawned = false;
         u.ability = ab;
@@ -551,6 +600,27 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             g.elo = DEFAULT_ELO;
             g.lastUpdate = uint64(block.timestamp);
         }
+    }
+
+    /// @dev Pull bench + overlay arrays from storage into memory, dispatch the
+    ///      ability through AbilityLib's bench-phase processor, and write the
+    ///      mutated overlays back. Pure ADD_ATK / ADD_HP only — see
+    ///      AbilityLib.applyBenchAbility for the supported effect/target set.
+    function _applyBenchAbility(
+        Ghost storage g,
+        uint8 casterSlot,
+        AbilityLib.Ability memory ability,
+        uint8 expectedTrigger
+    ) internal {
+        if (ability.triggerEvent != expectedTrigger) return;
+        uint8[SLOTS] memory bench = g.bench;
+        int16[SLOTS] memory atkOv = g.atkOverride;
+        int16[SLOTS] memory hpOv = g.hpOverride;
+        (atkOv, hpOv) = AbilityLib.applyBenchAbility(
+            bench, atkOv, hpOv, casterSlot, ability, expectedTrigger
+        );
+        g.atkOverride = atkOv;
+        g.hpOverride = hpOv;
     }
 
     // ══════════════════════════════════════════════════════════
