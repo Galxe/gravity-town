@@ -32,6 +32,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint16  public constant ELO_BUCKET_SIZE    = 200;   // 1000..1199 → bucket 5
     uint32  public constant MATCHMAKING_PERIOD = 1800;  // 30 minutes between bucket runs
     uint16  public constant ELO_K              = 32;    // standard K-factor
+    uint16  public constant MAX_BUCKET_SIZE    = 256;   // submit cap per ELO bucket — keeps Fisher-Yates gas bounded
 
     // ──────────────────── Ghost ────────────────────
 
@@ -97,7 +98,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event UnitBought(uint256 indexed agentId, uint8 unitType, uint8 slot, uint16 cost);
     event UnitSold(uint256 indexed agentId, uint8 slot, uint16 refund);
     event UnitMoved(uint256 indexed agentId, uint8 fromSlot, uint8 toSlot);
-    event ShopFrozen(uint256 indexed agentId, uint8 shopSlot);
+    event ShopFrozen(uint256 indexed agentId, uint8 shopSlot, bool nowFrozen);
     event ShopRolled(uint256 indexed agentId, uint64 newSeed);
 
     event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed);
@@ -230,8 +231,10 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     {
         require(shopSlot < SHOP_SIZE, "bad shop slot");
         Ghost storage g = _getOrInitGhost(agentId);
-        g.frozenMask ^= uint16(1) << shopSlot;
-        emit ShopFrozen(agentId, shopSlot);
+        uint16 bit = uint16(1) << shopSlot;
+        g.frozenMask ^= bit;
+        bool nowFrozen = (g.frozenMask & bit) != 0;
+        emit ShopFrozen(agentId, shopSlot, nowFrozen);
     }
 
     /// @notice Refresh the shop seed. Costs ROLL_COST ore.
@@ -284,6 +287,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (idx != 0) {
             _removeFromBucket(agentId);
         }
+        require(bucketGhosts[bucketId].length < MAX_BUCKET_SIZE, "bucket full");
         bucketGhosts[bucketId].push(agentId);
         _bucketOf[agentId] = bucketId;
         _indexOfPlusOne[agentId] = bucketGhosts[bucketId].length; // index+1
@@ -438,9 +442,12 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         } else if (!leftAlive && rightAlive) {
             winnerAgentId = m.defenderId;
         } else {
-            // Draw → attacker loses tie (defender's pick of frontline is more stable
-            // and we need a winner for ELO settlement). Spike judgment.
-            winnerAgentId = m.defenderId;
+            // Draw — either both sides survived the 200-turn cap or wiped on the
+            // same turn. Pick a winner from a hash of (seed, "draw") so we don't
+            // introduce a systematic bias toward attacker or defender. Still
+            // deterministic for the same matchId.
+            uint256 coin = uint256(keccak256(abi.encode(m.seed, "draw"))) & 1;
+            winnerAgentId = coin == 0 ? m.attackerId : m.defenderId;
         }
 
         // Copy trimmed buffer

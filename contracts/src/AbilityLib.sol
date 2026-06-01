@@ -166,6 +166,12 @@ library AbilityLib {
         uint8 slot,
         Effect memory eff
     ) private pure {
+        // BUFF_NEIGHBOR is defined relative to the caster's slot — buffing the
+        // target's neighbors is incoherent. Enforce SELF target at the
+        // dispatch boundary so catalog mistakes surface in tests.
+        if (eff.effectType == EFF_BUFF_NEIGHBOR) {
+            require(eff.target == TGT_SELF, "BUFF_NEIGHBOR requires SELF target");
+        }
         if (eff.target == TGT_SELF) {
             _applyToUnit(state, q, side, slot, eff);
         } else if (eff.target == TGT_LEFT_NEIGHBOR) {
@@ -235,6 +241,10 @@ library AbilityLib {
             return;
         } else if (eff.effectType == EFF_BUFF_NEIGHBOR) {
             // Buffs both immediate neighbors. magnitude = +ATK, 2*magnitude = +HP.
+            // Slot is always the caster's slot (already resolved by _applyEffect
+            // for the TGT_SELF case). UnitCatalog must register BUFF_NEIGHBOR
+            // with TGT_SELF so the caster's neighbors get buffed, not the
+            // target slot's neighbors — which would be incoherent.
             if (slot > 0 && _aliveAt(state, side, slot - 1)) {
                 Unit memory l = _unitAt(state, side, slot - 1);
                 l.atk += eff.magnitude;
