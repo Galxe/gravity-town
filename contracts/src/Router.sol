@@ -13,6 +13,9 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     address public inboxLedger;
     address public gameEngine;
     address public evaluationLedger;
+    /// @dev Added in v2 — Arena side-system. Storage-appended so existing proxies
+    ///      keep their previous slots intact across upgrade.
+    address public arenaEngine;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() { _disableInitializers(); }
@@ -42,7 +45,11 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function setInboxLedger(address _v) external onlyOwner { inboxLedger = _v; }
     function setGameEngine(address _v) external onlyOwner { gameEngine = _v; }
     function setEvaluationLedger(address _v) external onlyOwner { evaluationLedger = _v; }
+    function setArenaEngine(address _v) external onlyOwner { arenaEngine = _v; }
 
+    /// @notice Original 6-tuple getter. Kept intact for chain.ts and Upgrade.s.sol
+    ///         compatibility — they decode the return ABI by length. Do NOT extend
+    ///         this signature; new addresses go through `getAddressesV2`.
     function getAddresses() external view returns (
         address _registry,
         address _agentLedger,
@@ -52,5 +59,19 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         address _evaluationLedger
     ) {
         return (registry, agentLedger, locationLedger, inboxLedger, gameEngine, evaluationLedger);
+    }
+
+    /// @notice Extended getter including ArenaEngine. Front-end and side-system
+    ///         clients should prefer this once they've upgraded their decoder.
+    function getAddressesV2() external view returns (
+        address _registry,
+        address _agentLedger,
+        address _locationLedger,
+        address _inboxLedger,
+        address _gameEngine,
+        address _evaluationLedger,
+        address _arenaEngine
+    ) {
+        return (registry, agentLedger, locationLedger, inboxLedger, gameEngine, evaluationLedger, arenaEngine);
     }
 }
