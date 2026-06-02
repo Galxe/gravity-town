@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { UnitCard } from './UnitCard';
 import { useArenaStore, ArenaTurn } from '../../store/useArenaStore';
 import { getUnit } from '../../lib/arenaUnits';
@@ -80,7 +80,6 @@ export function ReplayCanvas({
       <div className="flex items-center justify-center gap-2 px-2 py-4 rounded-lg bg-gradient-to-b from-zinc-900/60 to-zinc-950/60 border border-zinc-800">
         <div className="flex gap-1.5">
           {attackerBench.map((u, i) => {
-            const isAttacker = lastTurn?.attackerSide === 0 && lastTurn?.attackerSlot === i;
             const isDefender = lastTurn?.attackerSide === 1 && lastTurn?.defenderSlot === i;
             return (
               <UnitCard
@@ -101,7 +100,6 @@ export function ReplayCanvas({
 
         <div className="flex gap-1.5">
           {defenderBench.map((u, i) => {
-            const isAttacker = lastTurn?.attackerSide === 1 && lastTurn?.attackerSlot === i;
             const isDefender = lastTurn?.attackerSide === 0 && lastTurn?.defenderSlot === i;
             return (
               <UnitCard
