@@ -336,10 +336,10 @@ export function useArenaEngine() {
 
         // Track recent W/L per agent
         if (wid) {
-          recentResultsRef.current[wid] = ['W', ...(recentResultsRef.current[wid] ?? [])].slice(0, 5);
+          recentResultsRef.current[wid] = ['W' as const, ...(recentResultsRef.current[wid] ?? [])].slice(0, 5);
         }
         if (loserId) {
-          recentResultsRef.current[loserId] = ['L', ...(recentResultsRef.current[loserId] ?? [])].slice(0, 5);
+          recentResultsRef.current[loserId] = ['L' as const, ...(recentResultsRef.current[loserId] ?? [])].slice(0, 5);
         }
 
         // Highlight: upset = winner came in with much lower ELO than loser.
