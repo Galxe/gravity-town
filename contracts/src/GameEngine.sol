@@ -156,6 +156,8 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event DebateExpired(uint256 indexed entryId);
     event ChronicleWritten(uint256 indexed authorId, uint256 indexed targetAgentId, uint8 rating);
     event WorldBibleWritten(uint256 indexed authorId, uint256 indexed entryId);
+    event OreSpent(uint256 indexed agentId, uint256 amount);
+    event OreRefunded(uint256 indexed agentId, uint256 amount);
 
     // ──────────────────── Auth ────────────────────
 
@@ -456,6 +458,33 @@ contract GameEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
                 h.happiness = newHappy > MAX_HAPPINESS ? MAX_HAPPINESS : newHappy;
             }
         }
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //                     ORE HOOK (for side systems like Arena)
+    // ══════════════════════════════════════════════════════════
+
+    /// @notice Spend ore from an agent's pool. Only operator-class callers
+    ///         (e.g. ArenaEngine, future side-system contracts).
+    /// @dev Side systems should be added as operators on AgentRegistry. We
+    ///      auto-harvest first so a stale pool doesn't block a valid spend.
+    function spendOre(uint256 agentId, uint256 amount) external onlyOperatorOrOwner {
+        _harvestAll(agentId);
+        require(orePool[agentId] >= amount, "insufficient ore");
+        orePool[agentId] -= amount;
+        emit OreSpent(agentId, amount);
+    }
+
+    /// @notice Credit ore back to an agent's pool. Caps at MAX_ORE_POOL (excess wasted).
+    ///         Only operator-class callers (e.g. ArenaEngine.sell for sell-back).
+    /// @dev We do NOT auto-harvest here: refund is purely additive and a stale
+    ///      pool is fine — the cap is applied after the credit.
+    function refundOre(uint256 agentId, uint256 amount) external onlyOperatorOrOwner {
+        if (amount == 0) return;
+        uint256 newPool = orePool[agentId] + amount;
+        if (newPool > MAX_ORE_POOL) newPool = MAX_ORE_POOL;
+        orePool[agentId] = newPool;
+        emit OreRefunded(agentId, amount);
     }
 
     // ══════════════════════════════════════════════════════════
