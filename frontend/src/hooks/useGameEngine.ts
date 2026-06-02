@@ -79,7 +79,12 @@ export function useGameEngine() {
   const isFetching = useRef(false);
 
   useEffect(() => {
-    const active = getActiveNetwork();
+    // See useArenaEngine for the same reasoning — when the build was made
+    // against a localhost RPC the user hasn't intentionally picked a network,
+    // and the first-baked network (mainnet) shouldn't shadow the local chain.
+    const onLocalhostBuild = /^https?:\/\/(127\.0\.0\.1|localhost|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(FALLBACK_RPC_URL);
+    const userPicked = typeof window !== 'undefined' && !!window.localStorage?.getItem('gt:network');
+    const active = (onLocalhostBuild && !userPicked) ? undefined : getActiveNetwork();
     const RPC_URL     = active?.rpc_url        ?? FALLBACK_RPC_URL;
     const ROUTER_ADDR = active?.router_address ?? FALLBACK_ROUTER;
     const CHAIN_ID    = active?.chain_id       ?? FALLBACK_CHAIN;
