@@ -9,6 +9,7 @@ import "../src/LocationLedger.sol";
 import "../src/InboxLedger.sol";
 import "../src/EvaluationLedger.sol";
 import "../src/GameEngine.sol";
+import "../src/ArenaEngine.sol";
 import "../src/Router.sol";
 
 contract DeployScript is Script {
@@ -82,6 +83,21 @@ contract DeployScript is Script {
         engine.setAgentLedger(address(agentLedgerProxy));
         engine.setEvaluationLedger(address(evalLedgerProxy));
 
+        // ──── Deploy ArenaEngine (side system on top of main world) ────
+        ArenaEngine arenaImpl = new ArenaEngine();
+        ERC1967Proxy arenaProxy = new ERC1967Proxy(
+            address(arenaImpl),
+            abi.encodeCall(ArenaEngine.initialize, (
+                address(registry),
+                address(engine),
+                address(evalLedgerProxy)
+            ))
+        );
+        // Arena needs to be operator so it can call GameEngine.spendOre and
+        // EvaluationLedger.write.
+        registry.addOperator(address(arenaProxy));
+        Router(address(routerProxy)).setArenaEngine(address(arenaProxy));
+
         // ──── Initialize World Bible ────
         engine.initWorldBible();
 
@@ -94,6 +110,7 @@ contract DeployScript is Script {
         console.log("InboxLedger      (proxy):", address(inboxLedgerProxy));
         console.log("EvaluationLedger (proxy):", address(evalLedgerProxy));
         console.log("GameEngine       (proxy):", address(engineProxy));
+        console.log("ArenaEngine      (proxy):", address(arenaProxy));
 
         string memory json = string.concat(
             '{\n',

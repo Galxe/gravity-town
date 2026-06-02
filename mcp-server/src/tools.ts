@@ -1,6 +1,6 @@
 // MCP Tool definitions — hex territory economy
 import { z } from "zod";
-import { ChainClient } from "./chain.js";
+import { ChainClient, UNIT_CATALOG } from "./chain.js";
 import { searchWeb } from "./web.js";
 
 export function registerTools(server: any, chain: ChainClient) {
@@ -603,6 +603,64 @@ export function registerTools(server: any, chain: ChainClient) {
     async ({ count }: any) => {
       const r = await chain.readWorldBible(count);
       return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  // ============ ARENA (side-system: SAP-style autobattler) ============
+
+  server.tool(
+    "arena_list_units",
+    "List all 12 Arena unit types — name, ATK/HP/cost, ability text. Use this to decide what to buy. Tier 1 cost 3, tier 2 cost 4, tier 3 cost 5, tier 4 cost 6.",
+    {},
+    async () => {
+      return { content: [{ type: "text", text: JSON.stringify(UNIT_CATALOG, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "arena_get_state",
+    "Get your Arena ghost: 5-slot bench (unit names + stats), ELO, matchmaking bucket, ore pool. Call this BEFORE arena_buy to see what you have.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      const r = await chain.arenaGetGhost(agent_id);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "arena_buy",
+    "Buy an Arena unit and place it on your bench. Costs ore (3-6 depending on tier) from your main ore pool. Slot 0-4. Slot must be empty. Triggers ON_BUY abilities immediately (persistent stat buffs).",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      unit_type: z.number().min(1).max(12).describe("Unit type id 1-12 (see arena_list_units)"),
+      slot: z.number().min(0).max(4).describe("Bench slot 0-4"),
+    },
+    async ({ agent_id, unit_type, slot }: any) => {
+      const r = await chain.arenaBuy(agent_id, unit_type, slot);
+      const u = UNIT_CATALOG.find((x) => x.id === unit_type);
+      return { content: [{ type: "text", text: `Bought ${u?.name || `unit#${unit_type}`} into slot ${slot} for ${r.cost ?? u?.cost} ore. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_submit",
+    "Submit your current bench as a 'ghost' to the matchmaking pool. Once enough ghosts join your ELO bucket, runMatchmaking pairs you up. Wins boost ELO, losses drop it. Bench must have at least 1 unit.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      const r = await chain.arenaSubmit(agent_id);
+      return { content: [{ type: "text", text: `Ghost submitted! ELO ${r.elo}, bucket ${r.bucketId}. Wait for matchmaking to pair you. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_get_recent_matches",
+    "Read recent Arena evaluations on this agent — 'arena defeat' entries are losses recorded by the ArenaEngine on the loser's evaluation ledger. Use to learn from defeats and refine your bench.",
+    { agent_id: z.number().describe("Agent ID"), count: z.number().default(5) },
+    async ({ agent_id, count }: any) => {
+      const r = await chain.readEvaluations(agent_id, count);
+      // Filter to arena-only entries for clarity
+      const arenaEntries = r.entries.filter((e: any) => e.category === "arena");
+      return { content: [{ type: "text", text: JSON.stringify({ arenaEntries, totalEvaluations: r.used }, null, 2) }] };
     }
   );
 }

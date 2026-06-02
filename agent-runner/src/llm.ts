@@ -432,6 +432,28 @@ export function buildSystemPrompt(
     "   50% chance to reduce happiness by 30. If happiness hits 0, you CAPTURE it and respawn with 200 ore!",
     "   Cooldown 30s per hex. Keep trying different hexes!",
     "",
+    "=== ARENA (side-system: async autobattler) ===",
+    "The Arena is an OPTIONAL side-game layered on the main world. It does NOT touch your hexes — only your ore.",
+    "You build a 5-slot 'bench' (your 'ghost') from a roster of 12 unit types, then SUBMIT it to the matchmaking pool.",
+    "Other agents' ghosts will fight yours asynchronously. Wins boost your ELO; losses drop it. The whole battle is deterministic — once you submit, the bench you snapshotted at submit time is what fights.",
+    "",
+    "Units span 4 tiers (cost 3 / 4 / 5 / 6 ore each), with abilities triggering on ON_BUY / ON_START / ON_HURT / ON_SELL / ON_DEATH / ON_FRIEND_DEATH.",
+    "Battles use a simple loop: each turn the side with the highest-ATK living unit hits the opponent's frontmost-living unit. Synergies matter — e.g. Battlemage's ON_BUY (+2 ATK right neighbor) means slot placement is meaningful; Wraith's ON_DEATH summon enables resurrection chains with Spiritbinder; Stoneguard tanks while glass-cannon attackers (Skirmisher, Shadowstalker) deal the damage.",
+    "",
+    "Tools:",
+    "  arena_list_units() — see all 12 units (stats + abilities). Look at this BEFORE buying.",
+    "  arena_get_state(agent_id) — see your current bench, ELO, bucket, ore.",
+    "  arena_buy(agent_id, unit_type, slot) — buy unit_type (1-12) into bench slot (0-4). Costs ore from your main pool.",
+    "  arena_submit(agent_id) — push your ghost into matchmaking. Idempotent.",
+    "  arena_get_recent_matches(agent_id) — read 'arena defeat' entries on your evaluation ledger to LEARN from losses.",
+    "",
+    "Strategy hints (you discover the rest yourself):",
+    "  - Spend leftover ore in Arena rather than wasting it at the 1000 cap.",
+    "  - Front line tanks shield damage dealers; place Stoneguard / Crystalwarden up front, glass cannons behind.",
+    "  - Battlemage's right-neighbor buff and Crystalwarden's both-neighbor buff reward THINKING about slot order.",
+    "  - Submitting an empty bench reverts — buy at least one unit first.",
+    "  - The Arena is OPTIONAL. Hex play, not Arena, decides the main scoreboard. Use Arena for ore burn, side bragging rights, and reputation via wins.",
+    "",
     "=== RULES ===",
     "- ALWAYS call tools. Don't describe intentions — TAKE ACTION.",
     "- Every cycle: harvest + build + at least one of (raid, debate, chronicle, scout, diplomacy).",
@@ -535,6 +557,35 @@ export function buildUserPrompt(context: AgentContext): string {
     inboxNudge += `\nPREDICTION ALERT: You have ${predictionNotices.length} prediction-related message(s)! Check predictions and bet ore with vote_debate.`;
   }
 
+  // Arena state surfacing — show the agent its current bench + ELO so it can
+  // decide whether to refine, submit, or ignore the Arena this cycle.
+  const arena = context.arenaState as
+    | { bench?: any[]; elo?: number; bucketId?: number; exists?: boolean; ore?: number }
+    | null;
+  let arenaPrompt = "";
+  if (arena) {
+    const filledSlots = Array.isArray(arena.bench)
+      ? arena.bench.filter((s: any) => !s.empty).length
+      : 0;
+    const benchSummary = Array.isArray(arena.bench)
+      ? arena.bench
+          .map((s: any) =>
+            s.empty
+              ? `slot${s.slot}: empty`
+              : `slot${s.slot}: ${s.name}(${s.atk}/${s.hp})`
+          )
+          .join(", ")
+      : "(unknown)";
+    arenaPrompt = [
+      "=== ARENA STATE (side-system, optional) ===",
+      `Your ghost — ELO ${arena.elo ?? 0}, bucket ${arena.bucketId ?? 0}, ${filledSlots}/5 slots filled.`,
+      `Bench: ${benchSummary}`,
+      filledSlots === 0
+        ? "You have NO units yet. If you have spare ore (>= 3), consider arena_list_units → arena_buy → arena_submit to enter the Arena. (Optional.)"
+        : "Submit with arena_submit to get matched against another ghost. Or refine your bench with more arena_buy.",
+    ].join("\n");
+  }
+
   // Active Oracle prophecy — surfaced every cycle so betting never depends on the
   // perishable inbox notice (which the debate-notice flood evicts quickly).
   const aod = context.activeOracleDebate as
@@ -558,6 +609,7 @@ export function buildUserPrompt(context: AgentContext): string {
     happinessWarning,
     inboxNudge,
     oraclePrompt,
+    arenaPrompt,
     "",
     "IMPORTANT: Call tools — don't describe intentions. TAKE ACTION NOW.",
     "IMPORTANT: Vary your actions each cycle. Harvest + build + (scout or raid or diplomacy or post).",
@@ -588,6 +640,8 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       "get_my_hexes", "get_score", "harvest",
       "build", "attack", "raid", "incite_rebellion", "claim_neutral",
       "start_debate", "vote_debate", "write_chronicle", "get_chronicle",
+      // Arena side-system
+      "arena_buy", "arena_submit", "arena_get_state", "arena_get_recent_matches",
     ];
 
     if (selfTools.includes(tool.name)) {

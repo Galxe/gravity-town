@@ -83,7 +83,7 @@ export async function collectContext(
       ? Number((self as AgentSnapshot).location)
       : undefined;
 
-  const [world, nearbyAgents, memories, locationBoard, inbox, myHexes, activeOracleDebate] = await Promise.all([
+  const [world, nearbyAgents, memories, locationBoard, inbox, myHexes, activeOracleDebate, arenaState] = await Promise.all([
     callMcpTool(client, "get_world").then(parseToolJson),
     callMcpTool(client, "get_nearby_agents", { agent_id: agentId }).then(parseToolJson),
     callMcpTool(client, "read_memories", { agent_id: agentId, count: 10 }).then(parseToolJson),
@@ -93,9 +93,12 @@ export async function collectContext(
     callMcpTool(client, "read_inbox", { agent_id: agentId, count: 16 }).then(parseToolJson),
     callMcpTool(client, "get_my_hexes", { agent_id: agentId }).then(parseToolJson).catch(() => null),
     callMcpTool(client, "get_active_oracle_debate").then(parseToolJson).catch(() => null),
+    // Arena side-system — pull current ghost state if tool exists. Best-effort: if
+    // the chain has no ArenaEngine deployed the tool errors and we degrade to null.
+    callMcpTool(client, "arena_get_state", { agent_id: agentId }).then(parseToolJson).catch(() => null),
   ]);
 
-  return { self, world, nearbyAgents, memories, locationBoard, inbox, myHexes, activeOracleDebate };
+  return { self, world, nearbyAgents, memories, locationBoard, inbox, myHexes, activeOracleDebate, arenaState };
 }
 
 export function parseArguments(toolCall: ToolCall): Record<string, unknown> {
@@ -118,6 +121,8 @@ export function applyAgentDefaults(
     "get_my_hexes", "get_score", "harvest",
     "build", "attack", "raid", "incite_rebellion", "claim_neutral",
     "start_debate", "vote_debate", "write_chronicle", "get_chronicle",
+    // Arena
+    "arena_buy", "arena_submit", "arena_get_state", "arena_get_recent_matches",
   ];
 
   if (selfTools.includes(toolName) && next.agent_id === undefined) {

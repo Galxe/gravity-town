@@ -47,3 +47,34 @@ html, body {
 .cartoon-scroll::-webkit-scrollbar-thumb:hover {
   background: var(--wood-mid);
 }
+
+/* ── Arena ───────────────────────────────────────────────────────────── */
+
+/* /arena route overrides the body bg so the tournament hall reads as a
+   dark esports broadcast rather than a parchment map. */
+body.arena-route {
+  background-color: #0a0a0d;
+  color: #e4e4e7;
+  overflow: auto;
+}
+
+@keyframes arena-hit {
+  0%   { transform: scale(1); filter: brightness(1); }
+  35%  { transform: scale(1.15); filter: brightness(2) drop-shadow(0 0 6px #f97316); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+.animate-arena-hit {
+  animation: arena-hit 0.45s ease-out 1;
+}
+
+@keyframes arena-slidein {
+  0%   { transform: translateX(20px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+.animate-arena-slidein {
+  animation: arena-slidein 0.35s ease-out 1;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
+

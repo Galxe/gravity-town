@@ -10,6 +10,7 @@ import "../src/LocationLedger.sol";
 import "../src/InboxLedger.sol";
 import "../src/EvaluationLedger.sol";
 import "../src/GameEngine.sol";
+import "../src/ArenaEngine.sol";
 
 /// @notice Upgrade all implementations behind existing proxies.
 ///         Only requires ROUTER_ADDRESS - resolves everything else on-chain.
@@ -99,6 +100,31 @@ contract UpgradeScript is Script {
                 engine.initWorldBible();
                 console.log("Initialized World Bible");
             }
+        }
+
+        // 5. ArenaEngine: deploy fresh proxy if router slot is unset, else upgrade.
+        //    Same shape as the EvaluationLedger backfill above.
+        address arenaProxy;
+        (bool okArena, bytes memory arenaData) = routerProxy.staticcall(abi.encodeWithSignature("arenaEngine()"));
+        if (okArena && arenaData.length >= 32) {
+            arenaProxy = abi.decode(arenaData, (address));
+        }
+
+        if (arenaProxy == address(0)) {
+            console.log("ArenaEngine not found - deploying new proxy...");
+            ArenaEngine arenaImpl = new ArenaEngine();
+            ERC1967Proxy newArena = new ERC1967Proxy(
+                address(arenaImpl),
+                abi.encodeCall(ArenaEngine.initialize, (registryProxy, engineProxy, evalLedgerProxy))
+            );
+            arenaProxy = address(newArena);
+            Router(routerProxy).setArenaEngine(arenaProxy);
+            // Arena needs to call GameEngine.spendOre and EvaluationLedger.write.
+            AgentRegistry(registryProxy).addOperator(arenaProxy);
+            console.log("ArenaEngine      (new):", arenaProxy);
+        } else {
+            ArenaEngine(arenaProxy).upgradeToAndCall(address(new ArenaEngine()), "");
+            console.log("ArenaEngine upgraded:", arenaProxy);
         }
 
         vm.stopBroadcast();
