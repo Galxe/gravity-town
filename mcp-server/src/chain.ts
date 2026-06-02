@@ -89,6 +89,52 @@ const GAME_ENGINE_ABI = [
 
 const ROUTER_ABI = [
   "function getAddresses() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger, address gameEngine, address evaluationLedger)",
+  "function getAddressesV2() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger, address gameEngine, address evaluationLedger, address arenaEngine)",
+  "function arenaEngine() view returns (address)",
+];
+
+// ──────────────────── Arena ABI ────────────────────
+
+const ARENA_ENGINE_ABI = [
+  "event GhostSubmitted(uint256 indexed agentId, uint16 elo, uint16 bucketId)",
+  "event UnitBought(uint256 indexed agentId, uint8 unitType, uint8 slot, uint16 cost)",
+  "event UnitSold(uint256 indexed agentId, uint8 slot, uint16 refund)",
+  "event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed)",
+  "event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo)",
+  "event MatchmakingRan(uint16 indexed bucketId, uint256 matchesCreated)",
+  "function buy(uint256 agentId, uint8 unitType, uint8 toSlot)",
+  "function sell(uint256 agentId, uint8 slot)",
+  "function move(uint256 agentId, uint8 fromSlot, uint8 toSlot)",
+  "function freeze(uint256 agentId, uint8 shopSlot)",
+  "function roll(uint256 agentId)",
+  "function submit(uint256 agentId)",
+  "function runMatchmaking(uint16 bucketId) returns (uint256 matchesCreated)",
+  "function settleMatch(uint256 matchId)",
+  "function getGhost(uint256 agentId) view returns (uint8[5] bench, uint16 elo, uint16 bucketId, uint64 lastUpdate, bool exists)",
+  "function getMatch(uint256 matchId) view returns (uint256 attackerId, uint256 defenderId, uint8[5] attackerBench, uint8[5] defenderBench, uint64 seed, uint64 createdAt, bool settled, uint256 winnerId)",
+  "function simulateMatch(uint256 matchId) view returns (tuple(uint8 attackerSide, uint8 attackerSlot, uint8 defenderSlot, uint16 damage, bool defenderDied)[] turns, uint256 winnerAgentId)",
+  "function bucketSize(uint16 bucketId) view returns (uint256)",
+  "function bucketOf(uint256 agentId) view returns (uint16)",
+  "function nextMatchId() view returns (uint256)",
+];
+
+// ──────────────────── Unit catalog (mirrors UnitCatalog.sol — kept in sync) ────────────────────
+
+export const UNIT_CATALOG: Array<{
+  id: number; name: string; atk: number; hp: number; cost: number; ability: string;
+}> = [
+  { id: 1,  name: "Mineworker",     atk: 2, hp: 3, cost: 3, ability: "ON_BUY: +1 ATK self (snowball)" },
+  { id: 2,  name: "Stoneguard",     atk: 2, hp: 4, cost: 3, ability: "ON_START: +3 HP self (tank)" },
+  { id: 3,  name: "Skirmisher",     atk: 3, hp: 3, cost: 3, ability: "ON_HURT: +1 ATK self (berserker)" },
+  { id: 4,  name: "Pyromancer",     atk: 3, hp: 4, cost: 4, ability: "ON_START: 3 dmg random enemy" },
+  { id: 5,  name: "Battlemage",     atk: 3, hp: 5, cost: 4, ability: "ON_BUY: +2 ATK right neighbor (build-around)" },
+  { id: 6,  name: "Ravenscout",     atk: 4, hp: 4, cost: 4, ability: "ON_SELL: +1 ATK all allies (econ payoff)" },
+  { id: 7,  name: "Hexhunter",      atk: 4, hp: 5, cost: 5, ability: "ON_FRIEND_DEATH: +2 ATK self (carry scaler)" },
+  { id: 8,  name: "Crystalwarden",  atk: 3, hp: 6, cost: 5, ability: "ON_START: buff neighbors (+2 ATK, +4 HP each)" },
+  { id: 9,  name: "Stormcaller",    atk: 4, hp: 6, cost: 5, ability: "ON_HURT: 2 dmg random enemy (reactive AOE)" },
+  { id: 10, name: "Wraith",         atk: 5, hp: 5, cost: 6, ability: "ON_DEATH: summon 3/3 token (resurrection)" },
+  { id: 11, name: "Shadowstalker",  atk: 6, hp: 5, cost: 6, ability: "ON_DEATH: 5 dmg random enemy (revenge nuke)" },
+  { id: 12, name: "Spiritbinder",   atk: 5, hp: 6, cost: 6, ability: "ON_FRIEND_DEATH: summon 2/2 token (chain)" },
 ];
 
 const EVALUATION_LEDGER_ABI = [
@@ -139,6 +185,7 @@ export class ChainClient {
   inboxLedger: ethers.Contract = null!;
   gameEngine: ethers.Contract = null!;
   evaluationLedger: ethers.Contract = null!;
+  arenaEngine: ethers.Contract | null = null;
   private _ready: Promise<void>;
   /** Last oracle debate created this session — surfaced to agents every cycle so
    *  betting visibility does not depend on the perishable inbox notice. */
@@ -154,14 +201,27 @@ export class ChainClient {
     const signer = this.signer;
     this._ready = (async () => {
       const router = new ethers.Contract(config.routerAddress, ROUTER_ABI, provider);
-      const [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr] =
-        await router.getAddresses();
+      // Try V2 (7-tuple, includes arenaEngine) first — fall back to V1 if router
+      // hasn't been upgraded yet so we degrade gracefully (Arena tools just become unavailable).
+      let registryAddr: string, agentLedgerAddr: string, locationLedgerAddr: string;
+      let inboxLedgerAddr: string, engineAddr: string, evalLedgerAddr: string;
+      let arenaAddr: string = ethers.constants.AddressZero;
+      try {
+        [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr, arenaAddr] =
+          await router.getAddressesV2();
+      } catch {
+        [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr] =
+          await router.getAddresses();
+      }
       this.registry = new ethers.Contract(registryAddr, AGENT_REGISTRY_ABI, signer);
       this.agentLedger = new ethers.Contract(agentLedgerAddr, AGENT_LEDGER_ABI, signer);
       this.locationLedger = new ethers.Contract(locationLedgerAddr, LOCATION_LEDGER_ABI, signer);
       this.inboxLedger = new ethers.Contract(inboxLedgerAddr, INBOX_LEDGER_ABI, signer);
       this.gameEngine = new ethers.Contract(engineAddr, GAME_ENGINE_ABI, signer);
       this.evaluationLedger = new ethers.Contract(evalLedgerAddr, EVALUATION_LEDGER_ABI, signer);
+      if (arenaAddr && arenaAddr !== ethers.constants.AddressZero) {
+        this.arenaEngine = new ethers.Contract(arenaAddr, ARENA_ENGINE_ABI, signer);
+      }
     })();
   }
 
@@ -637,5 +697,161 @@ export class ChainClient {
 
   async getOracleAgentId(): Promise<number> {
     return Number(await this.gameEngine.oracleAgentId());
+  }
+
+  // ============ Arena ============
+
+  /** Throws if router didn't expose an ArenaEngine (i.e. old deploy). */
+  private requireArena(): ethers.Contract {
+    if (!this.arenaEngine) throw new Error("Arena not deployed — router has no arenaEngine address");
+    return this.arenaEngine;
+  }
+
+  async arenaBuy(agentId: number, unitType: number, toSlot: number) {
+    const arena = this.requireArena();
+    const tx = await arena.buy(agentId, unitType, toSlot);
+    const receipt = await tx.wait();
+    let result: { unitType?: number; slot?: number; cost?: number } = {};
+    const iface = arena.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "UnitBought") {
+          result = {
+            unitType: Number(parsed.args.unitType),
+            slot: Number(parsed.args.slot),
+            cost: Number(parsed.args.cost),
+          };
+          break;
+        }
+      } catch {}
+    }
+    return { ...result, txHash: receipt.transactionHash };
+  }
+
+  async arenaSubmit(agentId: number) {
+    const arena = this.requireArena();
+    const tx = await arena.submit(agentId);
+    const receipt = await tx.wait();
+    let elo = 0, bucketId = 0;
+    const iface = arena.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "GhostSubmitted") {
+          elo = Number(parsed.args.elo);
+          bucketId = Number(parsed.args.bucketId);
+          break;
+        }
+      } catch {}
+    }
+    return { elo, bucketId, txHash: receipt.transactionHash };
+  }
+
+  async arenaGetGhost(agentId: number) {
+    const arena = this.requireArena();
+    const [bench, elo, bucketId, lastUpdate, exists] = await arena.getGhost(agentId);
+    const benchArr = (bench as any[]).map((b) => Number(b));
+    const benchNamed = benchArr.map((unitType, slot) => {
+      if (unitType === 0) return { slot, unitType: 0, empty: true };
+      const u = UNIT_CATALOG.find((x) => x.id === unitType);
+      return { slot, unitType, name: u?.name || "?", atk: u?.atk, hp: u?.hp, ability: u?.ability };
+    });
+    const orePool = Number(await this.gameEngine.orePool(agentId));
+    return {
+      bench: benchNamed,
+      elo: Number(elo),
+      bucketId: Number(bucketId),
+      lastUpdate: Number(lastUpdate),
+      exists,
+      ore: orePool,
+    };
+  }
+
+  async arenaGetMatch(matchId: number) {
+    const arena = this.requireArena();
+    const [attackerId, defenderId, attackerBench, defenderBench, seed, createdAt, settled, winnerId] =
+      await arena.getMatch(matchId);
+    const decode = (bench: any[]) => (bench as any[]).map((b, slot) => {
+      const t = Number(b);
+      if (t === 0) return { slot, unitType: 0, empty: true };
+      const u = UNIT_CATALOG.find((x) => x.id === t);
+      return { slot, unitType: t, name: u?.name || "?", atk: u?.atk, hp: u?.hp };
+    });
+    return {
+      matchId,
+      attackerId: Number(attackerId),
+      defenderId: Number(defenderId),
+      attackerBench: decode(attackerBench),
+      defenderBench: decode(defenderBench),
+      seed: String(seed),
+      createdAt: Number(createdAt),
+      settled,
+      winnerId: Number(winnerId),
+    };
+  }
+
+  async arenaSimulateMatch(matchId: number) {
+    const arena = this.requireArena();
+    const [turns, winnerAgentId] = await arena.simulateMatch(matchId);
+    const turnsDecoded = (turns as any[]).map((t, i) => ({
+      idx: i,
+      attackerSide: Number(t.attackerSide) === 0 ? "attacker" : "defender",
+      attackerSlot: Number(t.attackerSlot),
+      defenderSlot: Number(t.defenderSlot),
+      damage: Number(t.damage),
+      defenderDied: Boolean(t.defenderDied),
+    }));
+    return { matchId, winnerAgentId: Number(winnerAgentId), turns: turnsDecoded };
+  }
+
+  async arenaRunMatchmaking(bucketId: number) {
+    const arena = this.requireArena();
+    const tx = await arena.runMatchmaking(bucketId);
+    const receipt = await tx.wait();
+    let matchesCreated = 0;
+    const matchIds: number[] = [];
+    const iface = arena.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "MatchmakingRan") {
+          matchesCreated = Number(parsed.args.matchesCreated);
+        } else if (parsed.name === "MatchCreated") {
+          matchIds.push(Number(parsed.args.matchId));
+        }
+      } catch {}
+    }
+    return { matchesCreated, matchIds, txHash: receipt.transactionHash };
+  }
+
+  async arenaSettleMatch(matchId: number) {
+    const arena = this.requireArena();
+    const tx = await arena.settleMatch(matchId);
+    const receipt = await tx.wait();
+    let winnerId = 0, newWinnerElo = 0, newLoserElo = 0;
+    const iface = arena.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "MatchSettled") {
+          winnerId = Number(parsed.args.winnerId);
+          newWinnerElo = Number(parsed.args.newWinnerElo);
+          newLoserElo = Number(parsed.args.newLoserElo);
+          break;
+        }
+      } catch {}
+    }
+    return { winnerId, newWinnerElo, newLoserElo, txHash: receipt.transactionHash };
+  }
+
+  async arenaBucketSize(bucketId: number): Promise<number> {
+    const arena = this.requireArena();
+    return Number(await arena.bucketSize(bucketId));
+  }
+
+  async arenaNextMatchId(): Promise<number> {
+    const arena = this.requireArena();
+    return Number(await arena.nextMatchId());
   }
 }
