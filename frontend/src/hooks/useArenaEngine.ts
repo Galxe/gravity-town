@@ -229,7 +229,7 @@ export function useArenaEngine() {
             if (mid >= nextId - 6 && !useArenaStore.getState().simulations[mid]) {
               try {
                 const sim = await arena.simulateMatch(mid);
-                const turns = Array.from(sim[0]).map((t: readonly unknown[]) => ({
+                const turns = Array.from(sim[0] as ReadonlyArray<readonly unknown[]>).map((t) => ({
                   attackerSide: Number(t[0]) as 0 | 1,
                   attackerSlot: Number(t[1]),
                   defenderSlot: Number(t[2]),
