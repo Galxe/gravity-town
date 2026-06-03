@@ -24,6 +24,7 @@ const ARENA_ABI = [
   'function getGhost(uint256) view returns (uint8[5] bench, uint16 elo, uint16 bucketId, uint64 lastUpdate, bool exists)',
   'function getMatch(uint256) view returns (uint256 attackerId, uint256 defenderId, uint8[5] attackerBench, uint8[5] defenderBench, uint64 seed, uint64 createdAt, bool settled, uint256 winnerId)',
   'function simulateMatch(uint256) view returns (tuple(uint8 attackerSide, uint8 attackerSlot, uint8 defenderSlot, uint16 damage, bool defenderDied)[] turns, uint256 winnerAgentId)',
+  'function getInitialStats(uint256) view returns (uint16[5] leftAtk, uint16[5] leftHp, uint16[5] rightAtk, uint16[5] rightHp)',
   'function nextMatchId() view returns (uint256)',
   'function lastMatchmakingAt(uint16) view returns (uint64)',
   'function MATCHMAKING_PERIOD() view returns (uint32)',
@@ -228,7 +229,17 @@ export function useArenaEngine() {
             // matches to keep RPC pressure low.
             if (mid >= nextId - 6 && !useArenaStore.getState().simulations[mid]) {
               try {
-                const sim = await arena.simulateMatch(mid);
+                // Fetch the trace and the post-ON_START starting stats in
+                // parallel. getInitialStats may be absent on an older contract
+                // (or fail transiently) — isolate its failure so the sim still
+                // loads, and surface the reason instead of swallowing it.
+                const [sim, s] = await Promise.all([
+                  arena.simulateMatch(mid),
+                  arena.getInitialStats(mid).catch((e: unknown) => {
+                    console.warn('[arena] getInitialStats failed for', mid, '— using base stats', e);
+                    return null;
+                  }),
+                ]);
                 const turns = Array.from(sim[0] as ReadonlyArray<readonly unknown[]>).map((t) => ({
                   attackerSide: Number(t[0]) as 0 | 1,
                   attackerSlot: Number(t[1]),
@@ -236,10 +247,22 @@ export function useArenaEngine() {
                   damage: Number(t[3]),
                   defenderDied: Boolean(t[4]),
                 }));
+                // Accurate ATK/HP for the replay (catalog base stats miss buffs).
+                let initial: ArenaSimulation['initial'];
+                if (s) {
+                  const toNums = (a: ReadonlyArray<unknown>) => Array.from(a).map((n) => Number(n));
+                  initial = {
+                    leftAtk: toNums(s[0]),
+                    leftHp: toNums(s[1]),
+                    rightAtk: toNums(s[2]),
+                    rightHp: toNums(s[3]),
+                  };
+                }
                 const simObj: ArenaSimulation = {
                   matchId: mid,
                   turns,
                   winnerId: Number(sim[1]),
+                  initial,
                 };
                 upsertSimulation(simObj);
               } catch (e) {

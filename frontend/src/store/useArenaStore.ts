@@ -40,11 +40,21 @@ export interface ArenaTurn {
   defenderDied: boolean;
 }
 
+/** Post-ON_START starting stats per slot (after buffs/overlays). */
+export interface ArenaInitialStats {
+  leftAtk: number[];
+  leftHp: number[];
+  rightAtk: number[];
+  rightHp: number[];
+}
+
 /** Cached simulation result keyed by matchId. */
 export interface ArenaSimulation {
   matchId: number;
   turns: ArenaTurn[];
   winnerId: number;
+  /** True starting ATK/HP the trace runs on — used to render accurate cards. */
+  initial?: ArenaInitialStats;
 }
 
 /** Highlight ticker entry. */

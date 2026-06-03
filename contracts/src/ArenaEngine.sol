@@ -414,6 +414,34 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         for (uint256 i = 0; i < turnCount; i++) turns[i] = buf[i];
     }
 
+    /// @notice Per-slot ATK/HP after buy/sell overlays AND all ON_START abilities
+    ///         resolve — i.e. the true starting stats the combat trace runs on.
+    ///         The UI uses these so card HP bars, KO timing and the damage log
+    ///         all agree (catalog base stats alone miss ON_START buffs).
+    function getInitialStats(uint256 matchId) external view returns (
+        uint16[SLOTS] memory leftAtk,
+        uint16[SLOTS] memory leftHp,
+        uint16[SLOTS] memory rightAtk,
+        uint16[SLOTS] memory rightHp
+    ) {
+        Match storage m = _matches[matchId];
+        require(m.attackerId != 0, "no match");
+
+        AbilityLib.BattleState memory state = _buildBattleState(
+            m.attackerBench, m.attackerAtkOverride, m.attackerHpOverride,
+            m.defenderBench, m.defenderAtkOverride, m.defenderHpOverride,
+            uint256(m.seed)
+        );
+        state = AbilityLib.triggerAllOnStart(state);
+
+        for (uint8 i = 0; i < SLOTS; i++) {
+            leftAtk[i]  = state.left[i].atk;
+            leftHp[i]   = state.left[i].hp;
+            rightAtk[i] = state.right[i].atk;
+            rightHp[i]  = state.right[i].hp;
+        }
+    }
+
     /// @dev Trace-less winner-only simulator used by settleMatch. Same combat
     ///      loop as simulateMatch but skips the 128-slot turn buffer alloc and
     ///      per-turn writes. Saves ~5-10k gas on settlement.
