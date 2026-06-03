@@ -25,6 +25,12 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     GameEngine public gameEngine;
     EvaluationLedger public evaluationLedger;
 
+    /// @notice G-balance tier. Source of truth = {_tierFor} (reads gTreasury).
+    ///         Frontend/MCP MUST read _tierFor, never re-derive thresholds.
+    ///         (Enum — occupies no storage slot; the gTreasury state var that backs
+    ///          it is declared at the end of storage to preserve the slot layout.)
+    enum Tier { Bronze, Silver, Gold }
+
     // ──────────────────── Tunables ────────────────────
 
     uint8   public constant SLOTS              = 5;
@@ -35,6 +41,13 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint32  public constant MATCHMAKING_PERIOD = 1800;  // 30 minutes between bucket runs
     uint16  public constant ELO_K              = 32;    // standard K-factor
     uint16  public constant MAX_BUCKET_SIZE    = 256;   // submit cap per ELO bucket — keeps Fisher-Yates gas bounded
+
+    // Default tier thresholds in G. Used when the runtime overrides
+    // (tierSilverMinG / tierGoldMinG) are unset. Tunable via setTierThresholds.
+    uint256 public constant DEFAULT_TIER_SILVER_MIN_G = 100;   // gBalance ≥ 100 → Silver
+    uint256 public constant DEFAULT_TIER_GOLD_MIN_G   = 1000;  // gBalance ≥ 1000 → Gold
+    uint32  public constant DEFAULT_TIER_PERIOD = 1800; // default tier matchmaking cooldown (overridable per tier)
+    uint16  public constant MAX_TIER_POOL_SIZE = 256;   // submit cap per tier pool — bounds Fisher-Yates gas
 
     // ──────────────────── Ghost ────────────────────
 
@@ -100,6 +113,35 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     CardLedger public cardLedger;
     bool public marketSeeded;
 
+    // ──────────────────── Tier matchmaking ────────────────────
+    // Appended storage — keeps existing slot layout intact. One pool per tier
+    // (no ELO sub-buckets). Tier is snapshotted at submit and
+    // locked until settle, so mid-cycle G changes don't move an in-flight ghost.
+
+    /// @notice Submitted ghosts per tier. Public getter exposes length via array.
+    mapping(Tier => uint256[]) internal tierPool;
+    /// @dev O(1) removal helper: tierPoolIndexPlusOne[agentId] = index+1. 0 = not pooled.
+    mapping(uint256 => uint256) internal tierPoolIndexPlusOne;
+    /// @notice agentId → tier it submitted into (locked at submit). Read alongside
+    ///         {isSubmitted} — Bronze(0) is also the "never submitted" zero value.
+    mapping(uint256 => Tier) public submittedTier;
+    /// @dev True while the agent currently sits in a tier pool (disambiguates Bronze=0).
+    mapping(uint256 => bool) public isSubmitted;
+    /// @notice agentId → active matchId (0 = none). Blocks withdraw once matched.
+    mapping(uint256 => uint256) public activeMatchOf;
+    /// @notice Per-tier keeper rate-limit. Last run timestamp.
+    mapping(Tier => uint64) public lastTierMatchmakingAt;
+    /// @notice Per-tier matchmaking cooldown override (0 = use DEFAULT_TIER_PERIOD).
+    mapping(Tier => uint64) public tierMatchmakingPeriod;
+
+    /// @notice Runtime tier-threshold overrides in G (0 = use the DEFAULT_* constant).
+    ///         Owner-tunable via {setTierThresholds} so segments can be retuned in
+    ///         operation without a contract upgrade. {tierThresholds} resolves the
+    ///         effective values; {_tierFor} reads through it. Appended at end of
+    ///         storage to keep the legacy bucket slot layout intact.
+    uint256 public tierSilverMinG;
+    uint256 public tierGoldMinG;
+
     // ──────────────────── Events ────────────────────
 
     event GhostSubmitted(uint256 indexed agentId, uint16 elo, uint16 bucketId);
@@ -113,6 +155,14 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed);
     event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo);
     event MatchmakingRan(uint16 indexed bucketId, uint256 matchesCreated);
+
+    // Tier matchmaking events.
+    event GhostSubmittedTier(uint256 indexed agentId, Tier tier, uint16 elo, uint256 gAtSubmit);
+    event SubmissionWithdrawn(uint256 indexed agentId, Tier tier);
+    event MatchmadeInTier(Tier indexed tier, uint256 matchId, uint256 attacker, uint256 defender);
+    event MatchmakingPeriodSet(Tier indexed tier, uint64 secs);
+    event GTreasurySet(address indexed gTreasury);
+    event TierThresholdsSet(uint256 silverMinG, uint256 goldMinG);
 
     // ──────────────────── Init / Auth ────────────────────
 
@@ -141,6 +191,69 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function setCardLedger(address _v) external onlyOwner { cardLedger = CardLedger(_v); }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    // ──────────────────── Tier views ────────────────────
+
+    /// @notice Canonical tier for an agent = f(current G balance). The ONLY source
+    ///         of truth for Bronze/Silver/Gold — frontend and MCP must read this,
+    ///         never re-implement the thresholds. Returns Bronze when gTreasury is
+    ///         unset so the arena still functions before the G economy is wired.
+    function _tierFor(uint256 agentId) public view returns (Tier) {
+        if (address(gTreasury) == address(0)) return Tier.Bronze;
+        uint256 g = gTreasury.gBalance(agentId);
+        (uint256 silverMinG, uint256 goldMinG) = tierThresholds();
+        if (g >= goldMinG) return Tier.Gold;
+        if (g >= silverMinG) return Tier.Silver;
+        return Tier.Bronze;
+    }
+
+    /// @notice Effective tier thresholds in G — the runtime override if set, else
+    ///         the DEFAULT_* constants. Read this (or {_tierFor}) instead of the
+    ///         constants so retuned segments stay consistent everywhere.
+    function tierThresholds() public view returns (uint256 silverMinG, uint256 goldMinG) {
+        silverMinG = tierSilverMinG == 0 ? DEFAULT_TIER_SILVER_MIN_G : tierSilverMinG;
+        goldMinG   = tierGoldMinG   == 0 ? DEFAULT_TIER_GOLD_MIN_G   : tierGoldMinG;
+    }
+
+    /// @notice Retune the Bronze/Silver/Gold G boundaries in operation — no contract
+    ///         upgrade needed. Frontend follows automatically (it reads {_tierFor}).
+    ///         Requires 0 < silver < gold. To restore defaults, set 100 / 1000.
+    function setTierThresholds(uint256 silverMinG, uint256 goldMinG) external onlyOwner {
+        require(silverMinG > 0 && silverMinG < goldMinG, "bad thresholds");
+        tierSilverMinG = silverMinG;
+        tierGoldMinG = goldMinG;
+        emit TierThresholdsSet(silverMinG, goldMinG);
+    }
+
+    /// @notice Batch tier + G balance for many agents in a single call. Lets the
+    ///         leaderboard hydrate with ONE RPC instead of 2 per agent. Tier stays
+    ///         canonical (computed on-chain via {_tierFor}); gBalance is 0 when the
+    ///         G economy isn't wired yet — callers gate display on {gTreasury} != 0.
+    function tierStates(uint256[] calldata agentIds)
+        external
+        view
+        returns (uint8[] memory tiers, uint256[] memory gBalances)
+    {
+        uint256 n = agentIds.length;
+        tiers = new uint8[](n);
+        gBalances = new uint256[](n);
+        bool hasGT = address(gTreasury) != address(0);
+        for (uint256 i = 0; i < n; i++) {
+            tiers[i] = uint8(_tierFor(agentIds[i]));
+            gBalances[i] = hasGT ? gTreasury.gBalance(agentIds[i]) : 0;
+        }
+    }
+
+    /// @notice Number of ghosts currently submitted in a tier's pool. (MCP uses this.)
+    function tierPopulation(Tier tier) external view returns (uint256) {
+        return tierPool[tier].length;
+    }
+
+    /// @notice Effective matchmaking cooldown for a tier (override or default).
+    function effectiveTierPeriod(Tier tier) public view returns (uint64) {
+        uint64 p = tierMatchmakingPeriod[tier];
+        return p == 0 ? uint64(DEFAULT_TIER_PERIOD) : p;
+    }
 
     function _isOperator(address addr) internal view returns (bool) {
         return addr == registry.operator() || registry.operators(addr) || addr == owner();
@@ -305,9 +418,59 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         _assertGhostInvariant(agentId, g);
         require(_hasAnyUnit(g), "empty bench");
 
+        // Legacy ELO-bucket path — retained so runMatchmaking(uint16) keeps working.
         uint16 bucketId = _bucketIdFor(g.elo);
         _addToBucket(agentId, bucketId);
         emit GhostSubmitted(agentId, g.elo, bucketId);
+
+        // Tier path: snapshot G→tier and lock until settle. Idempotent while
+        // already pooled, so a re-submit or a mid-cycle fundAgentG never moves an
+        // in-flight ghost between tiers. settleMatch clears the flag → next submit
+        // recomputes the tier from the new G balance.
+        if (!isSubmitted[agentId]) {
+            Tier t = _tierFor(agentId);
+            _addToTierPool(agentId, t);
+            submittedTier[agentId] = t;
+            isSubmitted[agentId] = true;
+            uint256 gNow = address(gTreasury) == address(0) ? 0 : gTreasury.gBalance(agentId);
+            emit GhostSubmittedTier(agentId, t, g.elo, gNow);
+        }
+    }
+
+    /// @notice Pull a ghost out of its tier pool before it gets matched. Reverts
+    ///         once an active match exists (`activeMatchOf != 0`) — the opponent is
+    ///         entitled to the settle. No G is refunded (submit never charged any).
+    function withdrawSubmission(uint256 agentId) external canControlAgent(agentId) {
+        require(isSubmitted[agentId], "not submitted");
+        require(activeMatchOf[agentId] == 0, "in active match");
+        Tier t = submittedTier[agentId];
+        _removeFromTierPool(agentId);
+        _removeFromBucket(agentId); // keep the legacy bucket pool consistent too
+        isSubmitted[agentId] = false;
+        delete submittedTier[agentId];
+        emit SubmissionWithdrawn(agentId, t);
+    }
+
+    function _addToTierPool(uint256 agentId, Tier t) internal {
+        require(tierPool[t].length < MAX_TIER_POOL_SIZE, "tier pool full");
+        tierPool[t].push(agentId);
+        tierPoolIndexPlusOne[agentId] = tierPool[t].length; // index+1
+    }
+
+    /// @dev O(1) swap-pop removal from whatever tier pool the agent currently sits in.
+    function _removeFromTierPool(uint256 agentId) internal {
+        uint256 idx1 = tierPoolIndexPlusOne[agentId];
+        if (idx1 == 0) return;
+        uint256[] storage arr = tierPool[submittedTier[agentId]];
+        uint256 i = idx1 - 1;
+        uint256 last = arr.length - 1;
+        if (i != last) {
+            uint256 moved = arr[last];
+            arr[i] = moved;
+            tierPoolIndexPlusOne[moved] = i + 1;
+        }
+        arr.pop();
+        delete tierPoolIndexPlusOne[agentId];
     }
 
     function _hasAnyUnit(Ghost storage g) internal view returns (bool) {
@@ -402,8 +565,8 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit MatchmakingRan(bucketId, matchesCreated);
     }
 
-    function _createMatch(uint256 attackerId, uint256 defenderId, uint256 seedMix) internal {
-        uint256 mid = nextMatchId++;
+    function _createMatch(uint256 attackerId, uint256 defenderId, uint256 seedMix) internal returns (uint256 mid) {
+        mid = nextMatchId++;
         Match storage m = _matches[mid];
         m.attackerId = attackerId;
         m.defenderId = defenderId;
@@ -417,7 +580,79 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         m.defenderCardIds = _ghosts[defenderId].cardIds;
         m.seed = uint64(uint256(keccak256(abi.encode(seedMix, attackerId, defenderId))));
         m.createdAt = uint64(block.timestamp);
+        // Lock both sides so they can't withdraw a now-committed submission.
+        // Harmless to the legacy bucket path — cleared on settle either way.
+        activeMatchOf[attackerId] = mid;
+        activeMatchOf[defenderId] = mid;
         emit MatchCreated(mid, attackerId, defenderId, m.seed);
+    }
+
+    // ══════════════════════════════════════════════════════════
+    //                  TIER MATCHMAKING
+    // ══════════════════════════════════════════════════════════
+
+    /// @notice Pair up ghosts within a single G-tier pool. Permissionless (the
+    ///         "owner-only" keeper label lives in the MCP layer per #31), but
+    ///         rate-limited to once per {effectiveTierPeriod} per tier. Matched
+    ///         ghosts leave the pool and are locked via `activeMatchOf` until settle.
+    function runMatchmaking(Tier tier) external returns (uint256 matchesCreated) {
+        uint64 last = lastTierMatchmakingAt[tier];
+        require(last == 0 || block.timestamp >= last + effectiveTierPeriod(tier), "rate limited");
+
+        uint256[] storage pool = tierPool[tier];
+        uint256 n = pool.length;
+        if (n < 2) {
+            lastTierMatchmakingAt[tier] = uint64(block.timestamp);
+            emit MatchmakingRan(uint16(uint8(tier)), 0);
+            return 0;
+        }
+
+        // Snapshot into memory and Fisher-Yates shuffle (don't churn storage).
+        uint256[] memory ids = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) ids[i] = pool[i];
+
+        // TODO: prevrandao is grindable — swap for VRF / commit-reveal before any
+        //       prize pool rides on tier matchmaking. Demo-safe for now.
+        uint256 seed = uint256(keccak256(abi.encode(
+            block.prevrandao, uint8(tier), block.timestamp, n
+        )));
+        for (uint256 i = n - 1; i > 0; i--) {
+            seed = uint256(keccak256(abi.encode(seed, i)));
+            uint256 j = seed % (i + 1);
+            (ids[i], ids[j]) = (ids[j], ids[i]);
+        }
+
+        uint256 pairs = n / 2;
+        for (uint256 k = 0; k < pairs; k++) {
+            uint256 a = ids[2 * k];
+            uint256 d = ids[2 * k + 1];
+            uint256 mid = _createMatch(a, d, uint256(keccak256(abi.encode(seed, k))));
+            // Matched ghosts leave the pool; they re-enter on next submit post-settle.
+            _removeFromTierPool(a);
+            _removeFromTierPool(d);
+            emit MatchmadeInTier(tier, mid, a, d);
+            matchesCreated++;
+        }
+
+        lastTierMatchmakingAt[tier] = uint64(block.timestamp);
+        emit MatchmakingRan(uint16(uint8(tier)), matchesCreated);
+    }
+
+    /// @notice Override a tier's matchmaking cooldown (demo: drop to 60s). 0 resets
+    ///         to {DEFAULT_TIER_PERIOD}. Owner-only — keeper cadence is operational.
+    function setMatchmakingPeriod(Tier tier, uint64 secs) external onlyOwner {
+        tierMatchmakingPeriod[tier] = secs;
+        emit MatchmakingPeriodSet(tier, secs);
+    }
+
+    /// @dev Clear an agent's tier-submission state. Pool membership was already
+    ///      dropped at match time; this releases the lock + per-round flags so the
+    ///      next submit recomputes the tier fresh.
+    function _clearTierSubmission(uint256 agentId) internal {
+        activeMatchOf[agentId] = 0;
+        isSubmitted[agentId] = false;
+        delete submittedTier[agentId];
+        delete tierPoolIndexPlusOne[agentId];
     }
 
     // ══════════════════════════════════════════════════════════
@@ -623,6 +858,11 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
         m.settled = true;
         m.winnerId = winnerId;
+
+        // Release both sides' tier submission lock. After settle they must
+        // re-submit, which recomputes the tier from their current G balance.
+        _clearTierSubmission(m.attackerId);
+        _clearTierSubmission(m.defenderId);
 
         // ELO update — Elo-style with K = 32, simplified expected score lookup
         // via a linear approx (good enough for spike — pure on-chain Elo with
