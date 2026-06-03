@@ -769,14 +769,14 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_sell",
-    "Sell the unit at a bench slot. Refunds 50% of original cost (rounded down). Triggers ON_SELL abilities before clearing. The card returns to your inventory (not destroyed).",
+    "Sell the unit at a bench slot. Triggers ON_SELL abilities before clearing. Clears bench slot and overlay. Note: no ore/G refund in current design — use the secondary market to recoup value.",
     {
       agent_id: z.number().describe("Agent ID"),
       slot: z.number().min(0).max(4).describe("Bench slot 0-4 to sell from"),
     },
     async ({ agent_id, slot }: any) => {
       const r = await chain.arenaSell(agent_id, slot);
-      return { content: [{ type: "text", text: `Sold unit at slot ${slot}. Refunded ${r.refund} ore. tx: ${r.txHash}` }] };
+      return { content: [{ type: "text", text: `Sold unit at slot ${slot}. tx: ${r.txHash}` }] };
     }
   );
 
@@ -957,17 +957,52 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
   );
 
   server.tool(
-    "arena_buy_card",
-    "Buy a card from the secondary market. Spends G. Fails if price exceeds max_price_g or insufficient G.",
+    "arena_buy_listing",
+    "Buy a card from the secondary market. Spends G. Card goes to buyer's inventory. Fails if price exceeds max_price_g, insufficient G, or self-buy.",
     {
-      agent_id: z.number().describe("Agent ID (buyer)"),
+      buyer_agent_id: z.number().describe("Buyer agent ID"),
       card_id: z.number().describe("Card ID to buy"),
       max_price_g: z.number().min(1).describe("Max G willing to pay (slippage protection)"),
     },
-    async ({ agent_id, card_id, max_price_g }: any) => {
+    async ({ buyer_agent_id, card_id, max_price_g }: any) => {
       try {
-        const r = await chain.arenaBuyCard(agent_id, card_id, max_price_g);
-        return { content: [{ type: "text", text: `Bought card #${card_id} for up to ${max_price_g} G. tx: ${r.txHash}` }] };
+        const r = await chain.arenaBuyListing(buyer_agent_id, card_id, max_price_g);
+        return { content: [{ type: "text", text: `Bought card #${card_id} for up to ${max_price_g} G. Card is now in your inventory. tx: ${r.txHash}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_place_card",
+    "Move a card from inventory to a bench slot. Card must be in your inventory (not listed on market). Slot must be empty.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      card_id: z.number().describe("Card ID from inventory"),
+      slot: z.number().min(0).max(4).describe("Bench slot 0-4"),
+    },
+    async ({ agent_id, card_id, slot }: any) => {
+      try {
+        const r = await chain.arenaPlaceCard(agent_id, card_id, slot);
+        return { content: [{ type: "text", text: `Placed card #${card_id} into bench slot ${slot}. tx: ${r.txHash}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_remove_card",
+    "Remove a card from bench back to inventory. No refund — use the secondary market to sell. Card stays in your inventory.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      slot: z.number().min(0).max(4).describe("Bench slot 0-4 to remove from"),
+    },
+    async ({ agent_id, slot }: any) => {
+      try {
+        const r = await chain.arenaRemoveCard(agent_id, slot);
+        return { content: [{ type: "text", text: `Removed card from bench slot ${slot} back to inventory. tx: ${r.txHash}` }] };
       } catch (e: any) {
         return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
       }

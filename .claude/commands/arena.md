@@ -2,41 +2,59 @@
 
 Interact with the Gravity Town Arena through MCP tools. The `gravity-town` MCP server must be connected.
 
+## Card Flow
+
+Cards move through three layers: **Shop → Inventory → Bench**. Cards on bench cannot be listed on market.
+
+```
+Shop ──arena_buy──→ Inventory ──arena_place_card──→ Bench (5 slots)
+                        ↑       ←──arena_remove_card──┘
+                        ↕
+                   Marketplace (arena_place_listing / arena_buy_listing)
+```
+
 ## Tools
 
-### Bench & Shop
+### Shop & Bench
 
 | Tool | Description |
 |------|-------------|
 | `arena_list_units` | 12 unit roster (stats + abilities) |
-| `arena_get_state(agent_id)` | Current bench, ELO, bucket, ore |
-| `arena_buy(agent_id, unit_type, slot)` | Buy unit into bench slot (costs 3-6 ore) |
-| `arena_sell(agent_id, slot)` | Sell unit, refund 50% ore |
+| `arena_get_state(agent_id)` | Current bench, ELO, bucket |
+| `arena_buy(agent_id, unit_type)` | Buy card from shop → inventory (costs G) |
+| `arena_place_card(agent_id, card_id, slot)` | Inventory → bench slot *(#32)* |
+| `arena_remove_card(agent_id, slot)` | Bench slot → inventory (no refund) *(#32)* |
+| `arena_sell(agent_id, slot)` | Clear bench slot (triggers ON_SELL) |
 | `arena_move(agent_id, from_slot, to_slot)` | Swap two bench slots |
 | `arena_freeze(agent_id, shop_slot)` | Toggle freeze on shop slot |
-| `arena_roll(agent_id)` | Refresh shop (1 ore) |
+| `arena_roll(agent_id)` | Refresh shop (costs 1 G) |
 | `arena_submit(agent_id)` | Submit ghost to matchmaking pool |
+| `arena_withdraw_submission(agent_id)` | Pull ghost out of pool (before match) *(#33)* |
 | `arena_get_recent_matches(agent_id)` | Read arena W/L history |
 | `arena_view_deck(agent_id)` | Full deck info (bench + ELO + bucket) |
-| `arena_withdraw_submission(agent_id)` | Pull ghost out of matchmaking pool *(#33)* |
 
-### G Currency & Market *(awaiting #32 GTreasury + CardLedger)*
+### G Currency *(#32)*
 
 | Tool | Description |
 |------|-------------|
 | `arena_get_g_balance(agent_id)` | G balance (Arena currency, separate from ore) |
 | `arena_fund_g(agent_id, amount)` | Testnet faucet — give G to agent (OWNER) |
-| `arena_list_inventory(agent_id)` | All cards owned (cardId, unit, stats) |
-| `arena_list_market(unit_type?, limit?)` | Browse secondary market listings |
-| `arena_place_listing(agent_id, card_id, ask_price_g)` | List card for sale (G price) |
-| `arena_cancel_listing(agent_id, card_id)` | Cancel a market listing |
-| `arena_buy_card(agent_id, card_id, max_price_g)` | Buy card from market (spends G) |
+| `arena_list_inventory(agent_id)` | All cards in inventory (cardId, unit, stats) |
 
-### Tier *(awaiting #33)*
+### Secondary Market *(#32)*
 
 | Tool | Description |
 |------|-------------|
-| `arena_get_tier_info(agent_id)` | Bronze / Silver / Gold tier + G thresholds |
+| `arena_list_market(unit_type?, limit?)` | Browse active listings |
+| `arena_place_listing(agent_id, card_id, ask_price_g)` | List card for sale (must NOT be on bench) |
+| `arena_cancel_listing(agent_id, card_id)` | Cancel listing, card stays in inventory |
+| `arena_buy_listing(buyer_agent_id, card_id, max_price_g)` | Buy from market → buyer inventory |
+
+### Tier *(#33)*
+
+| Tool | Description |
+|------|-------------|
+| `arena_get_tier_info(agent_id)` | Bronze (<100G) / Silver (100-1000G) / Gold (>=1000G) |
 
 ### Keeper / Admin (OWNER_KEYS gated)
 
@@ -44,61 +62,53 @@ Interact with the Gravity Town Arena through MCP tools. The `gravity-town` MCP s
 |------|-------------|
 | `arena_run_matchmaking(bucket_id)` | Pair ghosts in bucket |
 | `arena_force_settle(match_id)` | Settle a match |
-| `arena_fund_g(agent_id, amount)` | G faucet (also listed above) |
+| `arena_fund_g(agent_id, amount)` | G faucet (also above) |
 
 ## Workflow
 
 Based on user request, run the appropriate flow:
 
-### "Show status" / "Check my bench"
-1. Call `arena_get_state` for the agent
-2. Show bench slots with unit names, stats, ELO, bucket
-
 ### "Build a bench" / "Buy units"
-1. Call `arena_list_units` to show the roster
-2. Call `arena_get_state` to see current bench + ore
-3. Help user pick units based on synergies (see Strategy below)
-4. Call `arena_buy` for each unit, then `arena_move` to arrange
+1. `arena_list_units` — show roster
+2. `arena_get_g_balance` — check G (or `arena_get_state` for legacy ore)
+3. `arena_buy(agent_id, unit_type)` — card goes to **inventory**
+4. `arena_place_card(agent_id, card_id, slot)` — move to bench
+5. `arena_move` to rearrange slots
 
 ### "Submit and fight"
-1. Call `arena_submit` to enter matchmaking
-2. If user is owner: `arena_run_matchmaking(bucket_id)` to force-pair
-3. If matches created: `arena_force_settle(match_id)` to resolve
-4. Call `arena_get_recent_matches` to see result
+1. `arena_submit` → matchmaking pool
+2. Owner: `arena_run_matchmaking(bucket_id)` to force-pair
+3. `arena_force_settle(match_id)` to resolve
+4. `arena_get_recent_matches` to see result
 
 ### "Browse / buy from market" *(#32)*
-1. Call `arena_get_g_balance` to check G
-2. Call `arena_list_market` (optionally filter by unit_type)
-3. Call `arena_buy_card(agent_id, card_id, max_price_g)` to purchase
-4. Card goes to inventory — use `arena_buy` to place on bench
+1. `arena_get_g_balance` — check G
+2. `arena_list_market` — browse listings
+3. `arena_buy_listing(buyer_agent_id, card_id, max_price_g)` — card → inventory
+4. `arena_place_card` — move to bench
 
 ### "Sell card on market" *(#32)*
-1. Call `arena_list_inventory` to see owned cards
-2. Card must NOT be on bench — `arena_sell` from bench first if needed
-3. Call `arena_place_listing(agent_id, card_id, ask_price_g)`
-
-### "Check tier" *(#33)*
-1. Call `arena_get_tier_info` — shows Bronze/Silver/Gold based on G balance
+1. `arena_list_inventory` — see owned cards
+2. If card on bench: `arena_remove_card` first (bench cards can't be listed)
+3. `arena_place_listing(agent_id, card_id, ask_price_g)`
 
 ### "Run a full cycle" (demo)
-Combine all above: check state -> buy missing slots -> arrange -> submit -> matchmake -> settle -> show result.
+Fund G → buy cards → place on bench → arrange → submit → matchmake → settle → review.
 
 ## Strategy Guide
 
-**Unit Tiers:** T1 (3 ore) / T2 (4) / T3 (5) / T4 (6)
-
 **Archetypes:**
-- **Aggro snowball:** Skirmisher + Hexhunter + Battlemage + Pyromancer + Stormcaller. Fast damage, Hexhunter scales off friend deaths.
-- **Death chain:** Wraith + Spiritbinder + Shadowstalker + Hexhunter + Ravenscout. Summon cascade on death.
-- **Aura builder:** Stoneguard + Crystalwarden + Battlemage + Mineworker + Skirmisher. Crystalwarden buffs neighbors, slow ramp but strong late.
+- **Aggro snowball:** Skirmisher + Hexhunter + Battlemage + Pyromancer + Stormcaller
+- **Death chain:** Wraith + Spiritbinder + Shadowstalker + Hexhunter + Ravenscout
+- **Aura builder:** Stoneguard + Crystalwarden + Battlemage + Mineworker + Skirmisher
 
 **Key Synergies:**
-- Battlemage ON_BUY +2 ATK to right neighbor -> buy Battlemage BEFORE filling the slot to its right
-- Crystalwarden ON_START buffs both neighbors -> place at slot 2 (center) for max value
-- Wraith ON_DEATH summons 3/3 token, but tokens have NO abilities -> Spiritbinder's ON_FRIEND_DEATH summon chains off Wraith dying
-- Ravenscout ON_SELL +1 ATK all allies -> buy to buff, sell to re-buff, cycle for value
+- Battlemage ON_BUY +2 ATK to right neighbor → buy BEFORE filling the slot to its right
+- Crystalwarden ON_START buffs both neighbors → place at slot 2 (center)
+- Wraith ON_DEATH summons 3/3 token (no abilities) → Spiritbinder chains off it
+- Ravenscout ON_SELL +1 ATK all allies → buy to buff, sell to re-buff
 
-**Slot Order:** Left (slot 0) attacks first. Put tanks front (low slots), glass cannons back (high slots).
+**Slot Order:** Left (slot 0) attacks first. Tanks front, glass cannons back.
 
 ## Args
 
