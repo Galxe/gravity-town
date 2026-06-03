@@ -2,7 +2,9 @@
 
 Interact with the Gravity Town Arena through MCP tools. The `gravity-town` MCP server must be connected.
 
-## Quick Reference
+## Tools
+
+### Bench & Shop
 
 | Tool | Description |
 |------|-------------|
@@ -15,8 +17,34 @@ Interact with the Gravity Town Arena through MCP tools. The `gravity-town` MCP s
 | `arena_roll(agent_id)` | Refresh shop (1 ore) |
 | `arena_submit(agent_id)` | Submit ghost to matchmaking pool |
 | `arena_get_recent_matches(agent_id)` | Read arena W/L history |
-| `arena_run_matchmaking(bucket_id)` | Pair ghosts in bucket (OWNER) |
-| `arena_force_settle(match_id)` | Settle a match (OWNER) |
+| `arena_view_deck(agent_id)` | Full deck info (bench + ELO + bucket) |
+| `arena_withdraw_submission(agent_id)` | Pull ghost out of matchmaking pool *(#33)* |
+
+### G Currency & Market *(awaiting #32 GTreasury + CardLedger)*
+
+| Tool | Description |
+|------|-------------|
+| `arena_get_g_balance(agent_id)` | G balance (Arena currency, separate from ore) |
+| `arena_fund_g(agent_id, amount)` | Testnet faucet — give G to agent (OWNER) |
+| `arena_list_inventory(agent_id)` | All cards owned (cardId, unit, stats) |
+| `arena_list_market(unit_type?, limit?)` | Browse secondary market listings |
+| `arena_place_listing(agent_id, card_id, ask_price_g)` | List card for sale (G price) |
+| `arena_cancel_listing(agent_id, card_id)` | Cancel a market listing |
+| `arena_buy_card(agent_id, card_id, max_price_g)` | Buy card from market (spends G) |
+
+### Tier *(awaiting #33)*
+
+| Tool | Description |
+|------|-------------|
+| `arena_get_tier_info(agent_id)` | Bronze / Silver / Gold tier + G thresholds |
+
+### Keeper / Admin (OWNER_KEYS gated)
+
+| Tool | Description |
+|------|-------------|
+| `arena_run_matchmaking(bucket_id)` | Pair ghosts in bucket |
+| `arena_force_settle(match_id)` | Settle a match |
+| `arena_fund_g(agent_id, amount)` | G faucet (also listed above) |
 
 ## Workflow
 
@@ -37,6 +65,20 @@ Based on user request, run the appropriate flow:
 2. If user is owner: `arena_run_matchmaking(bucket_id)` to force-pair
 3. If matches created: `arena_force_settle(match_id)` to resolve
 4. Call `arena_get_recent_matches` to see result
+
+### "Browse / buy from market" *(#32)*
+1. Call `arena_get_g_balance` to check G
+2. Call `arena_list_market` (optionally filter by unit_type)
+3. Call `arena_buy_card(agent_id, card_id, max_price_g)` to purchase
+4. Card goes to inventory — use `arena_buy` to place on bench
+
+### "Sell card on market" *(#32)*
+1. Call `arena_list_inventory` to see owned cards
+2. Card must NOT be on bench — `arena_sell` from bench first if needed
+3. Call `arena_place_listing(agent_id, card_id, ask_price_g)`
+
+### "Check tier" *(#33)*
+1. Call `arena_get_tier_info` — shows Bronze/Silver/Gold based on G balance
 
 ### "Run a full cycle" (demo)
 Combine all above: check state -> buy missing slots -> arrange -> submit -> matchmake -> settle -> show result.
