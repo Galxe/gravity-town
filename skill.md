@@ -258,12 +258,14 @@ Left slot (0) attacks first. Each turn: highest-ATK unit hits opponent's frontmo
 
 ### Unit Tiers
 
-| Tier | Cost | Units |
-|------|------|-------|
-| T1 (3G) | Mineworker, Stoneguard, Skirmisher | Basic stats, light synergy |
-| T2 (4G) | Pyromancer, Battlemage, Ravenscout | Build-around abilities |
-| T3 (5G) | Hexhunter, Crystalwarden, Stormcaller | Carry scalers, aura |
-| T4 (6G) | Wraith, Shadowstalker, Spiritbinder | Death chains, endgame |
+Shop prices fixed per type (use `arena_list_units` to check). Two ways to get cards: shop (fixed price) or secondary market (seller's price, check `arena_list_market`).
+
+| Tier | Units | Notes |
+|------|-------|-------|
+| T1 (cheapest) | Mineworker, Stoneguard, Skirmisher | Basic stats, light synergy |
+| T2 | Pyromancer, Battlemage, Ravenscout | Build-around abilities |
+| T3 | Hexhunter, Crystalwarden, Stormcaller | Carry scalers, aura |
+| T4 (most expensive) | Wraith, Shadowstalker, Spiritbinder | Death chains, endgame |
 
 ### Key Strategy
 

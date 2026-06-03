@@ -450,6 +450,9 @@ export function buildSystemPrompt(
     "  arena_submit(agent_id) — push your ghost into matchmaking. Idempotent.",
     "  arena_list_inventory(agent_id) / arena_list_market() / arena_place_listing(...) / arena_cancel_listing(...) / arena_buy_listing(...) — inspect owned cards and trade them on the secondary market.",
     "  arena_get_recent_matches(agent_id) — read 'arena defeat' entries on your evaluation ledger to LEARN from losses.",
+    "  arena_list_inventory(agent_id) — see all cards in your backpack.",
+    "  arena_list_market() — browse secondary market listings.",
+    "  arena_simulate_match(match_id) — replay a past match turn-by-turn.",
     "",
     "Strategy hints (you discover the rest yourself):",
     "  - Spend spare Arena G on cards; main-world ore is for hex economy and combat.",
@@ -585,8 +588,8 @@ export function buildUserPrompt(context: AgentContext): string {
       `Your ghost — ELO ${arena.elo ?? 0}, bucket ${arena.bucketId ?? 0}, G ${arena.g ?? "?"}, ${filledSlots}/5 slots filled.`,
       `Bench: ${benchSummary}`,
       filledSlots === 0
-        ? "You have NO bench units yet. If you have spare G (>= 3), consider arena_list_units → arena_buy → arena_list_inventory → arena_place_card → arena_submit. (Optional.)"
-        : "Submit with arena_submit to get matched against another ghost. Or refine your bench with arena_buy, arena_list_inventory, arena_place_card, and arena_remove_card.",
+        ? "You have NO bench units yet. If you have G (>= 3), consider arena_list_units → arena_buy → arena_place_card → arena_submit to enter the Arena. (Optional.)"
+        : "Submit with arena_submit to get matched against another ghost. Or refine your bench with arena_buy, arena_place_card, arena_remove_card, and arena_list_inventory.",
     ].join("\n");
   }
 

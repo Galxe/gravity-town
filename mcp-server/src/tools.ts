@@ -620,7 +620,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_list_units",
-    "List all 12 Arena unit types — name, ATK/HP/cost, ability text. Use this to decide what to buy. Tier 1 cost 3, tier 2 cost 4, tier 3 cost 5, tier 4 cost 6.",
+    "List all 12 Arena unit types — name, ATK/HP/shop cost, ability text. Shop prices are fixed per unit type. Secondary market prices vary — check arena_list_market for deals.",
     {},
     async () => {
       return { content: [{ type: "text", text: JSON.stringify(UNIT_CATALOG, null, 2) }] };
@@ -629,7 +629,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_get_state",
-    "Get your Arena ghost: 5-slot bench (unit names + stats + backing cardId), ELO, matchmaking bucket, G balance, and main-world ore pool.",
+    "Get your Arena ghost: 5-slot bench (unit names + stats + backing cardId), ELO, matchmaking bucket, G balance, and ore pool. Call this BEFORE arena_buy to check your G balance.",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const r = await chain.arenaGetGhost(agent_id);
@@ -639,7 +639,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_buy",
-    "Buy a persistent Arena card with G into inventory. Costs G (3-6 depending on tier). Does not place the card on your bench.",
+    "Buy a persistent Arena card with G into inventory (3-6 G by tier, see arena_list_units). Does NOT place on bench — use arena_place_card next. Check arena_list_market first for cheaper deals.",
     {
       agent_id: z.number().describe("Agent ID"),
       unit_type: z.number().min(1).max(12).describe("Unit type id 1-12 (see arena_list_units)"),
