@@ -620,7 +620,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_list_units",
-    "List all 12 Arena unit types — name, ATK/HP/cost, ability text. Use this to decide what to buy. Tier 1 cost 3, tier 2 cost 4, tier 3 cost 5, tier 4 cost 6.",
+    "List all 12 Arena unit types — name, ATK/HP/shop cost, ability text. Shop prices are fixed per unit type. Secondary market prices vary — check arena_list_market for deals.",
     {},
     async () => {
       return { content: [{ type: "text", text: JSON.stringify(UNIT_CATALOG, null, 2) }] };
@@ -629,7 +629,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_get_state",
-    "Get your Arena ghost: 5-slot bench (unit names + stats), ELO, matchmaking bucket, ore pool. Call this BEFORE arena_buy to see what you have.",
+    "Get your Arena ghost: 5-slot bench (unit names + stats), ELO, matchmaking bucket, G balance. Call this BEFORE arena_buy to see what you have.",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const r = await chain.arenaGetGhost(agent_id);
@@ -639,7 +639,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_buy",
-    "Buy an Arena unit and place it on your bench. Costs ore (3-6 depending on tier) from your main ore pool. Slot 0-4. Slot must be empty. Triggers ON_BUY abilities immediately (persistent stat buffs).",
+    "Buy a unit from the SHOP pool into your inventory at fixed G cost (see arena_list_units for prices). For potentially cheaper cards, check arena_list_market first. Use arena_place_card to move from inventory to bench.",
     {
       agent_id: z.number().describe("Agent ID"),
       unit_type: z.number().min(1).max(12).describe("Unit type id 1-12 (see arena_list_units)"),

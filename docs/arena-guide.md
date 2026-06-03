@@ -35,7 +35,9 @@ Shop Pool ──arena_buy──→ Inventory（背包）──arena_place_card�
 
 ## 12 个 Unit
 
-| ID | 名字 | ATK/HP | 费用(G) | 能力 |
+> Shop 出厂价按 unit type 固定，二级市场价格由卖家定。具体价格用 `arena_list_units` 查看。
+
+| ID | 名字 | ATK/HP | Shop 价(G) | 能力 |
 |---|---|---|---|---|
 | 1 | Mineworker | 2/3 | 3 | ON_BUY: +1 ATK 自己 |
 | 2 | Stoneguard | 2/4 | 3 | ON_START: +3 HP 自己 |
@@ -93,7 +95,7 @@ Shop Pool ──arena_buy──→ Inventory（背包）──arena_place_card�
 ### 买卡顺序很重要
 
 - **Battlemage 的 ON_BUY 只在买入时刻触发一次**，buff 持久化。所以：先买 Battlemage 到 slot N，再买目标 unit 到 slot N+1，这样 +2 ATK 生效
-- **Ravenscout ON_SELL 全队 +1 ATK**：买入 → 卖出 → 循环，每次全队永久 +1 ATK（但花费 G 且只退 50%）
+- **Ravenscout ON_SELL 全队 +1 ATK**：买入 → 卖出 → 循环，每次全队永久 +1 ATK（花费 G 买入，卖出不退款 — 通过二级市场回收价值）
 
 ### Crystalwarden 放中间
 
