@@ -106,12 +106,22 @@ release:
     cd contracts
     forge build
     forge test -vv
-    forge snapshot --check
+    if ! forge snapshot --check; then
+        echo ""
+        echo "ERROR: gas snapshot drift detected (.gas-snapshot does not match current contracts)."
+        echo "If you intentionally changed contracts, refresh the baseline:"
+        echo "  cd contracts && forge snapshot && git add .gas-snapshot && git commit -m 'chore: refresh gas snapshot'"
+        echo ""
+        exit 1
+    fi
     cd ..
     just gravity-deploy
-    ROUTER=$(grep -o '0x[0-9a-fA-F]\{40\}' deployed-addresses.json | head -1)
-    if [ -z "$ROUTER" ]; then
-        echo "Failed to read router address from deployed-addresses.json"
+    # Extract router address by field name (not just "first 0x… in file") so future fields
+    # like operator/deployer/tx hash in deployed-addresses.json can't silently leak through.
+    ROUTER=$(grep -oE '"routerAddress"[[:space:]]*:[[:space:]]*"0x[0-9a-fA-F]{40}"' deployed-addresses.json | grep -oE '0x[0-9a-fA-F]{40}' || true)
+    if [ -z "${ROUTER:-}" ]; then
+        echo "ERROR: failed to read routerAddress from deployed-addresses.json."
+        echo "Expected a field like:  \"routerAddress\": \"0x...40 hex chars...\""
         exit 1
     fi
     CONFIG=frontend/config/gravity.json
@@ -121,4 +131,7 @@ release:
     echo ""
     echo "Router bumped in $CONFIG: $ROUTER"
     echo ""
-    echo "Now: commit frontend/config/gravity.json + tag pre-demo-vX + push"
+    echo "Now:"
+    echo "  - commit frontend/config/gravity.json (router bump)"
+    echo "  - if contracts/.gas-snapshot was refreshed, commit it too"
+    echo "  - tag pre-demo-vX + push"
