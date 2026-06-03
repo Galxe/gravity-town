@@ -96,3 +96,29 @@ mcp-start:
 [working-directory: "frontend"]
 frontend-start config="localhost" port="3000" host="0.0.0.0":
     APP_CONFIG={{config}} npm run dev -- -H {{host}} -p {{port}}
+
+# -- Release --
+
+# Full Gravity Testnet release: build + test + snapshot check + deploy + bump frontend router
+release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd contracts
+    forge build
+    forge test -vv
+    forge snapshot --check
+    cd ..
+    just gravity-deploy
+    ROUTER=$(grep -o '0x[0-9a-fA-F]\{40\}' deployed-addresses.json | head -1)
+    if [ -z "$ROUTER" ]; then
+        echo "Failed to read router address from deployed-addresses.json"
+        exit 1
+    fi
+    CONFIG=frontend/config/gravity.json
+    TMP=$(mktemp)
+    sed -E "s/(\"router_address\"[[:space:]]*:[[:space:]]*\")0x[0-9a-fA-F]+(\")/\1${ROUTER}\2/" "$CONFIG" > "$TMP"
+    mv "$TMP" "$CONFIG"
+    echo ""
+    echo "Router bumped in $CONFIG: $ROUTER"
+    echo ""
+    echo "Now: commit frontend/config/gravity.json + tag pre-demo-vX + push"
