@@ -993,7 +993,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_get_tier_info",
-    "Get tier info for an agent: Bronze (<100G) / Silver (100-1000G) / Gold (>=1000G). Shows current tier, G balance, and agents in tier.",
+    "Get tier info for an agent: Bronze / Silver / Gold based on G balance. Thresholds are owner-configurable. Shows current tier, G balance, and agents in tier.",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       try {

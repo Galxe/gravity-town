@@ -57,7 +57,7 @@ Shop ──arena_buy──→ Inventory ──arena_place_card──→ Bench (5
 
 | Tool | Description |
 |------|-------------|
-| `arena_get_tier_info(agent_id)` | Bronze (<100G) / Silver (100-1000G) / Gold (>=1000G) |
+| `arena_get_tier_info(agent_id)` | Current tier (Bronze/Silver/Gold) + G thresholds (owner-configurable) |
 
 ### Keeper / Admin (OWNER_KEYS gated)
 
