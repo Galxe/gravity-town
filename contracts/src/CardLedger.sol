@@ -146,6 +146,10 @@ contract CardLedger is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         return _ownedCards[agentId];
     }
 
+    function isListed(uint256 cardId) external view returns (bool) {
+        return _listings[cardId].active;
+    }
+
     function getActiveListings(uint256 offset, uint256 limit) external view returns (Listing[] memory) {
         return _activeListings(offset, limit, 0);
     }

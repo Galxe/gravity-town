@@ -103,8 +103,9 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     // ──────────────────── Events ────────────────────
 
     event GhostSubmitted(uint256 indexed agentId, uint16 elo, uint16 bucketId);
-    event UnitBought(uint256 indexed agentId, uint8 unitType, uint8 slot, uint16 cost);
-    event UnitSold(uint256 indexed agentId, uint8 slot, uint16 refund);
+    event CardBought(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint16 cost);
+    event CardPlaced(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot);
+    event CardRemoved(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot);
     event UnitMoved(uint256 indexed agentId, uint8 fromSlot, uint8 toSlot);
     event ShopFrozen(uint256 indexed agentId, uint8 shopSlot, bool nowFrozen);
     event ShopRolled(uint256 indexed agentId, uint64 newSeed);
@@ -160,51 +161,64 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     //                     5 PLAYER VERBS
     // ══════════════════════════════════════════════════════════
 
-    /// @notice Buy a unit and place it in `toSlot` on your ghost.
-    ///         Costs UnitCatalog.cost(unitType) G and mints a persistent card.
-    function buy(uint256 agentId, uint8 unitType, uint8 toSlot)
-        external canControlAgent(agentId)
+    /// @notice Buy a persistent card into inventory. It is not placed on the bench.
+    function buy(uint256 agentId, uint8 unitType)
+        external canControlAgent(agentId) returns (uint256 cardId)
     {
         require(UnitCatalog.exists(unitType), "invalid unit type");
-        require(toSlot < SLOTS, "bad slot");
-
         Ghost storage g = _getOrInitGhost(agentId);
-        require(g.bench[toSlot] == 0, "slot occupied");
         require(address(gTreasury) != address(0), "G treasury not set");
         require(address(cardLedger) != address(0), "card ledger not set");
 
-        ( , , , uint16 unitCost, AbilityLib.Ability memory ability) = UnitCatalog.getUnit(unitType);
+        ( , , , uint16 unitCost, ) = UnitCatalog.getUnit(unitType);
         gTreasury.spendG(agentId, unitCost, bytes32("arena_buy"));
-        uint256 cardId = cardLedger.mintCard(agentId, unitType);
-
-        g.bench[toSlot] = unitType;
-        g.cardIds[toSlot] = cardId;
+        cardId = cardLedger.mintCard(agentId, unitType);
         g.lastUpdate = uint64(block.timestamp);
-
-        // Fire ON_BUY ability into the persistent bench stat overlay so
-        // self / neighbor / all-ally buffs survive into the eventual battle.
-        _applyBenchAbility(g, toSlot, ability, AbilityLib.TRIG_ON_BUY);
         _assertGhostInvariant(agentId, g);
 
-        emit UnitBought(agentId, unitType, toSlot, unitCost);
+        emit CardBought(agentId, cardId, unitType, unitCost);
     }
 
-    /// @notice Sell the unit at `slot`. Refunds 50% G and keeps the card in inventory.
-    function sell(uint256 agentId, uint8 slot)
+    /// @notice Place an owned inventory card onto an empty bench slot.
+    function placeCard(uint256 agentId, uint256 cardId, uint8 slot)
+        external canControlAgent(agentId)
+    {
+        require(slot < SLOTS, "bad slot");
+        Ghost storage g = _getOrInitGhost(agentId);
+        require(g.bench[slot] == 0, "slot occupied");
+        require(address(cardLedger) != address(0), "card ledger not set");
+        require(!_isCardOnBench(agentId, cardId), "card on bench");
+        require(!cardLedger.isListed(cardId), "card listed");
+
+        CardLedger.Card memory card = cardLedger.getCard(cardId);
+        require(card.ownerAgent == agentId, "not card owner");
+        uint8 unitType = card.unitType;
+
+        ( , , , , AbilityLib.Ability memory ability) = UnitCatalog.getUnit(unitType);
+        g.bench[slot] = unitType;
+        g.cardIds[slot] = cardId;
+        g.lastUpdate = uint64(block.timestamp);
+
+        // Buy-trigger abilities now fire when a card enters the bench, because
+        // buying itself only moves the card into inventory.
+        _applyBenchAbility(g, slot, ability, AbilityLib.TRIG_ON_BUY);
+        _assertGhostInvariant(agentId, g);
+
+        emit CardPlaced(agentId, cardId, unitType, slot);
+    }
+
+    /// @notice Remove a card from the bench back to inventory. No G is credited.
+    function removeCard(uint256 agentId, uint8 slot)
         external canControlAgent(agentId)
     {
         require(slot < SLOTS, "bad slot");
         Ghost storage g = _getOrInitGhost(agentId);
         uint8 unitType = g.bench[slot];
         require(unitType != 0, "empty slot");
+        uint256 cardId = g.cardIds[slot];
         _assertGhostInvariant(agentId, g);
 
-        ( , , , uint16 unitCost, AbilityLib.Ability memory ability) = UnitCatalog.getUnit(unitType);
-        uint16 refund = unitCost / 2;
-
-        // Fire ON_SELL ability BEFORE clearing the bench so neighbors/allies are
-        // still present for targeting. The overlay for `slot` itself is then
-        // cleared below — selling the unit removes its own persistent buffs.
+        ( , , , , AbilityLib.Ability memory ability) = UnitCatalog.getUnit(unitType);
         _applyBenchAbility(g, slot, ability, AbilityLib.TRIG_ON_SELL);
 
         g.bench[slot] = 0;
@@ -213,13 +227,9 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         g.hpOverride[slot] = 0;
         g.lastUpdate = uint64(block.timestamp);
 
-        if (refund > 0) {
-            require(address(gTreasury) != address(0), "G treasury not set");
-            gTreasury.creditG(agentId, refund, bytes32("arena_sell"));
-        }
         _assertGhostInvariant(agentId, g);
 
-        emit UnitSold(agentId, slot, refund);
+        emit CardRemoved(agentId, cardId, unitType, slot);
     }
 
     /// @notice Swap two bench positions. Either or both may be empty.
@@ -770,6 +780,10 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     function isCardOnBench(uint256 agentId, uint256 cardId) external view returns (bool) {
+        return _isCardOnBench(agentId, cardId);
+    }
+
+    function _isCardOnBench(uint256 agentId, uint256 cardId) internal view returns (bool) {
         Ghost storage g = _ghosts[agentId];
         for (uint8 i = 0; i < SLOTS; i++) {
             if (g.cardIds[i] == cardId) return true;

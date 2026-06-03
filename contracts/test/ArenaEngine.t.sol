@@ -108,22 +108,29 @@ contract ArenaEngineTest is Test {
         treasury.fundAgentG(agentId, 500);
     }
 
-    function _buy(uint256 agentId, address ownerAddr, uint8 unitType, uint8 slot) internal {
+    function _buyCard(uint256 agentId, address ownerAddr, uint8 unitType) internal returns (uint256 cardId) {
         vm.prank(ownerAddr);
-        arena.buy(agentId, unitType, slot);
+        cardId = arena.buy(agentId, unitType);
+    }
+
+    function _buy(uint256 agentId, address ownerAddr, uint8 unitType, uint8 slot) internal returns (uint256 cardId) {
+        vm.startPrank(ownerAddr);
+        cardId = arena.buy(agentId, unitType);
+        arena.placeCard(agentId, cardId, slot);
+        vm.stopPrank();
     }
 
     // ══════════════════════════════════════════════════════════
     //                     PLAYER VERBS
     // ══════════════════════════════════════════════════════════
 
-    function test_buy_spends_g_and_mints_card_without_touching_ore() public {
+    function test_buy_spends_g_and_mints_card_into_inventory_without_touching_ore_or_bench() public {
         uint256 aid = _createAgent(player1);
         uint256 oreBefore = engine.orePool(aid);
         uint256 gBefore = treasury.gBalance(aid);
 
         // Mineworker: cost 3
-        _buy(aid, player1, 1, 0);
+        uint256 cardId = _buyCard(aid, player1, 1);
 
         assertEq(treasury.gBalance(aid), gBefore - 3);
         assertEq(engine.orePool(aid), oreBefore);
@@ -131,31 +138,37 @@ contract ArenaEngineTest is Test {
         (uint8[5] memory bench, , , , bool exists) = arena.getGhost(aid);
         uint256[5] memory cardIds = arena.getGhostCards(aid);
         assertTrue(exists);
-        assertEq(bench[0], 1);
-        assertGt(cardIds[0], 0);
-        CardLedger.Card memory card = cards.getCard(cardIds[0]);
+        assertEq(bench[0], 0);
+        assertEq(cardIds[0], 0);
+
+        uint256[] memory owned = cards.getOwnedCards(aid);
+        assertEq(owned.length, 1);
+        assertEq(owned[0], cardId);
+
+        CardLedger.Card memory card = cards.getCard(cardId);
         assertEq(card.ownerAgent, aid);
         assertEq(card.unitType, 1);
     }
 
-    function test_sell_refunds_half_g() public {
+    function test_remove_card_clears_bench_without_refund() public {
         uint256 aid = _createAgent(player1);
-        _buy(aid, player1, 4, 0); // Pyromancer cost 4 → refund 2
+        uint256 cardId = _buy(aid, player1, 4, 0);
         uint256 gBefore = treasury.gBalance(aid);
         uint256 oreBefore = engine.orePool(aid);
 
         vm.expectEmit(true, false, false, true);
-        emit ArenaEngine.UnitSold(aid, 0, 2);
+        emit ArenaEngine.CardRemoved(aid, cardId, 4, 0);
 
         vm.prank(player1);
-        arena.sell(aid, 0);
+        arena.removeCard(aid, 0);
 
         (uint8[5] memory bench, , , , ) = arena.getGhost(aid);
         uint256[5] memory cardIds = arena.getGhostCards(aid);
-        assertEq(treasury.gBalance(aid), gBefore + 2);
+        assertEq(treasury.gBalance(aid), gBefore);
         assertEq(engine.orePool(aid), oreBefore);
         assertEq(bench[0], 0);
         assertEq(cardIds[0], 0);
+        assertEq(cards.getCard(cardId).ownerAgent, aid);
     }
 
     function test_move_swaps_slots() public {
@@ -539,18 +552,19 @@ contract ArenaEngineTest is Test {
         uint256 aid = _createAgent(player1);
         vm.prank(player1);
         vm.expectRevert("invalid unit type");
-        arena.buy(aid, 13, 0);
+        arena.buy(aid, 13);
         vm.prank(player1);
         vm.expectRevert("invalid unit type");
-        arena.buy(aid, 0, 0);
+        arena.buy(aid, 0);
     }
 
-    function test_buy_revert_on_slot_occupied() public {
+    function test_place_card_revert_on_slot_occupied() public {
         uint256 aid = _createAgent(player1);
         _buy(aid, player1, 1, 0);
+        uint256 cardId = _buyCard(aid, player1, 1);
         vm.prank(player1);
         vm.expectRevert("slot occupied");
-        arena.buy(aid, 1, 0);
+        arena.placeCard(aid, cardId, 0);
     }
 
     function test_freeze_toggles_emits_nowFrozen() public {
@@ -612,16 +626,16 @@ contract ArenaEngineTest is Test {
         assertEq(turns[0].damage, 3, "Mineworker ON_BUY buff (+1 ATK) must persist");
     }
 
-    function test_sell_triggers_on_sell_ability_persists_to_battle() public {
+    function test_remove_triggers_on_sell_ability_persists_to_battle() public {
         // Ravenscout: ON_SELL +1 ATK to all allies. Put a Mineworker at slot 0
-        // and a Ravenscout at slot 1. Sell the Ravenscout — the Mineworker's
+        // and a Ravenscout at slot 1. Remove the Ravenscout — the Mineworker's
         // overlay should now show +1 ATK (Mineworker ON_BUY) + +1 (Ravenscout
         // ON_SELL) = +2 ATK, persisting into the eventual battle.
         uint256 a1 = _createAgent(player1);
         uint256 a2 = _createAgent(player2);
         _buy(a1, player1, 1, 0); // Mineworker — ON_BUY +1 self  -> overlay[0] = +1 ATK
         _buy(a1, player1, 6, 1); // Ravenscout — ON_BUY no-op (trigger is ON_SELL)
-        vm.prank(player1); arena.sell(a1, 1); // -> Ravenscout's ON_SELL fires ALL_ALLIES +1 ATK
+        vm.prank(player1); arena.removeCard(a1, 1); // -> Ravenscout's ON_SELL fires ALL_ALLIES +1 ATK
 
         // Defender: a vanilla unit so combat scaling is decoupled from this test.
         _buy(a2, player2, 2, 0); // Stoneguard

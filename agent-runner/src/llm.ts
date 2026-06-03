@@ -433,27 +433,30 @@ export function buildSystemPrompt(
     "   Cooldown 30s per hex. Keep trying different hexes!",
     "",
     "=== ARENA (side-system: async autobattler) ===",
-    "The Arena is an OPTIONAL side-game layered on the main world. It does NOT touch your hexes — only your ore.",
-    "You build a 5-slot 'bench' (your 'ghost') from a roster of 12 unit types, then SUBMIT it to the matchmaking pool.",
+    "The Arena is an OPTIONAL side-game layered on the main world. It does NOT touch your hexes or main-world ore; it uses Arena G.",
+    "Arena cards move between three places: inventory (owned cards), bench (your 5-slot ghost lineup), and marketplace (listed cards for sale).",
+    "Buy cards into inventory, place inventory cards onto your bench, then SUBMIT the bench to the matchmaking pool.",
     "Other agents' ghosts will fight yours asynchronously. Wins boost your ELO; losses drop it. The whole battle is deterministic — once you submit, the bench you snapshotted at submit time is what fights.",
     "",
-    "Units span 4 tiers (cost 3 / 4 / 5 / 6 ore each), with abilities triggering on ON_BUY / ON_START / ON_HURT / ON_SELL / ON_DEATH / ON_FRIEND_DEATH.",
+    "Units span 4 tiers (cost 3 / 4 / 5 / 6 G each), with abilities triggering on ON_BUY / ON_START / ON_HURT / ON_SELL / ON_DEATH / ON_FRIEND_DEATH.",
     "Battles use a simple loop: each turn the side with the highest-ATK living unit hits the opponent's frontmost-living unit. Synergies matter — e.g. Battlemage's ON_BUY (+2 ATK right neighbor) means slot placement is meaningful; Wraith's ON_DEATH summon enables resurrection chains with Spiritbinder; Stoneguard tanks while glass-cannon attackers (Skirmisher, Shadowstalker) deal the damage.",
     "",
     "Tools:",
     "  arena_list_units() — see all 12 units (stats + abilities). Look at this BEFORE buying.",
     "  arena_get_state(agent_id) — see your current bench, ELO, bucket, G balance, and ore.",
-    "  arena_buy(agent_id, unit_type, slot) — buy a persistent card for unit_type (1-12) into bench slot (0-4). Costs G, not ore.",
+    "  arena_buy(agent_id, unit_type) — buy a persistent card for unit_type (1-12) into inventory. Costs G, not ore.",
+    "  arena_place_card(agent_id, card_id, slot) — place an inventory card onto an empty bench slot (0-4).",
+    "  arena_remove_card(agent_id, slot) — remove a bench card back to inventory. No G refund.",
     "  arena_submit(agent_id) — push your ghost into matchmaking. Idempotent.",
     "  arena_list_inventory(agent_id) / arena_list_market() / arena_place_listing(...) / arena_cancel_listing(...) / arena_buy_listing(...) — inspect owned cards and trade them on the secondary market.",
     "  arena_get_recent_matches(agent_id) — read 'arena defeat' entries on your evaluation ledger to LEARN from losses.",
     "",
     "Strategy hints (you discover the rest yourself):",
-    "  - Spend leftover ore in Arena rather than wasting it at the 1000 cap.",
+    "  - Spend spare Arena G on cards; main-world ore is for hex economy and combat.",
     "  - Front line tanks shield damage dealers; place Stoneguard / Crystalwarden up front, glass cannons behind.",
     "  - Battlemage's right-neighbor buff and Crystalwarden's both-neighbor buff reward THINKING about slot order.",
     "  - Submitting an empty bench reverts — buy at least one unit first.",
-    "  - The Arena is OPTIONAL. Hex play, not Arena, decides the main scoreboard. Use Arena for ore burn, side bragging rights, and reputation via wins.",
+    "  - The Arena is OPTIONAL. Hex play, not Arena, decides the main scoreboard. Use Arena for G economy, side bragging rights, and reputation via wins.",
     "",
     "=== RULES ===",
     "- ALWAYS call tools. Don't describe intentions — TAKE ACTION.",
@@ -582,8 +585,8 @@ export function buildUserPrompt(context: AgentContext): string {
       `Your ghost — ELO ${arena.elo ?? 0}, bucket ${arena.bucketId ?? 0}, G ${arena.g ?? "?"}, ${filledSlots}/5 slots filled.`,
       `Bench: ${benchSummary}`,
       filledSlots === 0
-        ? "You have NO units yet. If you have spare G (>= 3), consider arena_list_units → arena_buy → arena_submit to enter the Arena. (Optional.)"
-        : "Submit with arena_submit to get matched against another ghost. Or refine your bench with more arena_buy.",
+        ? "You have NO bench units yet. If you have spare G (>= 3), consider arena_list_units → arena_buy → arena_list_inventory → arena_place_card → arena_submit. (Optional.)"
+        : "Submit with arena_submit to get matched against another ghost. Or refine your bench with arena_buy, arena_list_inventory, arena_place_card, and arena_remove_card.",
     ].join("\n");
   }
 
@@ -634,7 +637,7 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
         ? { ...(schema.properties as Record<string, unknown>) }
         : {};
 
-    const selfTools = [
+    const agentIdTools = [
       "get_agent", "get_nearby_agents",
       "add_memory", "read_memories", "compact_memories",
       "move_agent", "post_to_location", "read_inbox", "compact_inbox",
@@ -642,11 +645,20 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       "build", "attack", "raid", "incite_rebellion", "claim_neutral",
       "start_debate", "vote_debate", "write_chronicle", "get_chronicle",
       // Arena side-system
-      "arena_buy", "arena_submit", "arena_get_state", "arena_list_inventory", "arena_list_market", "arena_place_listing", "arena_cancel_listing", "arena_buy_listing", "arena_get_recent_matches",
+      "arena_buy", "arena_place_card", "arena_remove_card", "arena_submit",
+      "arena_get_state", "arena_list_inventory", "arena_place_listing",
+      "arena_cancel_listing", "arena_get_recent_matches",
     ];
 
-    if (selfTools.includes(tool.name)) {
+    if (agentIdTools.includes(tool.name)) {
       properties.agent_id = {
+        type: "number",
+        description: `Defaults to controlled agent id ${agentId}`,
+      };
+    }
+
+    if (tool.name === "arena_buy_listing") {
+      properties.buyer_agent_id = {
         type: "number",
         description: `Defaults to controlled agent id ${agentId}`,
       };
@@ -664,11 +676,19 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       schema.type = "object";
     }
 
+    const defaultHint = tool.name === "arena_buy_listing"
+      ? `Control this in-world agent via MCP. buyer_agent_id defaults to ${agentId} when omitted.`
+      : agentIdTools.includes(tool.name)
+        ? `Control this in-world agent via MCP. Agent id defaults to ${agentId} when omitted for self-targeted tools.`
+        : (tool.name === "send_message"
+          ? `Control this in-world agent via MCP. from_agent defaults to ${agentId} when omitted.`
+          : "Control this in-world agent via MCP.");
+
     return {
       type: "function",
       function: {
         name: tool.name,
-        description: `${tool.description || ""} Control this in-world agent via MCP. Agent id defaults to ${agentId} when omitted for self-targeted tools.`.trim(),
+        description: `${tool.description || ""} ${defaultHint}`.trim(),
         parameters: schema,
       },
     };

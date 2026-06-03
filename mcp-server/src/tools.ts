@@ -619,7 +619,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_get_state",
-    "Get your Arena ghost: 5-slot bench (unit names + stats + backing cardId), ELO, matchmaking bucket, G balance, and main-world ore pool. Call this BEFORE arena_buy to see what you have.",
+    "Get your Arena ghost: 5-slot bench (unit names + stats + backing cardId), ELO, matchmaking bucket, G balance, and main-world ore pool.",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const r = await chain.arenaGetGhost(agent_id);
@@ -629,22 +629,48 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_buy",
-    "Buy a persistent Arena card with G and place it on your bench. Costs G (3-6 depending on tier). Slot 0-4 must be empty. Triggers ON_BUY abilities immediately (persistent stat buffs).",
+    "Buy a persistent Arena card with G into inventory. Costs G (3-6 depending on tier). Does not place the card on your bench.",
     {
       agent_id: z.number().describe("Agent ID"),
       unit_type: z.number().min(1).max(12).describe("Unit type id 1-12 (see arena_list_units)"),
-      slot: z.number().min(0).max(4).describe("Bench slot 0-4"),
     },
-    async ({ agent_id, unit_type, slot }: any) => {
-      const r = await chain.arenaBuy(agent_id, unit_type, slot);
+    async ({ agent_id, unit_type }: any) => {
+      const r = await chain.arenaBuy(agent_id, unit_type);
       const u = UNIT_CATALOG.find((x) => x.id === unit_type);
-      return { content: [{ type: "text", text: `Bought ${u?.name || `unit#${unit_type}`} into slot ${slot} for ${r.cost ?? u?.cost} G. tx: ${r.txHash}` }] };
+      return { content: [{ type: "text", text: `Bought ${u?.name || `unit#${unit_type}`} card ${r.cardId ?? "?"} into inventory for ${r.cost ?? u?.cost} G. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_place_card",
+    "Place one owned inventory card onto an empty Arena bench slot. Reverts if the card is listed on the market or already on the bench.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      card_id: z.number().describe("Owned card ID"),
+      slot: z.number().min(0).max(4).describe("Empty bench slot 0-4"),
+    },
+    async ({ agent_id, card_id, slot }: any) => {
+      const r = await chain.arenaPlaceCard(agent_id, card_id, slot);
+      return { content: [{ type: "text", text: `Placed card ${card_id} into bench slot ${slot}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_remove_card",
+    "Remove the card at a bench slot back to inventory. Does not refund G.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      slot: z.number().min(0).max(4).describe("Occupied bench slot 0-4"),
+    },
+    async ({ agent_id, slot }: any) => {
+      const r = await chain.arenaRemoveCard(agent_id, slot);
+      return { content: [{ type: "text", text: `Removed bench slot ${slot} back to inventory. tx: ${r.txHash}` }] };
     }
   );
 
   server.tool(
     "arena_list_inventory",
-    "List persistent Arena cards owned by an agent. Cards remain in inventory when sold from bench.",
+    "List persistent Arena cards owned by an agent, including whether each card is on the bench or listed on the market.",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const r = await chain.arenaListInventory(agent_id);
@@ -668,7 +694,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_place_listing",
-    "List one owned Arena card on the secondary market for G. Reverts if the card is currently on your bench.",
+    "List one owned inventory Arena card on the secondary market for G. Reverts if the card is currently on your bench.",
     {
       agent_id: z.number().describe("Seller agent ID"),
       card_id: z.number().describe("Owned card ID"),

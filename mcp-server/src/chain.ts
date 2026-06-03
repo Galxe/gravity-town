@@ -100,13 +100,15 @@ const ROUTER_ABI = [
 
 const ARENA_ENGINE_ABI = [
   "event GhostSubmitted(uint256 indexed agentId, uint16 elo, uint16 bucketId)",
-  "event UnitBought(uint256 indexed agentId, uint8 unitType, uint8 slot, uint16 cost)",
-  "event UnitSold(uint256 indexed agentId, uint8 slot, uint16 refund)",
+  "event CardBought(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint16 cost)",
+  "event CardPlaced(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot)",
+  "event CardRemoved(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot)",
   "event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed)",
   "event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo)",
   "event MatchmakingRan(uint16 indexed bucketId, uint256 matchesCreated)",
-  "function buy(uint256 agentId, uint8 unitType, uint8 toSlot)",
-  "function sell(uint256 agentId, uint8 slot)",
+  "function buy(uint256 agentId, uint8 unitType) returns (uint256 cardId)",
+  "function placeCard(uint256 agentId, uint256 cardId, uint8 slot)",
+  "function removeCard(uint256 agentId, uint8 slot)",
   "function move(uint256 agentId, uint8 fromSlot, uint8 toSlot)",
   "function freeze(uint256 agentId, uint8 shopSlot)",
   "function roll(uint256 agentId)",
@@ -115,6 +117,7 @@ const ARENA_ENGINE_ABI = [
   "function settleMatch(uint256 matchId)",
   "function getGhost(uint256 agentId) view returns (uint8[5] bench, uint16 elo, uint16 bucketId, uint64 lastUpdate, bool exists)",
   "function getGhostCards(uint256 agentId) view returns (uint256[5] cardIds)",
+  "function isCardOnBench(uint256 agentId, uint256 cardId) view returns (bool)",
   "function getMatch(uint256 matchId) view returns (uint256 attackerId, uint256 defenderId, uint8[5] attackerBench, uint8[5] defenderBench, uint64 seed, uint64 createdAt, bool settled, uint256 winnerId)",
   "function simulateMatch(uint256 matchId) view returns (tuple(uint8 attackerSide, uint8 attackerSlot, uint8 defenderSlot, uint16 damage, bool defenderDied)[] turns, uint256 winnerAgentId)",
   "function bucketSize(uint16 bucketId) view returns (uint256)",
@@ -131,6 +134,7 @@ const CARD_LEDGER_ABI = [
   "function getOwnedCards(uint256 agentId) view returns (uint256[] cardIds)",
   "function getActiveListings(uint256 offset, uint256 limit) view returns (tuple(uint256 cardId, uint256 sellerAgent, uint256 askPriceG, uint64 listedAt, bool active)[] listings)",
   "function getActiveListingsByUnit(uint8 unitType, uint256 offset, uint256 limit) view returns (tuple(uint256 cardId, uint256 sellerAgent, uint256 askPriceG, uint64 listedAt, bool active)[] listings)",
+  "function isListed(uint256 cardId) view returns (bool)",
   "function listCard(uint256 agentId, uint256 cardId, uint256 askPriceG)",
   "function cancelListing(uint256 agentId, uint256 cardId)",
   "function buyListed(uint256 buyerAgent, uint256 cardId, uint256 maxPriceG)",
@@ -778,19 +782,19 @@ export class ChainClient {
     };
   }
 
-  async arenaBuy(agentId: number, unitType: number, toSlot: number) {
+  async arenaBuy(agentId: number, unitType: number) {
     const arena = this.requireArena();
-    const tx = await arena.buy(agentId, unitType, toSlot);
+    const tx = await arena.buy(agentId, unitType);
     const receipt = await tx.wait();
-    let result: { unitType?: number; slot?: number; cost?: number } = {};
+    let result: { cardId?: number; unitType?: number; cost?: number } = {};
     const iface = arena.interface;
     for (const log of receipt.logs) {
       try {
         const parsed = iface.parseLog(log);
-        if (parsed.name === "UnitBought") {
+        if (parsed.name === "CardBought") {
           result = {
+            cardId: Number(parsed.args.cardId),
             unitType: Number(parsed.args.unitType),
-            slot: Number(parsed.args.slot),
             cost: Number(parsed.args.cost),
           };
           break;
@@ -798,6 +802,20 @@ export class ChainClient {
       } catch {}
     }
     return { ...result, txHash: receipt.transactionHash };
+  }
+
+  async arenaPlaceCard(agentId: number, cardId: number, slot: number) {
+    const arena = this.requireArena();
+    const tx = await arena.placeCard(agentId, cardId, slot);
+    const receipt = await tx.wait();
+    return { agentId, cardId, slot, txHash: receipt.transactionHash };
+  }
+
+  async arenaRemoveCard(agentId: number, slot: number) {
+    const arena = this.requireArena();
+    const tx = await arena.removeCard(agentId, slot);
+    const receipt = await tx.wait();
+    return { agentId, slot, txHash: receipt.transactionHash };
   }
 
   async arenaSubmit(agentId: number) {
@@ -846,10 +864,16 @@ export class ChainClient {
 
   async arenaListInventory(agentId: number) {
     const cards = this.requireCardLedger();
+    const arena = this.arenaEngine;
     const cardIds = await cards.getOwnedCards(agentId);
     const detailed = await Promise.all((cardIds as any[]).map(async (id) => {
       const card = await cards.getCard(id);
-      return this.decodeCard(card);
+      const cardId = Number(id);
+      const [onBench, listed] = await Promise.all([
+        arena ? arena.isCardOnBench(agentId, cardId) : Promise.resolve(false),
+        cards.isListed(cardId),
+      ]);
+      return { ...this.decodeCard(card), onBench: Boolean(onBench), listed: Boolean(listed) };
     }));
     return { agentId, cards: detailed };
   }
