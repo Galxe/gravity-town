@@ -14,7 +14,7 @@ import "./UnitCatalog.sol";
 
 /// @title ArenaEngine — async ghost autobattler (SAP-style) layered on the main world.
 /// @notice Players submit a 5-slot bench (a "ghost") that other agents fight against
-///         asynchronously. ELO-bucketed matchmaking + deterministic view-only combat.
+///         asynchronously. G-tier matchmaking + deterministic view-only combat.
 ///         Arena uses G through GTreasury. Battle results are written as
 ///         evaluation entries on the loser.
 contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
@@ -37,10 +37,8 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint8   public constant SHOP_SIZE          = 5;     // shop draws 5 candidates
     uint256 public constant ROLL_COST          = 1;     // G to refresh shop
     uint16  public constant DEFAULT_ELO        = 1000;  // new ghost start
-    uint16  public constant ELO_BUCKET_SIZE    = 200;   // 1000..1199 → bucket 5
-    uint32  public constant MATCHMAKING_PERIOD = 1800;  // 30 minutes between bucket runs
+    uint16  public constant ELO_BUCKET_SIZE    = 200;   // ELO band shown by getGhost (1000..1199 → 5)
     uint16  public constant ELO_K              = 32;    // standard K-factor
-    uint16  public constant MAX_BUCKET_SIZE    = 256;   // submit cap per ELO bucket — keeps Fisher-Yates gas bounded
 
     // Default tier thresholds in G. Used when the runtime overrides
     // (tierSilverMinG / tierGoldMinG) are unset. Tunable via setTierThresholds.
@@ -73,15 +71,6 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     mapping(uint256 => Ghost) internal _ghosts;
-
-    /// @notice bucketId = elo / ELO_BUCKET_SIZE.
-    mapping(uint16 => uint256[]) public bucketGhosts;
-    /// @dev O(1) removal helper: bucketIndex[agentId] = (bucketId, index+1). 0 = not in any bucket.
-    mapping(uint256 => uint16) internal _bucketOf;
-    mapping(uint256 => uint256) internal _indexOfPlusOne;
-
-    /// @notice Last time we ran matchmaking on a bucket — keeper rate-limit.
-    mapping(uint16 => uint64) public lastMatchmakingAt;
 
     // ──────────────────── Match ────────────────────
 
@@ -144,7 +133,6 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     // ──────────────────── Events ────────────────────
 
-    event GhostSubmitted(uint256 indexed agentId, uint16 elo, uint16 bucketId);
     event CardBought(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint16 cost);
     event CardPlaced(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot);
     event CardRemoved(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot);
@@ -154,7 +142,6 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed);
     event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo);
-    event MatchmakingRan(uint16 indexed bucketId, uint256 matchesCreated);
 
     // Tier matchmaking events.
     event GhostSubmittedTier(uint256 indexed agentId, Tier tier, uint16 elo, uint256 gAtSubmit);
@@ -418,15 +405,10 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         _assertGhostInvariant(agentId, g);
         require(_hasAnyUnit(g), "empty bench");
 
-        // Legacy ELO-bucket path — retained so runMatchmaking(uint16) keeps working.
-        uint16 bucketId = _bucketIdFor(g.elo);
-        _addToBucket(agentId, bucketId);
-        emit GhostSubmitted(agentId, g.elo, bucketId);
-
-        // Tier path: snapshot G→tier and lock until settle. Idempotent while
-        // already pooled, so a re-submit or a mid-cycle fundAgentG never moves an
-        // in-flight ghost between tiers. settleMatch clears the flag → next submit
-        // recomputes the tier from the new G balance.
+        // Snapshot G→tier and lock until settle. Idempotent while already pooled,
+        // so a re-submit or a mid-cycle fundAgentG never moves an in-flight ghost
+        // between tiers. settleMatch clears the flag → next submit recomputes the
+        // tier from the new G balance.
         if (!isSubmitted[agentId]) {
             Tier t = _tierFor(agentId);
             _addToTierPool(agentId, t);
@@ -445,7 +427,6 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(activeMatchOf[agentId] == 0, "in active match");
         Tier t = submittedTier[agentId];
         _removeFromTierPool(agentId);
-        _removeFromBucket(agentId); // keep the legacy bucket pool consistent too
         isSubmitted[agentId] = false;
         delete submittedTier[agentId];
         emit SubmissionWithdrawn(agentId, t);
@@ -480,100 +461,10 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         return false;
     }
 
+    /// @dev ELO band (elo / 200) surfaced by {getGhost} for display only — not a
+    ///      matchmaking pool. Tier (G-based) matchmaking is the sole pairing path.
     function _bucketIdFor(uint16 elo) internal pure returns (uint16) {
         return elo / ELO_BUCKET_SIZE;
-    }
-
-    function _addToBucket(uint256 agentId, uint16 bucketId) internal {
-        uint16 currentBucket = _bucketOf[agentId];
-        uint256 idx = _indexOfPlusOne[agentId];
-        if (idx != 0 && currentBucket == bucketId) {
-            return; // already there
-        }
-        if (idx != 0) {
-            _removeFromBucket(agentId);
-        }
-        require(bucketGhosts[bucketId].length < MAX_BUCKET_SIZE, "bucket full");
-        bucketGhosts[bucketId].push(agentId);
-        _bucketOf[agentId] = bucketId;
-        _indexOfPlusOne[agentId] = bucketGhosts[bucketId].length; // index+1
-    }
-
-    function _removeFromBucket(uint256 agentId) internal {
-        uint256 idx1 = _indexOfPlusOne[agentId];
-        if (idx1 == 0) return;
-        uint16 b = _bucketOf[agentId];
-        uint256 i = idx1 - 1;
-        uint256[] storage arr = bucketGhosts[b];
-        uint256 last = arr.length - 1;
-        if (i != last) {
-            uint256 moved = arr[last];
-            arr[i] = moved;
-            _indexOfPlusOne[moved] = i + 1;
-        }
-        arr.pop();
-        delete _indexOfPlusOne[agentId];
-        delete _bucketOf[agentId];
-    }
-
-    // ══════════════════════════════════════════════════════════
-    //                     MATCHMAKING
-    // ══════════════════════════════════════════════════════════
-
-    /// @notice Pair up ghosts in a bucket via shuffled Fisher-Yates. Anyone can call,
-    ///         but only once per MATCHMAKING_PERIOD per bucket.
-    function runMatchmaking(uint16 bucketId) external returns (uint256 matchesCreated) {
-        uint64 last = lastMatchmakingAt[bucketId];
-        require(last == 0 || block.timestamp >= last + MATCHMAKING_PERIOD, "rate limited");
-
-        uint256[] storage pool = bucketGhosts[bucketId];
-        uint256 n = pool.length;
-        if (n < 2) {
-            lastMatchmakingAt[bucketId] = uint64(block.timestamp);
-            emit MatchmakingRan(bucketId, 0);
-            return 0;
-        }
-
-        // Snapshot only un-matched ghosts into memory. An agent already locked
-        // into a match (activeMatchOf != 0, e.g. paired by tier matchmaking) must
-        // never be paired again here, or it would sit in two concurrent matches.
-        uint256[] memory ids = new uint256[](n);
-        uint256 m = 0;
-        for (uint256 i = 0; i < n; i++) {
-            uint256 id = pool[i];
-            if (activeMatchOf[id] == 0) ids[m++] = id;
-        }
-        if (m < 2) {
-            lastMatchmakingAt[bucketId] = uint64(block.timestamp);
-            emit MatchmakingRan(bucketId, 0);
-            return 0;
-        }
-
-        // TODO: replace block.prevrandao with VRF or commit-reveal before
-        // adding any prize pool. Miner/validator can grind this.
-        uint256 seed = uint256(keccak256(abi.encode(
-            block.prevrandao, bucketId, block.timestamp, m
-        )));
-        for (uint256 i = m - 1; i > 0; i--) {
-            seed = uint256(keccak256(abi.encode(seed, i)));
-            uint256 j = seed % (i + 1);
-            (ids[i], ids[j]) = (ids[j], ids[i]);
-        }
-
-        // Pair adjacent. If m is odd the last ghost sits out this cycle.
-        uint256 pairs = m / 2;
-        for (uint256 k = 0; k < pairs; k++) {
-            uint256 a = ids[2 * k];
-            uint256 d = ids[2 * k + 1];
-            // TODO: use keccak(seed, k) instead of seed ^ k when matchmaking gas
-            //       allows — the XOR mix here is cheap but locally predictable
-            //       if you know `seed`.
-            _createMatch(a, d, seed ^ uint256(k + 1));
-            matchesCreated++;
-        }
-
-        lastMatchmakingAt[bucketId] = uint64(block.timestamp);
-        emit MatchmakingRan(bucketId, matchesCreated);
     }
 
     function _createMatch(uint256 attackerId, uint256 defenderId, uint256 seedMix) internal returns (uint256 mid) {
@@ -591,9 +482,8 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         m.defenderCardIds = _ghosts[defenderId].cardIds;
         m.seed = uint64(uint256(keccak256(abi.encode(seedMix, attackerId, defenderId))));
         m.createdAt = uint64(block.timestamp);
-        // Lock both sides: they can't withdraw a now-committed submission, and the
-        // activeMatchOf != 0 marker makes both matchmaking paths skip them, so a
-        // ghost can never end up in two concurrent matches. Cleared on settle.
+        // Lock both sides so they can't withdraw a now-committed submission.
+        // Cleared on settle.
         activeMatchOf[attackerId] = mid;
         activeMatchOf[defenderId] = mid;
         emit MatchCreated(mid, attackerId, defenderId, m.seed);
@@ -615,54 +505,37 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 n = pool.length;
         if (n < 2) {
             lastTierMatchmakingAt[tier] = uint64(block.timestamp);
-            emit MatchmakingRan(uint16(uint8(tier)), 0);
             return 0;
         }
 
-        // Snapshot only un-matched ghosts and Fisher-Yates shuffle. The filter
-        // guards against re-pairing an agent already locked into a match (e.g. one
-        // the legacy bucket path matched but left in this pool).
+        // Snapshot into memory and Fisher-Yates shuffle (don't churn storage).
         uint256[] memory ids = new uint256[](n);
-        uint256 m = 0;
-        for (uint256 i = 0; i < n; i++) {
-            uint256 id = pool[i];
-            if (activeMatchOf[id] == 0) ids[m++] = id;
-        }
-        if (m < 2) {
-            lastTierMatchmakingAt[tier] = uint64(block.timestamp);
-            emit MatchmakingRan(uint16(uint8(tier)), 0);
-            return 0;
-        }
+        for (uint256 i = 0; i < n; i++) ids[i] = pool[i];
 
         // TODO: prevrandao is grindable — swap for VRF / commit-reveal before any
         //       prize pool rides on tier matchmaking. Demo-safe for now.
         uint256 seed = uint256(keccak256(abi.encode(
-            block.prevrandao, uint8(tier), block.timestamp, m
+            block.prevrandao, uint8(tier), block.timestamp, n
         )));
-        for (uint256 i = m - 1; i > 0; i--) {
+        for (uint256 i = n - 1; i > 0; i--) {
             seed = uint256(keccak256(abi.encode(seed, i)));
             uint256 j = seed % (i + 1);
             (ids[i], ids[j]) = (ids[j], ids[i]);
         }
 
-        uint256 pairs = m / 2;
+        uint256 pairs = n / 2;
         for (uint256 k = 0; k < pairs; k++) {
             uint256 a = ids[2 * k];
             uint256 d = ids[2 * k + 1];
             uint256 mid = _createMatch(a, d, uint256(keccak256(abi.encode(seed, k))));
-            // Matched ghosts leave BOTH pools — the tier pool (they re-enter on next
-            // submit post-settle) and the legacy ELO bucket, so the bucket drains as
-            // tier matches resolve instead of filling toward its cap.
+            // Matched ghosts leave the pool; they re-enter on next submit post-settle.
             _removeFromTierPool(a);
             _removeFromTierPool(d);
-            _removeFromBucket(a);
-            _removeFromBucket(d);
             emit MatchmadeInTier(tier, mid, a, d);
             matchesCreated++;
         }
 
         lastTierMatchmakingAt[tier] = uint64(block.timestamp);
-        emit MatchmakingRan(uint16(uint8(tier)), matchesCreated);
     }
 
     /// @notice Override a tier's matchmaking cooldown (demo: drop to 60s). 0 resets
@@ -949,16 +822,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     function _setElo(uint256 agentId, uint16 newElo) internal {
-        Ghost storage g = _ghosts[agentId];
-        uint16 oldBucket = _bucketIdFor(g.elo);
-        g.elo = newElo;
-        uint16 newBucket = _bucketIdFor(newElo);
-        if (_indexOfPlusOne[agentId] != 0 && oldBucket != newBucket) {
-            _removeFromBucket(agentId);
-            bucketGhosts[newBucket].push(agentId);
-            _bucketOf[agentId] = newBucket;
-            _indexOfPlusOne[agentId] = bucketGhosts[newBucket].length;
-        }
+        _ghosts[agentId].elo = newElo;
     }
 
     // ══════════════════════════════════════════════════════════
@@ -1073,13 +937,6 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
                 m.seed, m.createdAt, m.settled, m.winnerId);
     }
 
-    function bucketSize(uint16 bucketId) external view returns (uint256) {
-        return bucketGhosts[bucketId].length;
-    }
-
-    function bucketOf(uint256 agentId) external view returns (uint16) {
-        return _bucketOf[agentId];
-    }
 
     /// @notice Preview the ELO change for a hypothetical (winner, loser) ELO pair.
     ///         Useful for clients to display "+X / -X" ahead of a settle, and for

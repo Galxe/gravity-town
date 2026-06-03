@@ -204,44 +204,28 @@ contract ArenaTierTest is Test {
     }
 
     // ══════════════════════════════════════════════════════════
-    //        no double-matching across tier + legacy bucket
+    //        matched ghosts leave the pool — no double-matching
     // ══════════════════════════════════════════════════════════
 
-    // A tier match drains the agents from the legacy ELO bucket, so the bucket
-    // can't re-match them (and doesn't fill toward its cap as matches resolve).
-    function test_tier_match_drains_legacy_bucket() public {
-        uint256 a = _readyAndSubmit(500); // both Silver, both ELO 1000 -> bucket 5
-        uint256 b = _readyAndSubmit(500);
-        assertEq(arena.bucketSize(5), 2, "submit also seeded the legacy bucket");
-
-        uint256 firstMatchId = arena.nextMatchId();
-        arena.runMatchmaking(ArenaEngine.Tier.Silver);
-        assertEq(arena.bucketSize(5), 0, "tier match drained the bucket");
-        assertGt(arena.activeMatchOf(a), 0);
-        assertGt(arena.activeMatchOf(b), 0);
-
-        // Legacy bucket matchmaking now finds nobody -> no second match created.
-        uint256 made = arena.runMatchmaking(uint16(5));
-        assertEq(made, 0, "bucket has no un-matched ghosts");
-        assertEq(arena.nextMatchId(), firstMatchId + 1, "exactly one match total");
-    }
-
-    // The guard also covers the reverse path: an agent matched by the legacy
-    // bucket stays in its tier pool, but tier matchmaking skips it (activeMatchOf).
-    function test_bucket_match_is_skipped_by_tier() public {
+    // A matched ghost is removed from its tier pool and locked via activeMatchOf,
+    // so a later matchmaking run can't pair it into a second concurrent match.
+    function test_matched_ghosts_are_not_rematched() public {
         uint256 a = _readyAndSubmit(500);
         uint256 b = _readyAndSubmit(500);
-
-        arena.runMatchmaking(uint16(5)); // legacy bucket pairs them
-        assertGt(arena.activeMatchOf(a), 0);
-        // bucket path leaves them in the tier pool…
         assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 2);
 
-        // …but tier matchmaking must NOT re-pair already-matched ghosts.
-        uint256 before = arena.nextMatchId();
+        uint256 first = arena.nextMatchId();
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
+        assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 0, "both left the pool");
+        assertGt(arena.activeMatchOf(a), 0);
+        assertGt(arena.activeMatchOf(b), 0);
+        assertEq(arena.nextMatchId(), first + 1, "exactly one match");
+
+        // Re-running after the cooldown finds an empty pool — no second match.
+        vm.warp(block.timestamp + 1801);
         uint256 made = arena.runMatchmaking(ArenaEngine.Tier.Silver);
-        assertEq(made, 0, "matched ghosts are skipped");
-        assertEq(arena.nextMatchId(), before, "no extra match");
+        assertEq(made, 0, "no un-matched ghosts left");
+        assertEq(arena.nextMatchId(), first + 1, "still exactly one match");
     }
 
     // ══════════════════════════════════════════════════════════

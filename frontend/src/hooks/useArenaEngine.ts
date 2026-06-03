@@ -30,9 +30,6 @@ const ARENA_ABI = [
   'function getMatch(uint256) view returns (uint256 attackerId, uint256 defenderId, uint8[5] attackerBench, uint8[5] defenderBench, uint64 seed, uint64 createdAt, bool settled, uint256 winnerId)',
   'function simulateMatch(uint256) view returns (tuple(uint8 attackerSide, uint8 attackerSlot, uint8 defenderSlot, uint16 damage, bool defenderDied)[] turns, uint256 winnerAgentId)',
   'function nextMatchId() view returns (uint256)',
-  'function lastMatchmakingAt(uint16) view returns (uint64)',
-  'function MATCHMAKING_PERIOD() view returns (uint32)',
-  'function bucketOf(uint256) view returns (uint16)',
   // #33 — batched canonical tier (0=Bronze,1=Silver,2=Gold) + G balance for the
   // whole leaderboard in ONE call, plus the gTreasury address the arena reads from
   // (the fallback source when the Router lacks getAddressesV3).
@@ -41,7 +38,6 @@ const ARENA_ABI = [
   // Events — used to drive ongoing list + highlight ticker.
   'event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed)',
   'event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo)',
-  'event MatchmakingRan(uint16 indexed bucketId, uint256 matchesCreated)',
 ];
 
 const POLL_MS = 4000;
@@ -308,15 +304,6 @@ export function useArenaEngine() {
           }
         }
 
-        // Pull bucket matchmaking timestamps for the buckets we know about.
-        const buckets = new Set<number>();
-        for (const g of Object.values(ghosts)) buckets.add(g.bucketId);
-        await Promise.all(Array.from(buckets).map(async (b) => {
-          try {
-            const ts = await arena.lastMatchmakingAt(b);
-            setLastMatchmaking(b, Number(ts));
-          } catch { /* ignore */ }
-        }));
       } catch (err) {
         console.error('[arena] poll error:', err);
       } finally {
