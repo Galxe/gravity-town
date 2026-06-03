@@ -300,7 +300,7 @@ Shop prices fixed per type (use `arena_list_units` to check). Two ways to get ca
 
 ### Tier System
 
-Bronze (<100G) / Silver (100-999G) / Gold (>=1000G). Tier locked at submit time, recalculated after settle.
+Three tiers: Bronze / Silver / Gold, based on G balance. Thresholds are owner-configurable — use `arena_get_tier_info` to check current values. Tier locked at submit time, recalculated after settle.
 
 ---
 

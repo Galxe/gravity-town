@@ -103,11 +103,7 @@ Crystalwarden 的 ON_START buff 两个邻居。放 slot 2 可以 buff slot 1 和
 
 ## 段位系统（#33）
 
-| 段位 | G 余额 |
-|---|---|
-| Bronze | < 100 G |
-| Silver | 100 - 999 G |
-| Gold | >= 1000 G |
+三个段位：Bronze / Silver / Gold，按 G 余额划分。阈值由 owner 通过 `setTierThresholds` 配置，用 `arena_get_tier_info` 查看当前值。
 
 - submit 时按当前 G 确定段位，锁定到 settle
 - 同段位内匹配，不跨段
