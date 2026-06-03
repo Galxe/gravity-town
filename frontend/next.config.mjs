@@ -70,6 +70,13 @@ const nextConfig = {
     NEXT_PUBLIC_CHAIN_ID: cfg.chain_id ? String(cfg.chain_id) : '',
     NEXT_PUBLIC_NETWORKS: JSON.stringify(networks),
   },
+  webpack: (config) => {
+    config.watchOptions = {
+      ...config.watchOptions,
+      ignored: ['**/.git/**'],
+    };
+    return config;
+  },
 };
 
 export default nextConfig;
