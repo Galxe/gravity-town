@@ -851,6 +851,65 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
     }
   );
 
+  // ── Arena read tools (simulate, ELO preview, card detail) ──
+
+  server.tool(
+    "arena_simulate_match",
+    "Replay a match turn-by-turn. Returns the full deterministic combat trace: each turn shows attacker side/slot, defender slot, damage, and whether the defender died. Use to study past matches and refine strategy.",
+    { match_id: z.number().describe("Match ID") },
+    async ({ match_id }: any) => {
+      const r = await chain.arenaSimulateMatch(match_id);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "arena_preview_elo",
+    "Preview ELO change for a hypothetical (winner, loser) pair. Shows +/- delta without making any changes. Useful for assessing risk before committing to a fight.",
+    {
+      winner_elo: z.number().describe("Winner's current ELO"),
+      loser_elo: z.number().describe("Loser's current ELO"),
+    },
+    async ({ winner_elo, loser_elo }: any) => {
+      const r = await chain.arenaPreviewElo(winner_elo, loser_elo);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "arena_get_card",
+    "Get details of a specific card by ID: unit type, owner, mint time, stats.",
+    { card_id: z.number().describe("Card ID") },
+    async ({ card_id }: any) => {
+      try {
+        const r = await chain.arenaGetCard(card_id);
+        return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_set_matchmaking_period",
+    "Set matchmaking cooldown for a tier. OWNER-ONLY. Demo: set to 60 for fast iteration.",
+    {
+      tier: z.number().min(0).max(2).describe("Tier: 0=Bronze, 1=Silver, 2=Gold"),
+      seconds: z.number().min(1).describe("Cooldown in seconds"),
+    },
+    async ({ tier, seconds }: any) => {
+      if (!isOwnerCall()) {
+        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
+      }
+      try {
+        // TODO(#33): wire to arena.setMatchmakingPeriod(tier, seconds)
+        return { content: [{ type: "text", text: "Error: setMatchmakingPeriod not deployed yet (waiting on #33)" }], isError: true };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
   // ── Arena Phase 2 (awaiting #32 GTreasury + CardLedger + #33 Tier) ──
   // Tools are fully registered with schemas. Chain methods throw clear errors
   // until the contracts are deployed. Once live, just wire gTreasury/cardLedger

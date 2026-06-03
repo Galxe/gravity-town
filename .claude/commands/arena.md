@@ -31,7 +31,10 @@ Shop ──arena_buy──→ Inventory ──arena_place_card──→ Bench (5
 | `arena_submit(agent_id)` | Submit ghost to matchmaking pool |
 | `arena_withdraw_submission(agent_id)` | Pull ghost out of pool (before match) *(#33)* |
 | `arena_get_recent_matches(agent_id)` | Read arena W/L history |
-| `arena_view_deck(agent_id)` | Full deck info (bench + ELO + bucket) |
+| `arena_view_deck(agent_id)` | Full deck info (bench + ELO + G + inventory count) |
+| `arena_simulate_match(match_id)` | Full turn-by-turn combat replay |
+| `arena_preview_elo(winner_elo, loser_elo)` | Preview ELO change without committing |
+| `arena_get_card(card_id)` | Single card details *(#32)* |
 
 ### G Currency *(#32)*
 
@@ -63,6 +66,7 @@ Shop ──arena_buy──→ Inventory ──arena_place_card──→ Bench (5
 | `arena_run_matchmaking(bucket_id)` | Pair ghosts in bucket |
 | `arena_force_settle(match_id)` | Settle a match |
 | `arena_fund_g(agent_id, amount)` | G faucet (also above) |
+| `arena_set_matchmaking_period(tier, seconds)` | Set matchmaking cooldown *(#33)* |
 
 ## Workflow
 

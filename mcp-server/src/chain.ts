@@ -126,6 +126,7 @@ const ARENA_ENGINE_ABI = [
   "function bucketSize(uint16 bucketId) view returns (uint256)",
   "function bucketOf(uint256 agentId) view returns (uint16)",
   "function nextMatchId() view returns (uint256)",
+  "function previewEloUpdate(uint16 winnerElo, uint16 loserElo) view returns (uint16 newWinner, uint16 newLoser)",
   // #32 Card inventory → bench
   // "function placeCard(uint256 agentId, uint256 cardId, uint8 slot)",
   // "function removeCard(uint256 agentId, uint8 slot)",
@@ -1033,6 +1034,35 @@ export class ChainClient {
   async arenaNextMatchId(): Promise<number> {
     const arena = this.requireArena();
     return Number(await arena.nextMatchId());
+  }
+
+  async arenaPreviewElo(winnerElo: number, loserElo: number) {
+    const arena = this.requireArena();
+    const [newWinner, newLoser] = await arena.previewEloUpdate(winnerElo, loserElo);
+    return {
+      winnerElo, loserElo,
+      newWinnerElo: Number(newWinner),
+      newLoserElo: Number(newLoser),
+      winnerDelta: Number(newWinner) - winnerElo,
+      loserDelta: Number(newLoser) - loserElo,
+    };
+  }
+
+  async arenaGetCard(cardId: number) {
+    const cl = this.requireCardLedger();
+    const card = await cl.getCard(cardId);
+    const unitType = Number(card.unitType);
+    const u = UNIT_CATALOG.find((x) => x.id === unitType);
+    return {
+      cardId: Number(card.id),
+      unitType,
+      ownerAgent: Number(card.ownerAgent),
+      mintedAt: Number(card.mintedAt),
+      name: u?.name || "?",
+      atk: u?.atk,
+      hp: u?.hp,
+      ability: u?.ability,
+    };
   }
 
   // ============ Arena Phase 2 — GTreasury + CardLedger + Tier (#32 / #33) ============
