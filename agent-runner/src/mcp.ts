@@ -124,10 +124,17 @@ export function applyAgentDefaults(
     // Arena
     "arena_buy", "arena_sell", "arena_move", "arena_freeze", "arena_roll",
     "arena_submit", "arena_get_state", "arena_get_recent_matches",
+    "arena_place_card", "arena_remove_card", "arena_list_inventory",
+    "arena_view_deck", "arena_get_g_balance", "arena_get_tier_info",
+    "arena_withdraw_submission",
   ];
 
   if (selfTools.includes(toolName) && next.agent_id === undefined) {
     next.agent_id = agentId;
+  }
+
+  if (toolName === "arena_buy_listing" && next.buyer_agent_id === undefined) {
+    next.buyer_agent_id = agentId;
   }
 
   if (toolName === "send_message" && next.from_agent === undefined) {

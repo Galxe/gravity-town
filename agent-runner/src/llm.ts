@@ -647,6 +647,9 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       // Arena side-system
       "arena_buy", "arena_sell", "arena_move", "arena_freeze", "arena_roll",
       "arena_submit", "arena_get_state", "arena_get_recent_matches",
+      "arena_place_card", "arena_remove_card", "arena_list_inventory",
+      "arena_view_deck", "arena_get_g_balance", "arena_get_tier_info",
+      "arena_withdraw_submission",
     ];
 
     if (selfTools.includes(tool.name)) {

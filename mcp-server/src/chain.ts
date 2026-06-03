@@ -119,9 +119,14 @@ const ARENA_ENGINE_ABI = [
   "function bucketSize(uint16 bucketId) view returns (uint256)",
   "function bucketOf(uint256 agentId) view returns (uint16)",
   "function nextMatchId() view returns (uint256)",
-  // #33 Tier — uncomment when ArenaEngine is redeployed with tier support
+  // #32 Card inventory → bench
+  // "function placeCard(uint256 agentId, uint256 cardId, uint8 slot)",
+  // "function removeCard(uint256 agentId, uint8 slot)",
+  // "function getGhostCards(uint256 agentId) view returns (uint256[5])",
+  // #33 Tier
   // "function _tierFor(uint256 agentId) view returns (uint8)",
   // "function tierPopulation(uint8 tier) view returns (uint256)",
+  // "function tierStates(uint256[] agentIds) view returns (tuple(uint256 agentId, uint8 tier, uint256 gBalance)[])",
   // "function withdrawSubmission(uint256 agentId)",
   // "event SubmissionWithdrawn(uint256 indexed agentId, uint8 tier)",
 ];
@@ -1025,18 +1030,38 @@ export class ChainClient {
     return { cardId, txHash: receipt.transactionHash };
   }
 
-  async arenaBuyCard(buyerAgent: number, cardId: number, maxPriceG: number) {
+  async arenaBuyListing(buyerAgent: number, cardId: number, maxPriceG: number) {
     const cl = this.requireCardLedger();
     const tx = await cl.buyListed(buyerAgent, cardId, maxPriceG);
     const receipt = await tx.wait();
     return { cardId, maxPriceG, txHash: receipt.transactionHash };
   }
 
+  async arenaPlaceCard(agentId: number, cardId: number, slot: number): Promise<{ cardId: number; slot: number; txHash: string }> {
+    this.requireArena();
+    // #32: uncomment when placeCard is deployed
+    // const tx = await arena.placeCard(agentId, cardId, slot);
+    // const receipt = await tx.wait();
+    // return { cardId, slot, txHash: receipt.transactionHash };
+    throw new Error("placeCard not deployed yet (waiting on #32)");
+  }
+
+  async arenaRemoveCard(agentId: number, slot: number): Promise<{ slot: number; txHash: string }> {
+    this.requireArena();
+    // #32: uncomment when removeCard is deployed
+    // const tx = await arena.removeCard(agentId, slot);
+    // const receipt = await tx.wait();
+    // return { slot, txHash: receipt.transactionHash };
+    throw new Error("removeCard not deployed yet (waiting on #32)");
+  }
+
   async arenaGetTierInfo(agentId: number): Promise<{ tier: number; label: string; gBalance: number; agentsInTier: number; lowerG: number; upperG: number }> {
     this.requireArena();
-    // #33: uncomment when _tierFor + tierPopulation are deployed
-    // const tier = Number(await arena._tierFor(agentId));
-    // const gBalance = await this.arenaGetGBalance(agentId);
+    // #33: uses tierStates batch view for efficiency
+    // const arena = this.requireArena();
+    // const [result] = await arena.tierStates([agentId]);
+    // const tier = Number(result.tier);
+    // const gBalance = Number(result.gBalance);
     // const population = Number(await arena.tierPopulation(tier));
     // const thresholds = [{ tier: 0, label: "Bronze", minG: 0 }, { tier: 1, label: "Silver", minG: 100 }, { tier: 2, label: "Gold", minG: 1000 }];
     // const t = thresholds[tier] || thresholds[0];
@@ -1045,8 +1070,9 @@ export class ChainClient {
   }
 
   async arenaWithdrawSubmission(agentId: number): Promise<{ agentId: number; txHash: string }> {
-    const arena = this.requireArena();
+    this.requireArena();
     // #33: uncomment when withdrawSubmission is deployed
+    // const arena = this.requireArena();
     // const tx = await arena.withdrawSubmission(agentId);
     // const receipt = await tx.wait();
     // return { agentId, txHash: receipt.transactionHash };
@@ -1062,10 +1088,12 @@ export class ChainClient {
       const u = UNIT_CATALOG.find((x) => x.id === unitType);
       return { slot, unitType, name: u?.name || "?", atk: u?.atk, hp: u?.hp, ability: u?.ability };
     });
-    // #32/#33: add cardIds + gBalance + tier once deployed
-    // const cardIds = ghost.cardIds; // from expanded getGhost 6-tuple
+    // #32: add cardIds from getGhostCards + inventory count
+    // const cardIds = await arena.getGhostCards(agentId);
+    // const inventory = await this.arenaListInventory(agentId);
+    // #33: add gBalance + tier
     // const gBalance = await this.arenaGetGBalance(agentId);
-    // const tier = await arena._tierFor(agentId);
+    // const tier = Number((await arena.tierStates([agentId]))[0].tier);
     return {
       bench: benchNamed,
       elo: Number(elo),
