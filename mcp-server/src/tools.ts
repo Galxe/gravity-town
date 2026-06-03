@@ -3,7 +3,17 @@ import { z } from "zod";
 import { ChainClient, UNIT_CATALOG } from "./chain.js";
 import { searchWeb } from "./web.js";
 
-export function registerTools(server: any, chain: ChainClient) {
+export interface ToolOptions {
+  ownerKeys?: Set<string>;
+}
+
+export function registerTools(server: any, chain: ChainClient, opts: ToolOptions = {}) {
+  const { ownerKeys } = opts;
+  const isOwnerCall = () => {
+    if (!ownerKeys || ownerKeys.size === 0) return true;
+    const signerAddr = chain.signer.address.toLowerCase();
+    return ownerKeys.has(signerAddr);
+  };
   // ============ Agent ============
 
   server.tool(
@@ -661,6 +671,257 @@ export function registerTools(server: any, chain: ChainClient) {
       // Filter to arena-only entries for clarity
       const arenaEntries = r.entries.filter((e: any) => e.category === "arena");
       return { content: [{ type: "text", text: JSON.stringify({ arenaEntries, totalEvaluations: r.used }, null, 2) }] };
+    }
+  );
+
+  // ── Arena verbs (sell / move / freeze / roll) ──
+
+  server.tool(
+    "arena_sell",
+    "Sell the unit at a bench slot. Refunds 50% of original cost (rounded down). Triggers ON_SELL abilities before clearing. The card returns to your inventory (not destroyed).",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      slot: z.number().min(0).max(4).describe("Bench slot 0-4 to sell from"),
+    },
+    async ({ agent_id, slot }: any) => {
+      const r = await chain.arenaSell(agent_id, slot);
+      return { content: [{ type: "text", text: `Sold unit at slot ${slot}. Refunded ${r.refund} ore. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_move",
+    "Swap two bench positions. Either or both may be empty. Persistent stat buffs travel with the unit. Position matters — leftmost slots attack first.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      from_slot: z.number().min(0).max(4).describe("Source bench slot 0-4"),
+      to_slot: z.number().min(0).max(4).describe("Destination bench slot 0-4"),
+    },
+    async ({ agent_id, from_slot, to_slot }: any) => {
+      const r = await chain.arenaMove(agent_id, from_slot, to_slot);
+      return { content: [{ type: "text", text: `Swapped slot ${r.fromSlot} ↔ slot ${r.toSlot}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_freeze",
+    "Toggle freeze on a shop slot. Frozen slots survive the next roll. Call again to unfreeze.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      shop_slot: z.number().min(0).max(4).describe("Shop slot 0-4 to toggle freeze"),
+    },
+    async ({ agent_id, shop_slot }: any) => {
+      const r = await chain.arenaFreeze(agent_id, shop_slot);
+      return { content: [{ type: "text", text: `Shop slot ${r.shopSlot} is now ${r.nowFrozen ? "FROZEN" : "UNFROZEN"}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_roll",
+    "Refresh the shop seed. Costs 1 ore. Frozen slots are preserved across rolls.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+    },
+    async ({ agent_id }: any) => {
+      const r = await chain.arenaRoll(agent_id);
+      return { content: [{ type: "text", text: `Shop rolled. New seed: ${r.newSeed}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  // ── Arena keeper / admin tools (OWNER_KEYS gated) ──
+
+  server.tool(
+    "arena_run_matchmaking",
+    "Run matchmaking for an ELO bucket. Pairs ghosts via Fisher-Yates shuffle. Rate-limited to once per MATCHMAKING_PERIOD (default 30min) per bucket. OWNER-ONLY.",
+    {
+      bucket_id: z.number().describe("ELO bucket ID (elo / 200, e.g. bucket 5 = ELO 1000-1199)"),
+    },
+    async ({ bucket_id }: any) => {
+      if (!isOwnerCall()) {
+        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
+      }
+      const r = await chain.arenaRunMatchmaking(bucket_id);
+      return { content: [{ type: "text", text: `Matchmaking ran for bucket ${bucket_id}: ${r.matchesCreated} match(es) created. matchIds: [${r.matchIds.join(", ")}]. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_force_settle",
+    "Settle an unsettled match. Computes deterministic combat, updates ELO, writes evaluation on loser. Anyone can call on-chain, but MCP-gated to OWNER_KEYS.",
+    {
+      match_id: z.number().describe("Match ID to settle"),
+    },
+    async ({ match_id }: any) => {
+      if (!isOwnerCall()) {
+        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
+      }
+      const r = await chain.arenaSettleMatch(match_id);
+      return { content: [{ type: "text", text: `Match ${match_id} settled. Winner: agent #${r.winnerId}. New ELO — winner: ${r.newWinnerElo}, loser: ${r.newLoserElo}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  // ── Arena Phase 2 (awaiting #32 GTreasury + CardLedger + #33 Tier) ──
+  // Tools are fully registered with schemas. Chain methods throw clear errors
+  // until the contracts are deployed. Once live, just wire gTreasury/cardLedger
+  // in ChainClient.ready() and uncomment the implementations.
+
+  server.tool(
+    "arena_get_g_balance",
+    "Get an agent's G (Arena currency) balance. G is separate from ore — used for all Arena purchases and market trades.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      try {
+        const balance = await chain.arenaGetGBalance(agent_id);
+        return { content: [{ type: "text", text: JSON.stringify({ agentId: agent_id, gBalance: balance }, null, 2) }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_fund_g",
+    "Fund an agent with G (testnet faucet). OWNER-ONLY. No cap — for demo/testing.",
+    {
+      agent_id: z.number().describe("Agent ID to fund"),
+      amount: z.number().min(1).describe("Amount of G to give"),
+    },
+    async ({ agent_id, amount }: any) => {
+      if (!isOwnerCall()) {
+        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
+      }
+      try {
+        const r = await chain.arenaFundG(agent_id, amount);
+        return { content: [{ type: "text", text: `Funded agent #${agent_id} with ${amount} G. tx: ${r.txHash}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_list_inventory",
+    "List all cards owned by an agent (including cards on bench). Shows cardId, unitType, name, stats.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      try {
+        const cards = await chain.arenaListInventory(agent_id);
+        return { content: [{ type: "text", text: JSON.stringify(cards, null, 2) }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_list_market",
+    "Browse the secondary market. Filter by unit type. Returns active listings with card ID, seller, price in G.",
+    {
+      unit_type: z.number().min(1).max(12).optional().describe("Filter by unit type (1-12). Omit for all."),
+      limit: z.number().default(20).describe("Max results"),
+    },
+    async ({ unit_type, limit }: any) => {
+      try {
+        const listings = await chain.arenaListMarket(unit_type, limit);
+        return { content: [{ type: "text", text: JSON.stringify(listings, null, 2) }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_place_listing",
+    "List a card for sale on the secondary market at a G price. Card must NOT be on your bench.",
+    {
+      agent_id: z.number().describe("Agent ID (seller)"),
+      card_id: z.number().describe("Card ID to list"),
+      ask_price_g: z.number().min(1).describe("Asking price in G"),
+    },
+    async ({ agent_id, card_id, ask_price_g }: any) => {
+      try {
+        const r = await chain.arenaPlaceListing(agent_id, card_id, ask_price_g);
+        return { content: [{ type: "text", text: `Listed card #${card_id} for ${ask_price_g} G. tx: ${r.txHash}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_cancel_listing",
+    "Cancel a market listing. Card stays in your inventory.",
+    {
+      agent_id: z.number().describe("Agent ID (seller)"),
+      card_id: z.number().describe("Card ID to delist"),
+    },
+    async ({ agent_id, card_id }: any) => {
+      try {
+        const r = await chain.arenaCancelListing(agent_id, card_id);
+        return { content: [{ type: "text", text: `Listing cancelled for card #${card_id}. tx: ${r.txHash}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_buy_card",
+    "Buy a card from the secondary market. Spends G. Fails if price exceeds max_price_g or insufficient G.",
+    {
+      agent_id: z.number().describe("Agent ID (buyer)"),
+      card_id: z.number().describe("Card ID to buy"),
+      max_price_g: z.number().min(1).describe("Max G willing to pay (slippage protection)"),
+    },
+    async ({ agent_id, card_id, max_price_g }: any) => {
+      try {
+        const r = await chain.arenaBuyCard(agent_id, card_id, max_price_g);
+        return { content: [{ type: "text", text: `Bought card #${card_id} for up to ${max_price_g} G. tx: ${r.txHash}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_view_deck",
+    "View full deck info: bench with unit details, ELO, bucket. Will include cardIds + G balance + tier once #32/#33 land.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      try {
+        const r = await chain.arenaViewDeck(agent_id);
+        return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_get_tier_info",
+    "Get tier info for an agent: Bronze (<100G) / Silver (100-1000G) / Gold (>=1000G). Shows current tier, G balance, and agents in tier.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      try {
+        const r = await chain.arenaGetTierInfo(agent_id);
+        return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
+    }
+  );
+
+  server.tool(
+    "arena_withdraw_submission",
+    "Withdraw your ghost from the matchmaking pool. Only works if not yet paired in an active match.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      try {
+        const r = await chain.arenaWithdrawSubmission(agent_id);
+        return { content: [{ type: "text", text: `Submission withdrawn. tx: ${r.txHash}` }] };
+      } catch (e: any) {
+        return { content: [{ type: "text", text: `Error: ${e.message}` }], isError: true };
+      }
     }
   );
 }

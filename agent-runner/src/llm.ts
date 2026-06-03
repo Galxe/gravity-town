@@ -444,6 +444,10 @@ export function buildSystemPrompt(
     "  arena_list_units() — see all 12 units (stats + abilities). Look at this BEFORE buying.",
     "  arena_get_state(agent_id) — see your current bench, ELO, bucket, ore.",
     "  arena_buy(agent_id, unit_type, slot) — buy unit_type (1-12) into bench slot (0-4). Costs ore from your main pool.",
+    "  arena_sell(agent_id, slot) — sell unit at slot. Refunds 50% ore. Triggers ON_SELL abilities first.",
+    "  arena_move(agent_id, from_slot, to_slot) — swap two bench positions. Stat buffs travel with the unit.",
+    "  arena_freeze(agent_id, shop_slot) — toggle freeze on a shop slot. Frozen slots survive rolls.",
+    "  arena_roll(agent_id) — refresh shop seed. Costs 1 ore.",
     "  arena_submit(agent_id) — push your ghost into matchmaking. Idempotent.",
     "  arena_get_recent_matches(agent_id) — read 'arena defeat' entries on your evaluation ledger to LEARN from losses.",
     "",
@@ -641,7 +645,8 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       "build", "attack", "raid", "incite_rebellion", "claim_neutral",
       "start_debate", "vote_debate", "write_chronicle", "get_chronicle",
       // Arena side-system
-      "arena_buy", "arena_submit", "arena_get_state", "arena_get_recent_matches",
+      "arena_buy", "arena_sell", "arena_move", "arena_freeze", "arena_roll",
+      "arena_submit", "arena_get_state", "arena_get_recent_matches",
     ];
 
     if (selfTools.includes(tool.name)) {

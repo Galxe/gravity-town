@@ -122,7 +122,8 @@ export function applyAgentDefaults(
     "build", "attack", "raid", "incite_rebellion", "claim_neutral",
     "start_debate", "vote_debate", "write_chronicle", "get_chronicle",
     // Arena
-    "arena_buy", "arena_submit", "arena_get_state", "arena_get_recent_matches",
+    "arena_buy", "arena_sell", "arena_move", "arena_freeze", "arena_roll",
+    "arena_submit", "arena_get_state", "arena_get_recent_matches",
   ];
 
   if (selfTools.includes(toolName) && next.agent_id === undefined) {

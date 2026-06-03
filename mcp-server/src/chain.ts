@@ -101,6 +101,9 @@ const ARENA_ENGINE_ABI = [
   "event UnitSold(uint256 indexed agentId, uint8 slot, uint16 refund)",
   "event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed)",
   "event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo)",
+  "event ShopFrozen(uint256 indexed agentId, uint8 shopSlot, bool nowFrozen)",
+  "event ShopRolled(uint256 indexed agentId, uint64 newSeed)",
+  "event UnitMoved(uint256 indexed agentId, uint8 fromSlot, uint8 toSlot)",
   "event MatchmakingRan(uint16 indexed bucketId, uint256 matchesCreated)",
   "function buy(uint256 agentId, uint8 unitType, uint8 toSlot)",
   "function sell(uint256 agentId, uint8 slot)",
@@ -116,6 +119,34 @@ const ARENA_ENGINE_ABI = [
   "function bucketSize(uint16 bucketId) view returns (uint256)",
   "function bucketOf(uint256 agentId) view returns (uint16)",
   "function nextMatchId() view returns (uint256)",
+  // #33 Tier — uncomment when ArenaEngine is redeployed with tier support
+  // "function _tierFor(uint256 agentId) view returns (uint8)",
+  // "function tierPopulation(uint8 tier) view returns (uint256)",
+  // "function withdrawSubmission(uint256 agentId)",
+  // "event SubmissionWithdrawn(uint256 indexed agentId, uint8 tier)",
+];
+
+// ──────────────────── GTreasury ABI (#32) ────────────────────
+// Uncomment + wire in ready() when GTreasury is deployed.
+
+const G_TREASURY_ABI = [
+  "function gBalance(uint256 agentId) view returns (uint256)",
+  "function fundAgentG(uint256 agentId, uint256 amount)",
+  // "event GFunded(uint256 indexed agentId, uint256 amount, address by)",
+  // "event GSpent(uint256 indexed agentId, uint256 amount, bytes32 reason)",
+  // "event GCredited(uint256 indexed agentId, uint256 amount, bytes32 reason)",
+];
+
+// ──────────────────── CardLedger ABI (#32) ────────────────────
+
+const CARD_LEDGER_ABI = [
+  "function getCard(uint256 cardId) view returns (tuple(uint256 id, uint8 unitType, uint256 ownerAgent, uint256 mintedAt))",
+  "function getOwnedCards(uint256 agentId) view returns (uint256[])",
+  "function getActiveListings(uint256 offset, uint256 limit) view returns (tuple(uint256 cardId, uint256 sellerAgent, uint256 askPriceG, uint64 listedAt, bool active)[])",
+  "function getActiveListingsByUnit(uint8 unitType, uint256 offset, uint256 limit) view returns (tuple(uint256 cardId, uint256 sellerAgent, uint256 askPriceG, uint64 listedAt, bool active)[])",
+  "function listCard(uint256 agentId, uint256 cardId, uint256 askPriceG)",
+  "function cancelListing(uint256 agentId, uint256 cardId)",
+  "function buyListed(uint256 buyerAgent, uint256 cardId, uint256 maxPriceG)",
 ];
 
 // ──────────────────── Unit catalog (mirrors UnitCatalog.sol — kept in sync) ────────────────────
@@ -186,6 +217,8 @@ export class ChainClient {
   gameEngine: ethers.Contract = null!;
   evaluationLedger: ethers.Contract = null!;
   arenaEngine: ethers.Contract | null = null;
+  gTreasury: ethers.Contract | null = null;
+  cardLedger: ethers.Contract | null = null;
   private _ready: Promise<void>;
   /** Last oracle debate created this session — surfaced to agents every cycle so
    *  betting visibility does not depend on the perishable inbox notice. */
@@ -707,6 +740,67 @@ export class ChainClient {
     return this.arenaEngine;
   }
 
+  async arenaSell(agentId: number, slot: number) {
+    const arena = this.requireArena();
+    const tx = await arena.sell(agentId, slot);
+    const receipt = await tx.wait();
+    let refund = 0;
+    const iface = arena.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "UnitSold") {
+          refund = Number(parsed.args.refund);
+          break;
+        }
+      } catch {}
+    }
+    return { slot, refund, txHash: receipt.transactionHash };
+  }
+
+  async arenaMove(agentId: number, fromSlot: number, toSlot: number) {
+    const arena = this.requireArena();
+    const tx = await arena.move(agentId, fromSlot, toSlot);
+    const receipt = await tx.wait();
+    return { fromSlot, toSlot, txHash: receipt.transactionHash };
+  }
+
+  async arenaFreeze(agentId: number, shopSlot: number) {
+    const arena = this.requireArena();
+    const tx = await arena.freeze(agentId, shopSlot);
+    const receipt = await tx.wait();
+    let nowFrozen = false;
+    const iface = arena.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "ShopFrozen") {
+          nowFrozen = Boolean(parsed.args.nowFrozen);
+          break;
+        }
+      } catch {}
+    }
+    return { shopSlot, nowFrozen, txHash: receipt.transactionHash };
+  }
+
+  async arenaRoll(agentId: number) {
+    const arena = this.requireArena();
+    const tx = await arena.roll(agentId);
+    const receipt = await tx.wait();
+    let newSeed = "0";
+    const iface = arena.interface;
+    for (const log of receipt.logs) {
+      try {
+        const parsed = iface.parseLog(log);
+        if (parsed.name === "ShopRolled") {
+          newSeed = String(parsed.args.newSeed);
+          break;
+        }
+      } catch {}
+    }
+    return { newSeed, txHash: receipt.transactionHash };
+  }
+
   async arenaBuy(agentId: number, unitType: number, toSlot: number) {
     const arena = this.requireArena();
     const tx = await arena.buy(agentId, unitType, toSlot);
@@ -853,5 +947,130 @@ export class ChainClient {
   async arenaNextMatchId(): Promise<number> {
     const arena = this.requireArena();
     return Number(await arena.nextMatchId());
+  }
+
+  // ============ Arena Phase 2 — GTreasury + CardLedger + Tier (#32 / #33) ============
+  // Stubs ready for wiring. Replace the throws once contracts are deployed and
+  // gTreasury / cardLedger are resolved from Router.getAddressesV3().
+
+  private requireGTreasury(): ethers.Contract {
+    if (!this.gTreasury) throw new Error("GTreasury not deployed yet (waiting on #32)");
+    return this.gTreasury;
+  }
+
+  private requireCardLedger(): ethers.Contract {
+    if (!this.cardLedger) throw new Error("CardLedger not deployed yet (waiting on #32)");
+    return this.cardLedger;
+  }
+
+  async arenaGetGBalance(agentId: number): Promise<number> {
+    const gt = this.requireGTreasury();
+    return Number(await gt.gBalance(agentId));
+  }
+
+  async arenaFundG(agentId: number, amount: number) {
+    const gt = this.requireGTreasury();
+    const tx = await gt.fundAgentG(agentId, amount);
+    const receipt = await tx.wait();
+    return { agentId, amount, txHash: receipt.transactionHash };
+  }
+
+  async arenaListInventory(agentId: number) {
+    const cl = this.requireCardLedger();
+    const cardIds: bigint[] = await cl.getOwnedCards(agentId);
+    const cards = await Promise.all(cardIds.map(async (cid) => {
+      const card = await cl.getCard(Number(cid));
+      const unitType = Number(card.unitType);
+      const u = UNIT_CATALOG.find((x) => x.id === unitType);
+      return {
+        cardId: Number(card.id),
+        unitType,
+        name: u?.name || "?",
+        atk: u?.atk,
+        hp: u?.hp,
+        ownerAgent: Number(card.ownerAgent),
+      };
+    }));
+    return cards;
+  }
+
+  async arenaListMarket(unitType?: number, limit: number = 20) {
+    const cl = this.requireCardLedger();
+    const raw = unitType
+      ? await cl.getActiveListingsByUnit(unitType, 0, limit)
+      : await cl.getActiveListings(0, limit);
+    return (raw as any[]).map((l) => ({
+      cardId: Number(l.cardId),
+      sellerAgent: Number(l.sellerAgent),
+      askPriceG: Number(l.askPriceG),
+      listedAt: Number(l.listedAt),
+      unitType: undefined as number | undefined, // enriched below
+    })).map((listing) => {
+      const u = UNIT_CATALOG.find((x) => x.id === unitType);
+      return { ...listing, unitName: u?.name };
+    });
+  }
+
+  async arenaPlaceListing(agentId: number, cardId: number, askPriceG: number) {
+    const cl = this.requireCardLedger();
+    const tx = await cl.listCard(agentId, cardId, askPriceG);
+    const receipt = await tx.wait();
+    return { cardId, askPriceG, txHash: receipt.transactionHash };
+  }
+
+  async arenaCancelListing(agentId: number, cardId: number) {
+    const cl = this.requireCardLedger();
+    const tx = await cl.cancelListing(agentId, cardId);
+    const receipt = await tx.wait();
+    return { cardId, txHash: receipt.transactionHash };
+  }
+
+  async arenaBuyCard(buyerAgent: number, cardId: number, maxPriceG: number) {
+    const cl = this.requireCardLedger();
+    const tx = await cl.buyListed(buyerAgent, cardId, maxPriceG);
+    const receipt = await tx.wait();
+    return { cardId, maxPriceG, txHash: receipt.transactionHash };
+  }
+
+  async arenaGetTierInfo(agentId: number): Promise<{ tier: number; label: string; gBalance: number; agentsInTier: number; lowerG: number; upperG: number }> {
+    this.requireArena();
+    // #33: uncomment when _tierFor + tierPopulation are deployed
+    // const tier = Number(await arena._tierFor(agentId));
+    // const gBalance = await this.arenaGetGBalance(agentId);
+    // const population = Number(await arena.tierPopulation(tier));
+    // const thresholds = [{ tier: 0, label: "Bronze", minG: 0 }, { tier: 1, label: "Silver", minG: 100 }, { tier: 2, label: "Gold", minG: 1000 }];
+    // const t = thresholds[tier] || thresholds[0];
+    // return { tier, label: t.label, gBalance, agentsInTier: population, lowerG: t.minG, upperG: thresholds[tier + 1]?.minG ?? Infinity };
+    throw new Error("Tier system not deployed yet (waiting on #33)");
+  }
+
+  async arenaWithdrawSubmission(agentId: number): Promise<{ agentId: number; txHash: string }> {
+    const arena = this.requireArena();
+    // #33: uncomment when withdrawSubmission is deployed
+    // const tx = await arena.withdrawSubmission(agentId);
+    // const receipt = await tx.wait();
+    // return { agentId, txHash: receipt.transactionHash };
+    throw new Error("withdrawSubmission not deployed yet (waiting on #33)");
+  }
+
+  async arenaViewDeck(agentId: number) {
+    const arena = this.requireArena();
+    const [bench, elo, bucketId, lastUpdate, exists] = await arena.getGhost(agentId);
+    const benchArr = (bench as any[]).map((b) => Number(b));
+    const benchNamed = benchArr.map((unitType, slot) => {
+      if (unitType === 0) return { slot, unitType: 0, empty: true };
+      const u = UNIT_CATALOG.find((x) => x.id === unitType);
+      return { slot, unitType, name: u?.name || "?", atk: u?.atk, hp: u?.hp, ability: u?.ability };
+    });
+    // #32/#33: add cardIds + gBalance + tier once deployed
+    // const cardIds = ghost.cardIds; // from expanded getGhost 6-tuple
+    // const gBalance = await this.arenaGetGBalance(agentId);
+    // const tier = await arena._tierFor(agentId);
+    return {
+      bench: benchNamed,
+      elo: Number(elo),
+      bucketId: Number(bucketId),
+      exists,
+    };
   }
 }
