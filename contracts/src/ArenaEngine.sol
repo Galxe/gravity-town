@@ -27,8 +27,6 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     /// @notice G-balance tier. Source of truth = {_tierFor} (reads gTreasury).
     ///         Frontend/MCP MUST read _tierFor, never re-derive thresholds.
-    ///         (Enum — occupies no storage slot; the gTreasury state var that backs
-    ///          it is declared at the end of storage to preserve the slot layout.)
     enum Tier { Bronze, Silver, Gold }
 
     // ──────────────────── Tunables ────────────────────
@@ -103,8 +101,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     bool public marketSeeded;
 
     // ──────────────────── Tier matchmaking ────────────────────
-    // Appended storage — keeps existing slot layout intact. One pool per tier
-    // (no ELO sub-buckets). Tier is snapshotted at submit and
+    // One pool per tier (no ELO sub-buckets). Tier is snapshotted at submit and
     // locked until settle, so mid-cycle G changes don't move an in-flight ghost.
 
     /// @notice Submitted ghosts per tier. Public getter exposes length via array.
@@ -126,8 +123,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice Runtime tier-threshold overrides in G (0 = use the DEFAULT_* constant).
     ///         Owner-tunable via {setTierThresholds} so segments can be retuned in
     ///         operation without a contract upgrade. {tierThresholds} resolves the
-    ///         effective values; {_tierFor} reads through it. Appended at end of
-    ///         storage to keep the legacy bucket slot layout intact.
+    ///         effective values; {_tierFor} reads through it.
     uint256 public tierSilverMinG;
     uint256 public tierGoldMinG;
 
@@ -144,11 +140,10 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo);
 
     // Tier matchmaking events.
-    event GhostSubmittedTier(uint256 indexed agentId, Tier tier, uint16 elo, uint256 gAtSubmit);
+    event GhostSubmitted(uint256 indexed agentId, Tier tier, uint16 elo, uint256 gAtSubmit);
     event SubmissionWithdrawn(uint256 indexed agentId, Tier tier);
     event MatchmadeInTier(Tier indexed tier, uint256 matchId, uint256 attacker, uint256 defender);
     event MatchmakingPeriodSet(Tier indexed tier, uint64 secs);
-    event GTreasurySet(address indexed gTreasury);
     event TierThresholdsSet(uint256 silverMinG, uint256 goldMinG);
 
     // ──────────────────── Init / Auth ────────────────────
@@ -415,7 +410,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             submittedTier[agentId] = t;
             isSubmitted[agentId] = true;
             uint256 gNow = address(gTreasury) == address(0) ? 0 : gTreasury.gBalance(agentId);
-            emit GhostSubmittedTier(agentId, t, g.elo, gNow);
+            emit GhostSubmitted(agentId, t, g.elo, gNow);
         }
     }
 
