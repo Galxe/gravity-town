@@ -7,14 +7,16 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "./AgentRegistry.sol";
 import "./GameEngine.sol";
 import "./EvaluationLedger.sol";
+import "./GTreasury.sol";
+import "./CardLedger.sol";
 import "./AbilityLib.sol";
 import "./UnitCatalog.sol";
 
 /// @title ArenaEngine — async ghost autobattler (SAP-style) layered on the main world.
 /// @notice Players submit a 5-slot bench (a "ghost") that other agents fight against
 ///         asynchronously. ELO-bucketed matchmaking + deterministic view-only combat.
-///         Ore is the only resource — bought via GameEngine.spendOre. Battle results
-///         are written as evaluation entries on the loser.
+///         Arena uses G through GTreasury. Battle results are written as
+///         evaluation entries on the loser.
 contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     // ──────────────────── External deps ────────────────────
@@ -27,7 +29,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     uint8   public constant SLOTS              = 5;
     uint8   public constant SHOP_SIZE          = 5;     // shop draws 5 candidates
-    uint256 public constant ROLL_COST          = 1;     // ore to refresh shop
+    uint256 public constant ROLL_COST          = 1;     // G to refresh shop
     uint16  public constant DEFAULT_ELO        = 1000;  // new ghost start
     uint16  public constant ELO_BUCKET_SIZE    = 200;   // 1000..1199 → bucket 5
     uint32  public constant MATCHMAKING_PERIOD = 1800;  // 30 minutes between bucket runs
@@ -54,6 +56,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         bool         exists;
         int16[SLOTS] atkOverride;  // persistent +ATK from ON_BUY / ON_SELL
         int16[SLOTS] hpOverride;   // persistent +HP  from ON_BUY / ON_SELL
+        uint256[SLOTS] cardIds;    // persistent cards backing occupied slots
     }
 
     mapping(uint256 => Ghost) internal _ghosts;
@@ -87,10 +90,15 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint64  createdAt;
         bool    settled;
         uint256 winnerId; // set on settle
+        uint256[SLOTS] attackerCardIds;
+        uint256[SLOTS] defenderCardIds;
     }
 
     mapping(uint256 => Match) internal _matches;
     uint256 public nextMatchId;
+    GTreasury public gTreasury;
+    CardLedger public cardLedger;
+    bool public marketSeeded;
 
     // ──────────────────── Events ────────────────────
 
@@ -113,17 +121,23 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function initialize(
         address _registry,
         address _gameEngine,
-        address _evaluationLedger
+        address _evaluationLedger,
+        address _gTreasury,
+        address _cardLedger
     ) public initializer {
         __Ownable_init(msg.sender);
         registry = AgentRegistry(_registry);
         gameEngine = GameEngine(_gameEngine);
         evaluationLedger = EvaluationLedger(_evaluationLedger);
+        gTreasury = GTreasury(_gTreasury);
+        cardLedger = CardLedger(_cardLedger);
         nextMatchId = 1;
     }
 
     function setEvaluationLedger(address _v) external onlyOwner { evaluationLedger = EvaluationLedger(_v); }
     function setGameEngine(address _v) external onlyOwner { gameEngine = GameEngine(_v); }
+    function setGTreasury(address _v) external onlyOwner { gTreasury = GTreasury(_v); }
+    function setCardLedger(address _v) external onlyOwner { cardLedger = CardLedger(_v); }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
 
@@ -147,7 +161,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     // ══════════════════════════════════════════════════════════
 
     /// @notice Buy a unit and place it in `toSlot` on your ghost.
-    ///         Costs UnitCatalog.cost(unitType) ore — spent via GameEngine.
+    ///         Costs UnitCatalog.cost(unitType) G and mints a persistent card.
     function buy(uint256 agentId, uint8 unitType, uint8 toSlot)
         external canControlAgent(agentId)
     {
@@ -156,21 +170,26 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
         Ghost storage g = _getOrInitGhost(agentId);
         require(g.bench[toSlot] == 0, "slot occupied");
+        require(address(gTreasury) != address(0), "G treasury not set");
+        require(address(cardLedger) != address(0), "card ledger not set");
 
         ( , , , uint16 unitCost, AbilityLib.Ability memory ability) = UnitCatalog.getUnit(unitType);
-        gameEngine.spendOre(agentId, unitCost);
+        gTreasury.spendG(agentId, unitCost, bytes32("arena_buy"));
+        uint256 cardId = cardLedger.mintCard(agentId, unitType);
 
         g.bench[toSlot] = unitType;
+        g.cardIds[toSlot] = cardId;
         g.lastUpdate = uint64(block.timestamp);
 
         // Fire ON_BUY ability into the persistent bench stat overlay so
         // self / neighbor / all-ally buffs survive into the eventual battle.
         _applyBenchAbility(g, toSlot, ability, AbilityLib.TRIG_ON_BUY);
+        _assertGhostInvariant(agentId, g);
 
         emit UnitBought(agentId, unitType, toSlot, unitCost);
     }
 
-    /// @notice Sell the unit at `slot`. Refunds 50% (rounded down) of original cost.
+    /// @notice Sell the unit at `slot`. Refunds 50% G and keeps the card in inventory.
     function sell(uint256 agentId, uint8 slot)
         external canControlAgent(agentId)
     {
@@ -178,6 +197,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         Ghost storage g = _getOrInitGhost(agentId);
         uint8 unitType = g.bench[slot];
         require(unitType != 0, "empty slot");
+        _assertGhostInvariant(agentId, g);
 
         ( , , , uint16 unitCost, AbilityLib.Ability memory ability) = UnitCatalog.getUnit(unitType);
         uint16 refund = unitCost / 2;
@@ -188,13 +208,16 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         _applyBenchAbility(g, slot, ability, AbilityLib.TRIG_ON_SELL);
 
         g.bench[slot] = 0;
+        g.cardIds[slot] = 0;
         g.atkOverride[slot] = 0;
         g.hpOverride[slot] = 0;
         g.lastUpdate = uint64(block.timestamp);
 
         if (refund > 0) {
-            gameEngine.refundOre(agentId, refund);
+            require(address(gTreasury) != address(0), "G treasury not set");
+            gTreasury.creditG(agentId, refund, bytes32("arena_sell"));
         }
+        _assertGhostInvariant(agentId, g);
 
         emit UnitSold(agentId, slot, refund);
     }
@@ -213,6 +236,10 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         g.bench[fromSlot] = g.bench[toSlot];
         g.bench[toSlot] = tmp;
 
+        uint256 tmpCardId = g.cardIds[fromSlot];
+        g.cardIds[fromSlot] = g.cardIds[toSlot];
+        g.cardIds[toSlot] = tmpCardId;
+
         int16 tmpAtk = g.atkOverride[fromSlot];
         g.atkOverride[fromSlot] = g.atkOverride[toSlot];
         g.atkOverride[toSlot] = tmpAtk;
@@ -222,6 +249,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         g.hpOverride[toSlot] = tmpHp;
 
         g.lastUpdate = uint64(block.timestamp);
+        _assertGhostInvariant(agentId, g);
 
         emit UnitMoved(agentId, fromSlot, toSlot);
     }
@@ -240,12 +268,13 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit ShopFrozen(agentId, shopSlot, nowFrozen);
     }
 
-    /// @notice Refresh the shop seed. Costs ROLL_COST ore.
+    /// @notice Refresh the shop seed. Costs ROLL_COST G.
     function roll(uint256 agentId)
         external canControlAgent(agentId)
     {
         Ghost storage g = _getOrInitGhost(agentId);
-        gameEngine.spendOre(agentId, ROLL_COST);
+        require(address(gTreasury) != address(0), "G treasury not set");
+        gTreasury.spendG(agentId, ROLL_COST, bytes32("arena_roll"));
 
         uint64 newSeed = uint64(uint256(keccak256(abi.encode(
             block.prevrandao, agentId, block.timestamp, g.shopSeed
@@ -263,6 +292,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     ///         simply confirms current state and ensures bucket membership.
     function submit(uint256 agentId) external canControlAgent(agentId) {
         Ghost storage g = _getOrInitGhost(agentId);
+        _assertGhostInvariant(agentId, g);
         require(_hasAnyUnit(g), "empty bench");
 
         uint16 bucketId = _bucketIdFor(g.elo);
@@ -373,6 +403,8 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         m.attackerHpOverride = _ghosts[attackerId].hpOverride;
         m.defenderAtkOverride = _ghosts[defenderId].atkOverride;
         m.defenderHpOverride = _ghosts[defenderId].hpOverride;
+        m.attackerCardIds = _ghosts[attackerId].cardIds;
+        m.defenderCardIds = _ghosts[defenderId].cardIds;
         m.seed = uint64(uint256(keccak256(abi.encode(seedMix, attackerId, defenderId))));
         m.createdAt = uint64(block.timestamp);
         emit MatchCreated(mid, attackerId, defenderId, m.seed);
@@ -686,6 +718,38 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         g.hpOverride = hpOv;
     }
 
+    function _assertGhostInvariant(uint256 agentId, Ghost storage g) internal view {
+        for (uint8 i = 0; i < SLOTS; i++) {
+            uint8 unitType = g.bench[i];
+            uint256 cardId = g.cardIds[i];
+            require((unitType == 0) == (cardId == 0), "card/bench mismatch");
+            if (cardId == 0) continue;
+            require(address(cardLedger) != address(0), "card ledger not set");
+            CardLedger.Card memory card = cardLedger.getCard(cardId);
+            require(card.ownerAgent == agentId, "card owner mismatch");
+            require(card.unitType == unitType, "card unit mismatch");
+        }
+    }
+
+    /// @notice One-shot local/testnet market seed. Mints and lists representative cards.
+    function bootstrapMarket(uint256 seedAgentId) external onlyOwner {
+        require(!marketSeeded, "already seeded");
+        require(address(gTreasury) != address(0), "G treasury not set");
+        require(address(cardLedger) != address(0), "card ledger not set");
+        marketSeeded = true;
+
+        gTreasury.creditG(seedAgentId, 500, bytes32("market_seed"));
+
+        uint8[7] memory unitTypes = [uint8(1), 2, 4, 5, 8, 10, 11];
+        for (uint8 i = 0; i < unitTypes.length; i++) {
+            uint8 unitType = unitTypes[i];
+            uint256 cardId = cardLedger.mintCard(seedAgentId, unitType);
+            uint16 cost = UnitCatalog.cost(unitType);
+            uint256 askPriceG = cost > 1 ? uint256(cost) - 1 : uint256(cost);
+            cardLedger.listCard(seedAgentId, cardId, askPriceG);
+        }
+    }
+
     // ══════════════════════════════════════════════════════════
     //                     VIEWS
     // ══════════════════════════════════════════════════════════
@@ -699,6 +763,18 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     ) {
         Ghost storage g = _ghosts[agentId];
         return (g.bench, g.elo, _bucketIdFor(g.elo), g.lastUpdate, g.exists);
+    }
+
+    function getGhostCards(uint256 agentId) external view returns (uint256[SLOTS] memory cardIds) {
+        return _ghosts[agentId].cardIds;
+    }
+
+    function isCardOnBench(uint256 agentId, uint256 cardId) external view returns (bool) {
+        Ghost storage g = _ghosts[agentId];
+        for (uint8 i = 0; i < SLOTS; i++) {
+            if (g.cardIds[i] == cardId) return true;
+        }
+        return false;
     }
 
     function getMatch(uint256 matchId) external view returns (

@@ -90,7 +90,10 @@ const GAME_ENGINE_ABI = [
 const ROUTER_ABI = [
   "function getAddresses() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger, address gameEngine, address evaluationLedger)",
   "function getAddressesV2() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger, address gameEngine, address evaluationLedger, address arenaEngine)",
+  "function getAddressesV3() view returns (address registry, address agentLedger, address locationLedger, address inboxLedger, address gameEngine, address evaluationLedger, address arenaEngine, address gTreasury, address cardLedger)",
   "function arenaEngine() view returns (address)",
+  "function gTreasury() view returns (address)",
+  "function cardLedger() view returns (address)",
 ];
 
 // ──────────────────── Arena ABI ────────────────────
@@ -111,11 +114,26 @@ const ARENA_ENGINE_ABI = [
   "function runMatchmaking(uint16 bucketId) returns (uint256 matchesCreated)",
   "function settleMatch(uint256 matchId)",
   "function getGhost(uint256 agentId) view returns (uint8[5] bench, uint16 elo, uint16 bucketId, uint64 lastUpdate, bool exists)",
+  "function getGhostCards(uint256 agentId) view returns (uint256[5] cardIds)",
   "function getMatch(uint256 matchId) view returns (uint256 attackerId, uint256 defenderId, uint8[5] attackerBench, uint8[5] defenderBench, uint64 seed, uint64 createdAt, bool settled, uint256 winnerId)",
   "function simulateMatch(uint256 matchId) view returns (tuple(uint8 attackerSide, uint8 attackerSlot, uint8 defenderSlot, uint16 damage, bool defenderDied)[] turns, uint256 winnerAgentId)",
   "function bucketSize(uint16 bucketId) view returns (uint256)",
   "function bucketOf(uint256 agentId) view returns (uint16)",
   "function nextMatchId() view returns (uint256)",
+];
+
+const G_TREASURY_ABI = [
+  "function gBalance(uint256 agentId) view returns (uint256)",
+];
+
+const CARD_LEDGER_ABI = [
+  "function getCard(uint256 cardId) view returns (tuple(uint256 id, uint8 unitType, uint256 ownerAgent, uint256 mintedAt))",
+  "function getOwnedCards(uint256 agentId) view returns (uint256[] cardIds)",
+  "function getActiveListings(uint256 offset, uint256 limit) view returns (tuple(uint256 cardId, uint256 sellerAgent, uint256 askPriceG, uint64 listedAt, bool active)[] listings)",
+  "function getActiveListingsByUnit(uint8 unitType, uint256 offset, uint256 limit) view returns (tuple(uint256 cardId, uint256 sellerAgent, uint256 askPriceG, uint64 listedAt, bool active)[] listings)",
+  "function listCard(uint256 agentId, uint256 cardId, uint256 askPriceG)",
+  "function cancelListing(uint256 agentId, uint256 cardId)",
+  "function buyListed(uint256 buyerAgent, uint256 cardId, uint256 maxPriceG)",
 ];
 
 // ──────────────────── Unit catalog (mirrors UnitCatalog.sol — kept in sync) ────────────────────
@@ -186,6 +204,8 @@ export class ChainClient {
   gameEngine: ethers.Contract = null!;
   evaluationLedger: ethers.Contract = null!;
   arenaEngine: ethers.Contract | null = null;
+  gTreasury: ethers.Contract | null = null;
+  cardLedger: ethers.Contract | null = null;
   private _ready: Promise<void>;
   /** Last oracle debate created this session — surfaced to agents every cycle so
    *  betting visibility does not depend on the perishable inbox notice. */
@@ -201,17 +221,26 @@ export class ChainClient {
     const signer = this.signer;
     this._ready = (async () => {
       const router = new ethers.Contract(config.routerAddress, ROUTER_ABI, provider);
-      // Try V2 (7-tuple, includes arenaEngine) first — fall back to V1 if router
+      // Try V3 first — fall back to older routers so non-Arena tools still work.
       // hasn't been upgraded yet so we degrade gracefully (Arena tools just become unavailable).
       let registryAddr: string, agentLedgerAddr: string, locationLedgerAddr: string;
       let inboxLedgerAddr: string, engineAddr: string, evalLedgerAddr: string;
       let arenaAddr: string = ethers.constants.AddressZero;
+      let treasuryAddr: string = ethers.constants.AddressZero;
+      let cardLedgerAddr: string = ethers.constants.AddressZero;
       try {
-        [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr, arenaAddr] =
-          await router.getAddressesV2();
+        [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr, arenaAddr, treasuryAddr, cardLedgerAddr] =
+          await router.getAddressesV3();
       } catch {
-        [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr] =
-          await router.getAddresses();
+        try {
+          [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr, arenaAddr] =
+            await router.getAddressesV2();
+          try { treasuryAddr = await router.gTreasury(); } catch {}
+          try { cardLedgerAddr = await router.cardLedger(); } catch {}
+        } catch {
+          [registryAddr, agentLedgerAddr, locationLedgerAddr, inboxLedgerAddr, engineAddr, evalLedgerAddr] =
+            await router.getAddresses();
+        }
       }
       this.registry = new ethers.Contract(registryAddr, AGENT_REGISTRY_ABI, signer);
       this.agentLedger = new ethers.Contract(agentLedgerAddr, AGENT_LEDGER_ABI, signer);
@@ -221,6 +250,12 @@ export class ChainClient {
       this.evaluationLedger = new ethers.Contract(evalLedgerAddr, EVALUATION_LEDGER_ABI, signer);
       if (arenaAddr && arenaAddr !== ethers.constants.AddressZero) {
         this.arenaEngine = new ethers.Contract(arenaAddr, ARENA_ENGINE_ABI, signer);
+      }
+      if (treasuryAddr && treasuryAddr !== ethers.constants.AddressZero) {
+        this.gTreasury = new ethers.Contract(treasuryAddr, G_TREASURY_ABI, signer);
+      }
+      if (cardLedgerAddr && cardLedgerAddr !== ethers.constants.AddressZero) {
+        this.cardLedger = new ethers.Contract(cardLedgerAddr, CARD_LEDGER_ABI, signer);
       }
     })();
   }
@@ -707,6 +742,42 @@ export class ChainClient {
     return this.arenaEngine;
   }
 
+  private requireGTreasury(): ethers.Contract {
+    if (!this.gTreasury) throw new Error("G treasury not deployed — router has no gTreasury address");
+    return this.gTreasury;
+  }
+
+  private requireCardLedger(): ethers.Contract {
+    if (!this.cardLedger) throw new Error("Card ledger not deployed — router has no cardLedger address");
+    return this.cardLedger;
+  }
+
+  private decodeCard(card: any) {
+    const unitType = Number(card.unitType);
+    const u = UNIT_CATALOG.find((x) => x.id === unitType);
+    return {
+      cardId: Number(card.id),
+      unitType,
+      ownerAgent: Number(card.ownerAgent),
+      mintedAt: Number(card.mintedAt),
+      name: u?.name || "?",
+      atk: u?.atk,
+      hp: u?.hp,
+      cost: u?.cost,
+      ability: u?.ability,
+    };
+  }
+
+  private decodeListing(listing: any) {
+    return {
+      cardId: Number(listing.cardId),
+      sellerAgent: Number(listing.sellerAgent),
+      askPriceG: Number(listing.askPriceG),
+      listedAt: Number(listing.listedAt),
+      active: Boolean(listing.active),
+    };
+  }
+
   async arenaBuy(agentId: number, unitType: number, toSlot: number) {
     const arena = this.requireArena();
     const tx = await arena.buy(agentId, unitType, toSlot);
@@ -750,14 +821,18 @@ export class ChainClient {
 
   async arenaGetGhost(agentId: number) {
     const arena = this.requireArena();
+    const treasury = this.gTreasury;
     const [bench, elo, bucketId, lastUpdate, exists] = await arena.getGhost(agentId);
+    const cardIds = await arena.getGhostCards(agentId);
     const benchArr = (bench as any[]).map((b) => Number(b));
     const benchNamed = benchArr.map((unitType, slot) => {
-      if (unitType === 0) return { slot, unitType: 0, empty: true };
+      const cardId = Number(cardIds[slot]);
+      if (unitType === 0) return { slot, unitType: 0, cardId: 0, empty: true };
       const u = UNIT_CATALOG.find((x) => x.id === unitType);
-      return { slot, unitType, name: u?.name || "?", atk: u?.atk, hp: u?.hp, ability: u?.ability };
+      return { slot, cardId, unitType, name: u?.name || "?", atk: u?.atk, hp: u?.hp, ability: u?.ability };
     });
     const orePool = Number(await this.gameEngine.orePool(agentId));
+    const gBalance = treasury ? Number(await treasury.gBalance(agentId)) : null;
     return {
       bench: benchNamed,
       elo: Number(elo),
@@ -765,7 +840,52 @@ export class ChainClient {
       lastUpdate: Number(lastUpdate),
       exists,
       ore: orePool,
+      g: gBalance,
     };
+  }
+
+  async arenaListInventory(agentId: number) {
+    const cards = this.requireCardLedger();
+    const cardIds = await cards.getOwnedCards(agentId);
+    const detailed = await Promise.all((cardIds as any[]).map(async (id) => {
+      const card = await cards.getCard(id);
+      return this.decodeCard(card);
+    }));
+    return { agentId, cards: detailed };
+  }
+
+  async arenaListMarket(unitType?: number, offset = 0, limit = 20) {
+    const cards = this.requireCardLedger();
+    const listings = unitType
+      ? await cards.getActiveListingsByUnit(unitType, offset, limit)
+      : await cards.getActiveListings(offset, limit);
+    const decoded = await Promise.all((listings as any[]).map(async (l) => {
+      const base = this.decodeListing(l);
+      const card = this.decodeCard(await cards.getCard(base.cardId));
+      return { ...base, unitType: card.unitType, name: card.name, atk: card.atk, hp: card.hp, shopCostG: card.cost };
+    }));
+    return { listings: decoded, offset, limit, unitType: unitType ?? null };
+  }
+
+  async arenaPlaceListing(agentId: number, cardId: number, askPriceG: number) {
+    const cards = this.requireCardLedger();
+    const tx = await cards.listCard(agentId, cardId, askPriceG);
+    const receipt = await tx.wait();
+    return { cardId, askPriceG, txHash: receipt.transactionHash };
+  }
+
+  async arenaCancelListing(agentId: number, cardId: number) {
+    const cards = this.requireCardLedger();
+    const tx = await cards.cancelListing(agentId, cardId);
+    const receipt = await tx.wait();
+    return { cardId, txHash: receipt.transactionHash };
+  }
+
+  async arenaBuyListing(buyerAgent: number, cardId: number, maxPriceG: number) {
+    const cards = this.requireCardLedger();
+    const tx = await cards.buyListed(buyerAgent, cardId, maxPriceG);
+    const receipt = await tx.wait();
+    return { cardId, maxPriceG, txHash: receipt.transactionHash };
   }
 
   async arenaGetMatch(matchId: number) {

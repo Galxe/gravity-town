@@ -442,9 +442,10 @@ export function buildSystemPrompt(
     "",
     "Tools:",
     "  arena_list_units() — see all 12 units (stats + abilities). Look at this BEFORE buying.",
-    "  arena_get_state(agent_id) — see your current bench, ELO, bucket, ore.",
-    "  arena_buy(agent_id, unit_type, slot) — buy unit_type (1-12) into bench slot (0-4). Costs ore from your main pool.",
+    "  arena_get_state(agent_id) — see your current bench, ELO, bucket, G balance, and ore.",
+    "  arena_buy(agent_id, unit_type, slot) — buy a persistent card for unit_type (1-12) into bench slot (0-4). Costs G, not ore.",
     "  arena_submit(agent_id) — push your ghost into matchmaking. Idempotent.",
+    "  arena_list_inventory(agent_id) / arena_list_market() / arena_place_listing(...) / arena_cancel_listing(...) / arena_buy_listing(...) — inspect owned cards and trade them on the secondary market.",
     "  arena_get_recent_matches(agent_id) — read 'arena defeat' entries on your evaluation ledger to LEARN from losses.",
     "",
     "Strategy hints (you discover the rest yourself):",
@@ -560,7 +561,7 @@ export function buildUserPrompt(context: AgentContext): string {
   // Arena state surfacing — show the agent its current bench + ELO so it can
   // decide whether to refine, submit, or ignore the Arena this cycle.
   const arena = context.arenaState as
-    | { bench?: any[]; elo?: number; bucketId?: number; exists?: boolean; ore?: number }
+    | { bench?: any[]; elo?: number; bucketId?: number; exists?: boolean; ore?: number; g?: number | null }
     | null;
   let arenaPrompt = "";
   if (arena) {
@@ -578,10 +579,10 @@ export function buildUserPrompt(context: AgentContext): string {
       : "(unknown)";
     arenaPrompt = [
       "=== ARENA STATE (side-system, optional) ===",
-      `Your ghost — ELO ${arena.elo ?? 0}, bucket ${arena.bucketId ?? 0}, ${filledSlots}/5 slots filled.`,
+      `Your ghost — ELO ${arena.elo ?? 0}, bucket ${arena.bucketId ?? 0}, G ${arena.g ?? "?"}, ${filledSlots}/5 slots filled.`,
       `Bench: ${benchSummary}`,
       filledSlots === 0
-        ? "You have NO units yet. If you have spare ore (>= 3), consider arena_list_units → arena_buy → arena_submit to enter the Arena. (Optional.)"
+        ? "You have NO units yet. If you have spare G (>= 3), consider arena_list_units → arena_buy → arena_submit to enter the Arena. (Optional.)"
         : "Submit with arena_submit to get matched against another ghost. Or refine your bench with more arena_buy.",
     ].join("\n");
   }
@@ -641,7 +642,7 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       "build", "attack", "raid", "incite_rebellion", "claim_neutral",
       "start_debate", "vote_debate", "write_chronicle", "get_chronicle",
       // Arena side-system
-      "arena_buy", "arena_submit", "arena_get_state", "arena_get_recent_matches",
+      "arena_buy", "arena_submit", "arena_get_state", "arena_list_inventory", "arena_list_market", "arena_place_listing", "arena_cancel_listing", "arena_buy_listing", "arena_get_recent_matches",
     ];
 
     if (selfTools.includes(tool.name)) {

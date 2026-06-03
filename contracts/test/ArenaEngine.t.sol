@@ -9,6 +9,8 @@ import "../src/LocationLedger.sol";
 import "../src/InboxLedger.sol";
 import "../src/EvaluationLedger.sol";
 import "../src/GameEngine.sol";
+import "../src/GTreasury.sol";
+import "../src/CardLedger.sol";
 import "../src/ArenaEngine.sol";
 import "../src/AbilityLib.sol";
 import "../src/UnitCatalog.sol";
@@ -19,6 +21,8 @@ contract ArenaEngineTest is Test {
     LocationLedger locationLedger;
     EvaluationLedger evalLedger;
     GameEngine engine;
+    GTreasury treasury;
+    CardLedger cards;
     ArenaEngine arena;
 
     address operator = address(0xBEEF);
@@ -60,16 +64,38 @@ contract ArenaEngineTest is Test {
         registry.addOperator(address(engine));
         engine.setEvaluationLedger(address(evalLedger));
 
+        // Arena G treasury
+        GTreasury treasuryImpl = new GTreasury();
+        ERC1967Proxy treasuryProxy = new ERC1967Proxy(
+            address(treasuryImpl), abi.encodeCall(GTreasury.initialize, (address(registry)))
+        );
+        treasury = GTreasury(address(treasuryProxy));
+
+        // Persistent card ledger
+        CardLedger cardsImpl = new CardLedger();
+        ERC1967Proxy cardsProxy = new ERC1967Proxy(
+            address(cardsImpl), abi.encodeCall(CardLedger.initialize, (address(registry), address(treasury)))
+        );
+        cards = CardLedger(address(cardsProxy));
+
         // ArenaEngine
         ArenaEngine arenaImpl = new ArenaEngine();
         ERC1967Proxy arenaProxy = new ERC1967Proxy(
             address(arenaImpl),
-            abi.encodeCall(ArenaEngine.initialize, (address(registry), address(engine), address(evalLedger)))
+            abi.encodeCall(ArenaEngine.initialize, (
+                address(registry),
+                address(engine),
+                address(evalLedger),
+                address(treasury),
+                address(cards)
+            ))
         );
         arena = ArenaEngine(address(arenaProxy));
 
-        // Arena must be operator on Registry (so spendOre's onlyOperatorOrOwner passes)
+        // Arena and CardLedger are operators for G spend/credit and card minting.
         registry.addOperator(address(arena));
+        registry.addOperator(address(cards));
+        cards.setArenaEngine(address(arena));
     }
 
     // ──────────────────── helpers ────────────────────
@@ -79,6 +105,7 @@ contract ArenaEngineTest is Test {
         string memory name = string.concat("Hero", vm.toString(++_agentCounter));
         vm.prank(ownerAddr);
         (agentId, ) = engine.createAgent(name, "brave", defaultStats, ownerAddr);
+        treasury.fundAgentG(agentId, 500);
     }
 
     function _buy(uint256 agentId, address ownerAddr, uint8 unitType, uint8 slot) internal {
@@ -90,28 +117,32 @@ contract ArenaEngineTest is Test {
     //                     PLAYER VERBS
     // ══════════════════════════════════════════════════════════
 
-    function test_buy_deducts_ore() public {
+    function test_buy_spends_g_and_mints_card_without_touching_ore() public {
         uint256 aid = _createAgent(player1);
         uint256 oreBefore = engine.orePool(aid);
+        uint256 gBefore = treasury.gBalance(aid);
 
         // Mineworker: cost 3
         _buy(aid, player1, 1, 0);
 
-        // STARTING_ORE=200 + any harvested seconds. After spendOre auto-harvests
-        // at block.timestamp==block.timestamp, no time elapsed → 200 - 3 = 197.
-        assertEq(engine.orePool(aid), oreBefore - 3);
+        assertEq(treasury.gBalance(aid), gBefore - 3);
+        assertEq(engine.orePool(aid), oreBefore);
 
         (uint8[5] memory bench, , , , bool exists) = arena.getGhost(aid);
+        uint256[5] memory cardIds = arena.getGhostCards(aid);
         assertTrue(exists);
         assertEq(bench[0], 1);
+        assertGt(cardIds[0], 0);
+        CardLedger.Card memory card = cards.getCard(cardIds[0]);
+        assertEq(card.ownerAgent, aid);
+        assertEq(card.unitType, 1);
     }
 
-    function test_sell_refunds_half_ore() public {
-        // Currently the spike does not credit ore back through GameEngine — it
-        // only emits the refund amount. We still want to assert (a) slot
-        // clears and (b) the right UnitSold event fires with refund = cost/2.
+    function test_sell_refunds_half_g() public {
         uint256 aid = _createAgent(player1);
         _buy(aid, player1, 4, 0); // Pyromancer cost 4 → refund 2
+        uint256 gBefore = treasury.gBalance(aid);
+        uint256 oreBefore = engine.orePool(aid);
 
         vm.expectEmit(true, false, false, true);
         emit ArenaEngine.UnitSold(aid, 0, 2);
@@ -120,7 +151,11 @@ contract ArenaEngineTest is Test {
         arena.sell(aid, 0);
 
         (uint8[5] memory bench, , , , ) = arena.getGhost(aid);
+        uint256[5] memory cardIds = arena.getGhostCards(aid);
+        assertEq(treasury.gBalance(aid), gBefore + 2);
+        assertEq(engine.orePool(aid), oreBefore);
         assertEq(bench[0], 0);
+        assertEq(cardIds[0], 0);
     }
 
     function test_move_swaps_slots() public {
@@ -136,18 +171,18 @@ contract ArenaEngineTest is Test {
         assertEq(bench[2], 1);
     }
 
-    function test_arena_spends_ore_via_game_engine_operator() public {
+    function test_arena_spends_g_via_registry_operator() public {
         uint256 aid = _createAgent(player1);
 
-        // Direct spendOre from a non-operator must revert
+        // Direct spendG from a non-operator must revert
         vm.prank(player2);
-        vm.expectRevert("not authorized");
-        engine.spendOre(aid, 5);
+        vm.expectRevert("not operator");
+        treasury.spendG(aid, 5, bytes32("bad"));
 
         // Arena is an operator → buy works
-        uint256 before_ = engine.orePool(aid);
+        uint256 before_ = treasury.gBalance(aid);
         _buy(aid, player1, 1, 0); // cost 3
-        assertEq(engine.orePool(aid), before_ - 3);
+        assertEq(treasury.gBalance(aid), before_ - 3);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -485,9 +520,7 @@ contract ArenaEngineTest is Test {
         // exact branch we care about.
         uint16 cap = arena.MAX_BUCKET_SIZE();
 
-        // bucketGhosts is the 5th declared storage slot on ArenaEngine
-        // (registry=0, gameEngine=1, evaluationLedger=2, _ghosts=3,
-        //  bucketGhosts=4). Slot for bucketGhosts[5].length:
+        // bucketGhosts is storage slot 4 on ArenaEngine. Slot for bucketGhosts[5].length:
         bytes32 lengthSlot = keccak256(abi.encode(uint16(5), uint256(4)));
         vm.store(address(arena), lengthSlot, bytes32(uint256(cap)));
         assertEq(arena.bucketSize(5), cap, "bucket length write didn't take");
@@ -534,40 +567,30 @@ contract ArenaEngineTest is Test {
         vm.prank(player1); arena.freeze(aid, 0);
     }
 
-    function test_roll_changes_seed_and_deducts_ore() public {
+    function test_roll_changes_seed_and_deducts_g() public {
         uint256 aid = _createAgent(player1);
         ( , , , uint64 lastUpdateBefore, ) = arena.getGhost(aid);
 
         // First roll: must change the shop seed away from its zero default and
-        // deduct ROLL_COST ore. We capture the seed via lastUpdate timestamp
+        // deduct ROLL_COST G. We capture the seed via lastUpdate timestamp
         // bump as a proxy (ghost storage doesn't expose shopSeed directly).
+        uint256 g0 = treasury.gBalance(aid);
         uint256 ore0 = engine.orePool(aid);
         vm.prank(player1); arena.roll(aid);
-        uint256 ore1 = engine.orePool(aid);
-        // spendOre auto-harvests first → harvest can credit ore back. Net spend
-        // must be at least ROLL_COST less than pre-roll, but the auto-harvest
-        // may have credited additional ore. The robust assertion: difference is
-        // <= ROLL_COST (negative spend means harvest beat spend).
-        assertTrue(int256(ore1) - int256(ore0) <= -1 * int256(uint256(arena.ROLL_COST())) + int256(2_000)); // generous upper bound on per-block harvest
+        uint256 g1 = treasury.gBalance(aid);
+        assertEq(g1, g0 - arena.ROLL_COST());
+        assertEq(engine.orePool(aid), ore0);
 
         // Second roll must move the seed forward again — assert lastUpdate changed.
         ( , , , uint64 lastUpdateAfter, ) = arena.getGhost(aid);
         assertTrue(lastUpdateAfter >= lastUpdateBefore, "lastUpdate must not regress");
 
-        // And both rolls actually deducted some ore (spendOre fires).
+        // And each roll actually deducts G.
         vm.warp(block.timestamp + 1);
         vm.roll(block.number + 1);
-        uint256 oreBeforeThird = engine.orePool(aid);
+        uint256 gBeforeThird = treasury.gBalance(aid);
         vm.prank(player1); arena.roll(aid);
-        uint256 oreAfterThird = engine.orePool(aid);
-        // After only 1 second of harvest, the spend should dominate. Assert
-        // pool dropped by exactly ROLL_COST minus the at-most 1-second harvest.
-        uint256 expectedSpend = uint256(arena.ROLL_COST());
-        // ore delta = harvest - spend. spend = ROLL_COST. So ore went from
-        // oreBeforeThird → oreBeforeThird + harvest - 1.
-        // We can at least assert pool didn't increase by more than harvest.
-        assertTrue(oreAfterThird + expectedSpend >= oreBeforeThird,
-            "roll must spend at least ROLL_COST (net of harvest)");
+        assertEq(treasury.gBalance(aid), gBeforeThird - arena.ROLL_COST());
     }
 
     // ──────────────────── Bench-persistence ability tests ────────────────────

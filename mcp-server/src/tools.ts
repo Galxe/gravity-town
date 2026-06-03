@@ -619,7 +619,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_get_state",
-    "Get your Arena ghost: 5-slot bench (unit names + stats), ELO, matchmaking bucket, ore pool. Call this BEFORE arena_buy to see what you have.",
+    "Get your Arena ghost: 5-slot bench (unit names + stats + backing cardId), ELO, matchmaking bucket, G balance, and main-world ore pool. Call this BEFORE arena_buy to see what you have.",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const r = await chain.arenaGetGhost(agent_id);
@@ -629,7 +629,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_buy",
-    "Buy an Arena unit and place it on your bench. Costs ore (3-6 depending on tier) from your main ore pool. Slot 0-4. Slot must be empty. Triggers ON_BUY abilities immediately (persistent stat buffs).",
+    "Buy a persistent Arena card with G and place it on your bench. Costs G (3-6 depending on tier). Slot 0-4 must be empty. Triggers ON_BUY abilities immediately (persistent stat buffs).",
     {
       agent_id: z.number().describe("Agent ID"),
       unit_type: z.number().min(1).max(12).describe("Unit type id 1-12 (see arena_list_units)"),
@@ -638,7 +638,72 @@ export function registerTools(server: any, chain: ChainClient) {
     async ({ agent_id, unit_type, slot }: any) => {
       const r = await chain.arenaBuy(agent_id, unit_type, slot);
       const u = UNIT_CATALOG.find((x) => x.id === unit_type);
-      return { content: [{ type: "text", text: `Bought ${u?.name || `unit#${unit_type}`} into slot ${slot} for ${r.cost ?? u?.cost} ore. tx: ${r.txHash}` }] };
+      return { content: [{ type: "text", text: `Bought ${u?.name || `unit#${unit_type}`} into slot ${slot} for ${r.cost ?? u?.cost} G. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_list_inventory",
+    "List persistent Arena cards owned by an agent. Cards remain in inventory when sold from bench.",
+    { agent_id: z.number().describe("Agent ID") },
+    async ({ agent_id }: any) => {
+      const r = await chain.arenaListInventory(agent_id);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "arena_list_market",
+    "List active secondary-market Arena card listings. Optionally filter by unit type.",
+    {
+      unit_type: z.number().min(1).max(12).optional().describe("Optional unit type id 1-12"),
+      offset: z.number().min(0).default(0),
+      limit: z.number().min(1).max(50).default(20),
+    },
+    async ({ unit_type, offset, limit }: any) => {
+      const r = await chain.arenaListMarket(unit_type, offset, limit);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "arena_place_listing",
+    "List one owned Arena card on the secondary market for G. Reverts if the card is currently on your bench.",
+    {
+      agent_id: z.number().describe("Seller agent ID"),
+      card_id: z.number().describe("Owned card ID"),
+      ask_price_g: z.number().min(1).describe("Listing price in G"),
+    },
+    async ({ agent_id, card_id, ask_price_g }: any) => {
+      const r = await chain.arenaPlaceListing(agent_id, card_id, ask_price_g);
+      return { content: [{ type: "text", text: `Listed card ${card_id} for ${ask_price_g} G. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_cancel_listing",
+    "Cancel an active secondary-market listing for one of your cards.",
+    {
+      agent_id: z.number().describe("Seller agent ID"),
+      card_id: z.number().describe("Listed card ID"),
+    },
+    async ({ agent_id, card_id }: any) => {
+      const r = await chain.arenaCancelListing(agent_id, card_id);
+      return { content: [{ type: "text", text: `Cancelled listing for card ${card_id}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_buy_listing",
+    "Buy an active secondary-market card listing with G.",
+    {
+      buyer_agent_id: z.number().describe("Buyer agent ID"),
+      card_id: z.number().describe("Listed card ID"),
+      max_price_g: z.number().min(1).describe("Maximum G price you accept"),
+    },
+    async ({ buyer_agent_id, card_id, max_price_g }: any) => {
+      const r = await chain.arenaBuyListing(buyer_agent_id, card_id, max_price_g);
+      return { content: [{ type: "text", text: `Bought listed card ${card_id} for up to ${max_price_g} G. tx: ${r.txHash}` }] };
     }
   );
 
