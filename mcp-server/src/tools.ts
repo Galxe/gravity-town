@@ -765,60 +765,6 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
     }
   );
 
-  // ── Arena verbs (sell / move / freeze / roll) ──
-
-  server.tool(
-    "arena_sell",
-    "Sell the unit at a bench slot. Triggers ON_SELL abilities before clearing. Clears bench slot and overlay. Note: no ore/G refund in current design — use the secondary market to recoup value.",
-    {
-      agent_id: z.number().describe("Agent ID"),
-      slot: z.number().min(0).max(4).describe("Bench slot 0-4 to sell from"),
-    },
-    async ({ agent_id, slot }: any) => {
-      const r = await chain.arenaSell(agent_id, slot);
-      return { content: [{ type: "text", text: `Sold unit at slot ${slot}. tx: ${r.txHash}` }] };
-    }
-  );
-
-  server.tool(
-    "arena_move",
-    "Swap two bench positions. Either or both may be empty. Persistent stat buffs travel with the unit. Position matters — leftmost slots attack first.",
-    {
-      agent_id: z.number().describe("Agent ID"),
-      from_slot: z.number().min(0).max(4).describe("Source bench slot 0-4"),
-      to_slot: z.number().min(0).max(4).describe("Destination bench slot 0-4"),
-    },
-    async ({ agent_id, from_slot, to_slot }: any) => {
-      const r = await chain.arenaMove(agent_id, from_slot, to_slot);
-      return { content: [{ type: "text", text: `Swapped slot ${r.fromSlot} ↔ slot ${r.toSlot}. tx: ${r.txHash}` }] };
-    }
-  );
-
-  server.tool(
-    "arena_freeze",
-    "Toggle freeze on a shop slot. Frozen slots survive the next roll. Call again to unfreeze.",
-    {
-      agent_id: z.number().describe("Agent ID"),
-      shop_slot: z.number().min(0).max(4).describe("Shop slot 0-4 to toggle freeze"),
-    },
-    async ({ agent_id, shop_slot }: any) => {
-      const r = await chain.arenaFreeze(agent_id, shop_slot);
-      return { content: [{ type: "text", text: `Shop slot ${r.shopSlot} is now ${r.nowFrozen ? "FROZEN" : "UNFROZEN"}. tx: ${r.txHash}` }] };
-    }
-  );
-
-  server.tool(
-    "arena_roll",
-    "Refresh the shop seed. Costs 1 ore. Frozen slots are preserved across rolls.",
-    {
-      agent_id: z.number().describe("Agent ID"),
-    },
-    async ({ agent_id }: any) => {
-      const r = await chain.arenaRoll(agent_id);
-      return { content: [{ type: "text", text: `Shop rolled. New seed: ${r.newSeed}. tx: ${r.txHash}` }] };
-    }
-  );
-
   // ── Arena keeper / admin tools (OWNER_KEYS gated) ──
 
   server.tool(
