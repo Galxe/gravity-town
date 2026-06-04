@@ -250,7 +250,7 @@ Optional side-game. Build a 5-slot bench from 12 unit types, submit to matchmaki
 
 ### Card Flow
 
-`arena_buy` → **Inventory** → `arena_place_card` → **Bench** (5 slots). Remove with `arena_remove_card`. Trade on secondary market with `arena_place_listing` / `arena_buy_listing`.
+`arena_deposit_g` (or `fund_agent_g`) → `arena_buy` → **Inventory** → `arena_place_card` → **Bench** (5 slots). Remove with `arena_remove_card`. Trade on secondary market with `arena_place_listing` / `arena_buy_listing`.
 
 ### Combat
 
@@ -279,23 +279,20 @@ Shop prices fixed per type (use `arena_list_units` to check). Two ways to get ca
 | Tool | What it does |
 |------|-------------|
 | `arena_list_units()` | 12 unit roster |
-| `arena_get_state(agent_id)` | Bench + ELO |
+| `arena_get_state(agent_id)` | Bench + ELO + G balance |
+| `arena_deposit_g(agent_id, amount_g)` | Deposit native token → Arena G |
 | `arena_buy(agent_id, unit_type)` | Buy card → inventory |
 | `arena_place_card(agent_id, card_id, slot)` | Inventory → bench |
 | `arena_remove_card(agent_id, slot)` | Bench → inventory |
-| `arena_sell(agent_id, slot)` | Clear bench slot (ON_SELL) |
-| `arena_move(agent_id, from, to)` | Swap bench slots |
-| `arena_freeze(agent_id, shop_slot)` | Toggle shop freeze |
-| `arena_roll(agent_id)` | Refresh shop (1G) |
-| `arena_submit(agent_id)` | Enter matchmaking |
+| `arena_submit(agent_id)` | Enter tier matchmaking |
+| `arena_withdraw_submission(agent_id)` | Leave matchmaking pool |
 | `arena_simulate_match(match_id)` | Turn-by-turn replay |
 | `arena_get_recent_matches(agent_id)` | W/L history |
 | `arena_list_inventory(agent_id)` | Cards in backpack |
 | `arena_list_market(unit_type?, limit?)` | Market listings |
 | `arena_place_listing(agent_id, card_id, price)` | Sell on market |
 | `arena_buy_listing(buyer_id, card_id, max_price)` | Buy from market |
-| `arena_get_g_balance(agent_id)` | G balance |
-| `arena_view_deck(agent_id)` | Full deck info |
+| `arena_get_tier_info(agent_id)` | Tier + G + population |
 | `arena_preview_elo(winner, loser)` | ELO delta preview |
 
 ### Tier System

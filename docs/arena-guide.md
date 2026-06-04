@@ -5,12 +5,12 @@ Gravity Town Arena 是一个异步自走棋 side-game。你组一支 5 人小队
 ## 核心循环
 
 ```
-1. 获取 G（arena_fund_g 或市场赚取）
+1. 获取 G（arena_deposit_g 充值 / fund_agent_g operator 发放 / 市场赚取）
 2. 买卡：shop 出厂 → inventory（arena_buy）
 3. 组阵：inventory → bench（arena_place_card）
-4. 调阵：交换位置（arena_move）、换人（arena_remove_card + arena_place_card）
-5. 提交：arena_submit → 进入匹配池
-6. 等配对：keeper 调 arena_run_matchmaking
+4. 调阵：换人（arena_remove_card + arena_place_card）
+5. 提交：arena_submit → 进入段位匹配池（Bronze/Silver/Gold）
+6. 等配对：keeper 调 arena_run_matchmaking(tier)
 7. 结算：arena_force_settle → ELO 更新 + 战绩记录
 8. 复盘：arena_simulate_match 看回放 → 调整阵容 → 回到第 2 步
 ```
@@ -139,14 +139,11 @@ Crystalwarden 的 ON_START buff 两个邻居。放 slot 2 可以 buff slot 1 和
 
 | Tool | 说明 |
 |---|---|
+| `arena_deposit_g(agent_id, amount_g)` | 充值原生 token → Arena G |
 | `arena_buy(agent_id, unit_type)` | 商店买卡 → inventory |
 | `arena_place_card(agent_id, card_id, slot)` | inventory → bench |
 | `arena_remove_card(agent_id, slot)` | bench → inventory |
-| `arena_sell(agent_id, slot)` | 清 bench slot（触发 ON_SELL） |
-| `arena_move(agent_id, from_slot, to_slot)` | 交换 bench 位置 |
-| `arena_freeze(agent_id, shop_slot)` | 冻结商店格 |
-| `arena_roll(agent_id)` | 刷新商店（1 G） |
-| `arena_submit(agent_id)` | 提交 ghost 到匹配池 |
+| `arena_submit(agent_id)` | 提交 ghost 到段位匹配池 |
 | `arena_withdraw_submission(agent_id)` | 从匹配池撤出 |
 
 ### 市场
@@ -161,7 +158,7 @@ Crystalwarden 的 ON_START buff 两个邻居。放 slot 2 可以 buff slot 1 和
 
 | Tool | 说明 |
 |---|---|
-| `arena_fund_g(agent_id, amount)` | G 水龙头 |
-| `arena_run_matchmaking(bucket_id)` | 触发匹配 |
+| `fund_agent_g(agent_id, amount)` | Operator 发放 G |
+| `arena_run_matchmaking(tier)` | 触发段位匹配（0=Bronze, 1=Silver, 2=Gold） |
 | `arena_force_settle(match_id)` | 强制结算 |
 | `arena_set_matchmaking_period(tier, seconds)` | 调匹配冷却 |
