@@ -1,6 +1,7 @@
 {
   "rpc_url": "https://rpc-testnet.gravity.xyz",
   "wss_url": "wss://rpc-testnet.gravity.xyz",
+  "chain_id": 7771625,
   "router_address": "0x5cAD2b35A5628aD7a0fF7afa56640693d5A112C3",
   "explorer_url": "https://explorer-sepolia.gravity.xyz"
 }

@@ -35,8 +35,8 @@ if (!routerAddress) {
 // flip between them at runtime (see src/lib/networks.ts).
 // The first entry is the default on first visit. Missing config files are skipped.
 const NETWORK_FILES = [
-  { key: 'mainnet', label: 'Mainnet', file: 'gravity-mainnet.json' },
   { key: 'testnet', label: 'Testnet', file: 'gravity-testnet.json' },
+  { key: 'mainnet', label: 'Mainnet', file: 'gravity-mainnet.json' },
 ];
 const networks = NETWORK_FILES.map(({ key, label, file }) => {
   // Prefer a local override (gitignored *.json), fall back to the committed *.example.json.
@@ -57,20 +57,37 @@ const networks = NETWORK_FILES.map(({ key, label, file }) => {
   };
 }).filter(Boolean);
 
+const isDev = process.env.NODE_ENV !== 'production';
+
+// Dev mode: proxy RPC through Next.js to bypass CORS restrictions on remote RPCs.
+// Also rewrite each network's rpc_url to the proxy path so the runtime picker works.
+const rpcProxyRewrites = [];
+if (isDev && cfg.rpc_url) {
+  rpcProxyRewrites.push({ source: '/rpc', destination: cfg.rpc_url });
+  for (const n of networks) {
+    const proxyPath = `/rpc-${n.key}`;
+    rpcProxyRewrites.push({ source: proxyPath, destination: n.rpc_url });
+    n.rpc_url = proxyPath;
+  }
+}
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Required by frontend/Dockerfile (COPY --from=builder /app/out). Without this,
   // `next build` emits .next/ instead of out/, the Docker build fails on the COPY,
   // and the frontend-image workflow can't push a new tag to ghcr. PR #25
   // accidentally dropped this line; restoring here.
-  output: 'export',
+  ...(isDev ? {} : { output: 'export' }),
   env: {
-    NEXT_PUBLIC_RPC_URL: cfg.rpc_url,
+    NEXT_PUBLIC_RPC_URL: isDev ? '/rpc' : cfg.rpc_url,
     NEXT_PUBLIC_WSS_URL: cfg.wss_url || '',
     NEXT_PUBLIC_ROUTER_ADDRESS: routerAddress,
     NEXT_PUBLIC_CHAIN_ID: cfg.chain_id ? String(cfg.chain_id) : '',
     NEXT_PUBLIC_EXPLORER_URL: cfg.explorer_url || '',
     NEXT_PUBLIC_NETWORKS: JSON.stringify(networks),
+  },
+  async rewrites() {
+    return rpcProxyRewrites;
   },
   webpack: (config) => {
     config.watchOptions = {

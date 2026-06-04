@@ -89,9 +89,10 @@ export function useGameEngine() {
     const ROUTER_ADDR = active?.router_address ?? FALLBACK_ROUTER;
     const CHAIN_ID    = active?.chain_id       ?? FALLBACK_CHAIN;
 
+    const fullRpcUrl = RPC_URL.startsWith('/') ? `${window.location.origin}${RPC_URL}` : RPC_URL;
     const provider = CHAIN_ID
-      ? new JsonRpcProvider(RPC_URL, CHAIN_ID)
-      : new JsonRpcProvider(RPC_URL);
+      ? new JsonRpcProvider(fullRpcUrl, CHAIN_ID)
+      : new JsonRpcProvider(fullRpcUrl);
     let registry: Contract;
     let agentLedger: Contract;
     let locationLedger: Contract;
