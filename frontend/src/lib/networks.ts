@@ -10,6 +10,7 @@ export type NetworkConfig = {
   wss_url?: string;
   chain_id: number;
   router_address: string;
+  explorer_url?: string;   // block-explorer base, e.g. https://explorer.gravity.xyz
 };
 
 const STORAGE_KEY = 'gt:network';

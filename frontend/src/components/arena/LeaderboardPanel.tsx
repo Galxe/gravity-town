@@ -1,19 +1,21 @@
 'use client';
 
 import { useArenaStore, ArenaTier } from '../../store/useArenaStore';
+import { t } from '../../i18n';
 
-/** Tier badge styling, keyed by the on-chain `Tier` enum index (#33). */
-const TIER_META: Record<ArenaTier, { label: string; short: string; cls: string }> = {
-  0: { label: 'Bronze', short: 'B', cls: 'bg-amber-900/40 text-amber-300 border border-amber-700/50' },
-  1: { label: 'Silver', short: 'S', cls: 'bg-zinc-600/40 text-zinc-200 border border-zinc-400/40' },
-  2: { label: 'Gold',   short: 'G', cls: 'bg-yellow-700/30 text-yellow-300 border border-yellow-500/50' },
+/** Tier badge styling, keyed by the on-chain `Tier` enum index (#33).
+ *  `short` is a language-neutral letter; the full name comes from i18n. */
+const TIER_META: Record<ArenaTier, { nameKey: string; short: string; cls: string }> = {
+  0: { nameKey: 'tier.bronze', short: 'B', cls: 'bg-amber-900/40 text-amber-300 border border-amber-700/50' },
+  1: { nameKey: 'tier.silver', short: 'S', cls: 'bg-zinc-600/40 text-zinc-200 border border-zinc-400/40' },
+  2: { nameKey: 'tier.gold',   short: 'G', cls: 'bg-yellow-700/30 text-yellow-300 border border-yellow-500/50' },
 };
 
-const TIER_FILTERS: { value: ArenaTier | null; label: string }[] = [
-  { value: null, label: 'All' },
-  { value: 0, label: 'Bronze' },
-  { value: 1, label: 'Silver' },
-  { value: 2, label: 'Gold' },
+const TIER_FILTERS: { value: ArenaTier | null; key: string }[] = [
+  { value: null, key: 'tier.all' },
+  { value: 0, key: 'tier.bronze' },
+  { value: 1, key: 'tier.silver' },
+  { value: 2, key: 'tier.gold' },
 ];
 
 /**
@@ -50,14 +52,14 @@ export function LeaderboardPanel() {
     <div className="h-full flex flex-col overflow-hidden">
       {/* Leaderboard */}
       <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-950">
-        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Leaderboard · top ELO</div>
+        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">{t('leaderboard.header')}</div>
         {/* #33 — tier filter pills. Narrows rows by Bronze/Silver/Gold; ELO order unchanged. */}
         <div className="mt-1.5 flex gap-1">
           {TIER_FILTERS.map((f) => {
             const active = tierFilter === f.value;
             return (
               <button
-                key={f.label}
+                key={f.key}
                 onClick={() => setTierFilter(f.value)}
                 className={[
                   'px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-semibold transition-colors',
@@ -66,7 +68,7 @@ export function LeaderboardPanel() {
                     : 'bg-zinc-900 text-zinc-500 border border-zinc-800 hover:text-zinc-300',
                 ].join(' ')}
               >
-                {f.label}
+                {t(f.key)}
               </button>
             );
           })}
@@ -74,7 +76,7 @@ export function LeaderboardPanel() {
       </div>
       <div className="flex-1 min-h-0 overflow-y-auto">
         {ranked.length === 0 && (
-          <div className="p-4 text-xs text-zinc-600 text-center">no ghosts submitted yet</div>
+          <div className="p-4 text-xs text-zinc-600 text-center">{t('leaderboard.noGhosts')}</div>
         )}
         {ranked.map((g, idx) => {
           const isSel = selectedAgentId === g.agentId;
@@ -95,7 +97,7 @@ export function LeaderboardPanel() {
                     {/* #33 — tier badge. Defaults to Bronze when gTreasury unresolved. */}
                     <span
                       className={['px-1 py-px rounded text-[9px] font-bold leading-none', TIER_META[g.tier ?? 0].cls].join(' ')}
-                      title={TIER_META[g.tier ?? 0].label}
+                      title={t(TIER_META[g.tier ?? 0].nameKey)}
                     >
                       {TIER_META[g.tier ?? 0].short}
                     </span>
@@ -132,11 +134,11 @@ export function LeaderboardPanel() {
 
       {/* Ongoing / recent matches */}
       <div className="px-3 py-2 border-y border-zinc-800 bg-zinc-950">
-        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">Recent · click to replay</div>
+        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">{t('leaderboard.recent')}</div>
       </div>
       <div className="max-h-56 overflow-y-auto">
         {recentMatches.length === 0 && (
-          <div className="p-4 text-xs text-zinc-600 text-center">no matches yet</div>
+          <div className="p-4 text-xs text-zinc-600 text-center">{t('leaderboard.noMatches')}</div>
         )}
         {recentMatches.map((m) => {
           const isSel = selectedMatchId === m.matchId;
@@ -160,19 +162,19 @@ export function LeaderboardPanel() {
               <div className="flex items-center justify-between">
                 <div className="text-[11px] text-zinc-400 font-mono">#{m.matchId}</div>
                 {m.settled ? (
-                  <span className="text-[9px] uppercase text-emerald-400 tracking-wider">settled</span>
+                  <span className="text-[9px] uppercase text-emerald-400 tracking-wider">{t('leaderboard.settled')}</span>
                 ) : (
-                  <span className="text-[9px] uppercase text-amber-400 tracking-wider animate-pulse">live</span>
+                  <span className="text-[9px] uppercase text-amber-400 tracking-wider animate-pulse">{t('leaderboard.live')}</span>
                 )}
               </div>
               <div className="text-xs text-zinc-200 truncate">
                 <span className="text-sky-300">{aName}</span>
-                <span className="text-zinc-600"> vs </span>
+                <span className="text-zinc-600">{t('leaderboard.vs')}</span>
                 <span className="text-rose-300">{dName}</span>
               </div>
               {winName && (
                 <div className="text-[10px] text-zinc-500 mt-0.5">
-                  → <span className="text-amber-300">{winName}</span> won
+                  → <span className="text-amber-300">{winName}</span> {t('leaderboard.won')}
                 </div>
               )}
             </button>

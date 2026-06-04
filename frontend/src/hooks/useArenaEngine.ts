@@ -4,8 +4,9 @@ import { useGameStore } from '../store/useGameStore';
 import { useArenaStore, ArenaGhost, ArenaMatch, ArenaSimulation } from '../store/useArenaStore';
 import { getActiveNetwork } from '../lib/networks';
 
-const FALLBACK_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL        || 'http://127.0.0.1:8545';
-const FALLBACK_ROUTER  = process.env.NEXT_PUBLIC_ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000';
+const FALLBACK_RPC_URL  = process.env.NEXT_PUBLIC_RPC_URL        || 'http://127.0.0.1:8545';
+const FALLBACK_ROUTER   = process.env.NEXT_PUBLIC_ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000';
+const FALLBACK_EXPLORER = process.env.NEXT_PUBLIC_EXPLORER_URL   || '';
 const FALLBACK_CHAIN   = process.env.NEXT_PUBLIC_CHAIN_ID ? Number(process.env.NEXT_PUBLIC_CHAIN_ID) : undefined;
 
 // Router address discovery — V3 (9-tuple, adds cardLedger + gTreasury from #32)
@@ -29,18 +30,79 @@ const ARENA_ABI = [
   'function getGhost(uint256) view returns (uint8[5] bench, uint16 elo, uint16 bucketId, uint64 lastUpdate, bool exists)',
   'function getMatch(uint256) view returns (uint256 attackerId, uint256 defenderId, uint8[5] attackerBench, uint8[5] defenderBench, uint64 seed, uint64 createdAt, bool settled, uint256 winnerId)',
   'function simulateMatch(uint256) view returns (tuple(uint8 attackerSide, uint8 attackerSlot, uint8 defenderSlot, uint16 damage, bool defenderDied)[] turns, uint256 winnerAgentId)',
+  'function getInitialStats(uint256) view returns (uint16[5] leftAtk, uint16[5] leftHp, uint16[5] rightAtk, uint16[5] rightHp)',
   'function nextMatchId() view returns (uint256)',
   // #33 — batched canonical tier (0=Bronze,1=Silver,2=Gold) + G balance for the
   // whole leaderboard in ONE call, plus the gTreasury address the arena reads from
   // (the fallback source when the Router lacks getAddressesV3).
   'function tierStates(uint256[]) view returns (uint8[] tiers, uint256[] gBalances)',
   'function gTreasury() view returns (address)',
+  // #33 — per-tier matchmaking cooldown, for the "next matchmaking" countdown.
+  'function lastTierMatchmakingAt(uint8) view returns (uint64)',
+  'function effectiveTierPeriod(uint8) view returns (uint64)',
+  'function cardLedger() view returns (address)',
   // Events — used to drive ongoing list + highlight ticker.
   'event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed)',
   'event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo)',
+  // Card lifecycle events on the arena (carry the tx hash for inventory "source").
+  'event CardBought(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint16 cost)',
+  'event CardPlaced(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot)',
+  'event CardRemoved(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot)',
+];
+
+// CardLedger — inventory + listing reads, plus the market/mint events whose tx
+// hash powers the inventory "source" column.
+const CARDLEDGER_ABI = [
+  'function getOwnedCards(uint256 agentId) view returns (uint256[])',
+  'function getCard(uint256 cardId) view returns (uint256 id, uint8 unitType, uint256 ownerAgent, uint256 mintedAt)',
+  'function isListed(uint256 cardId) view returns (bool)',
+  'event CardMinted(uint256 indexed cardId, uint256 indexed ownerAgent, uint8 unitType)',
+  'event CardListed(uint256 indexed cardId, uint256 indexed sellerAgent, uint256 askPriceG)',
+  'event ListingCancelled(uint256 indexed cardId, uint256 indexed sellerAgent)',
+  'event ListedCardBought(uint256 indexed cardId, uint256 indexed sellerAgent, uint256 indexed buyerAgent, uint256 priceG)',
 ];
 
 const POLL_MS = 4000;
+
+/**
+ * Most-recent on-chain tx touching each of `agentId`'s cards. Scans the card
+ * lifecycle events (filtered to this agent) and keeps the latest per cardId by
+ * (block, logIndex). The tx hash isn't in contract storage — it only exists on
+ * the event log — so this is the only way to surface a card's "source".
+ */
+async function fetchCardLastTx(
+  arena: Contract,
+  cardLedger: Contract,
+  agentId: number,
+  from: number,
+  to: number,
+): Promise<Map<number, { tx: string; kind: string }>> {
+  const specs: { c: Contract; filter: unknown; kind: string }[] = [
+    { c: arena,      filter: arena.filters.CardBought(agentId),                 kind: 'buy' },
+    { c: arena,      filter: arena.filters.CardPlaced(agentId),                 kind: 'place' },
+    { c: arena,      filter: arena.filters.CardRemoved(agentId),                kind: 'remove' },
+    { c: cardLedger, filter: cardLedger.filters.CardMinted(null, agentId),      kind: 'mint' },
+    { c: cardLedger, filter: cardLedger.filters.CardListed(null, agentId),      kind: 'list' },
+    { c: cardLedger, filter: cardLedger.filters.ListingCancelled(null, agentId), kind: 'unlist' },
+    { c: cardLedger, filter: cardLedger.filters.ListedCardBought(null, null, agentId), kind: 'market-buy' },
+  ];
+  const best = new Map<number, { rank: number; tx: string; kind: string }>();
+  await Promise.all(specs.map(async (s) => {
+    try {
+      const logs = await s.c.queryFilter(s.filter as Parameters<Contract['queryFilter']>[0], from, to);
+      for (const ev of logs) {
+        if (!(ev instanceof EventLog)) continue;
+        const cardId = Number(ev.args.cardId);
+        const rank = ev.blockNumber * 1e6 + (ev.index ?? 0);
+        const prev = best.get(cardId);
+        if (!prev || rank > prev.rank) best.set(cardId, { rank, tx: ev.transactionHash, kind: s.kind });
+      }
+    } catch { /* event type not present on this contract version */ }
+  }));
+  const out = new Map<number, { tx: string; kind: string }>();
+  best.forEach((v, id) => out.set(id, { tx: v.tx, kind: v.kind }));
+  return out;
+}
 
 // Lookback for events on first load. We pull bounded history so cold-start
 // shows a populated leaderboard / ticker even if no fresh match has arrived.
@@ -51,8 +113,10 @@ export function useArenaEngine() {
   const setGhosts        = useArenaStore((s) => s.setGhosts);
   const upsertMatch      = useArenaStore((s) => s.upsertMatch);
   const upsertSimulation = useArenaStore((s) => s.upsertSimulation);
-  const setLastMatchmaking = useArenaStore((s) => s.setLastMatchmaking);
+  const setNextMatchmakingAt = useArenaStore((s) => s.setNextMatchmakingAt);
+  const setInventory = useArenaStore((s) => s.setInventory);
   const setStaticConfig  = useArenaStore((s) => s.setStaticConfig);
+  const setExplorerUrl   = useArenaStore((s) => s.setExplorerUrl);
   const setSelectedMatchId = useArenaStore((s) => s.setSelectedMatchId);
   const setSelectedAgentId = useArenaStore((s) => s.setSelectedAgentId);
   const pushHighlight    = useArenaStore((s) => s.pushHighlight);
@@ -76,6 +140,8 @@ export function useArenaEngine() {
     const active = (onLocalhostBuild && !userPicked) ? undefined : getActiveNetwork();
     const RPC_URL     = active?.rpc_url        ?? FALLBACK_RPC_URL;
     const ROUTER_ADDR = active?.router_address ?? FALLBACK_ROUTER;
+    // Explorer base for the network actually in use (null on localhost → tx not linked).
+    setExplorerUrl((active?.explorer_url ?? FALLBACK_EXPLORER) || null);
     const CHAIN_ID    = active?.chain_id       ?? FALLBACK_CHAIN;
 
     const provider = CHAIN_ID
@@ -84,10 +150,12 @@ export function useArenaEngine() {
 
     let registry: Contract;
     let arena: Contract;
+    let cardLedger: Contract | null = null;   // null until the card economy is wired
     let hasGTreasury = false;   // whether the arena's G economy is wired (gates the G column)
     let arenaAddr: string = '';
     let resolved = false;
     let initialEventsPulled = false;
+    let lastInvAgent: number | null = null;   // inventory refetch is keyed on selection
 
     const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -96,12 +164,14 @@ export function useArenaEngine() {
       const router = new Contract(ROUTER_ADDR, ROUTER_ABI, provider);
       let registryAddr = '';
       let gtAddr = '';
+      let cardAddr = '';
       try {
         // V3 tuple (#32 Router): [0]registry .. [6]arenaEngine, [7]gTreasury, [8]cardLedger.
         const v3 = await router.getAddressesV3();
         registryAddr = v3[0];
         arenaAddr = v3[6];
         gtAddr = v3[7];
+        cardAddr = v3[8];
       } catch {
         try {
           const tuple = await router.getAddressesV2();
@@ -126,6 +196,12 @@ export function useArenaEngine() {
           try { gtAddr = await arena.gTreasury(); } catch { gtAddr = ''; }
         }
         hasGTreasury = !!gtAddr && gtAddr !== ZERO;
+        // cardLedger ladder: Router V3 [8] → ArenaEngine.cardLedger(). Drives the
+        // inventory panel; null when the card economy isn't wired.
+        if (!cardAddr || cardAddr === ZERO) {
+          try { cardAddr = await arena.cardLedger(); } catch { cardAddr = ''; }
+        }
+        cardLedger = (cardAddr && cardAddr !== ZERO) ? new Contract(cardAddr, CARDLEDGER_ABI, provider) : null;
       } else {
         setStaticConfig(null);
       }
@@ -216,13 +292,42 @@ export function useArenaEngine() {
         const tierOf: Record<number, 0 | 1 | 2> = {};
         const gOf: Record<number, number> = {};
         try {
-          const [tiers, gBalances] = await arena.tierStates(agentIds);
+          // ethers v6 returns a frozen Result from getAllAgentIds; passing it
+          // straight into another call throws "Cannot assign to read only
+          // property". Hand tierStates a plain mutable copy.
+          const [tiers, gBalances] = await arena.tierStates(Array.from(agentIds));
           agentIds.forEach((aId, i) => {
             const id = Number(aId);
             tierOf[id] = Number(tiers[i]) as 0 | 1 | 2;
             if (hasGTreasury) gOf[id] = Number(gBalances[i]);
           });
         } catch { /* pre-#33 arena — leave tier/G unset */ }
+
+        // #33 — soonest tier whose matchmaking cooldown is still ticking, for the
+        // "next matchmaking" countdown. null when every tier is already unlocked.
+        // The cooldown is measured against CHAIN time (block.timestamp), which on
+        // a dev node can lag wall-clock; compute remaining against chain time, then
+        // express it as a wall-clock target so the on-screen ticker counts down.
+        try {
+          const block = await provider.getBlock('latest');
+          const chainNow = block ? Number(block.timestamp) : Math.floor(Date.now() / 1000);
+          const wallNow = Math.floor(Date.now() / 1000);
+          const [l0, l1, l2, p0, p1, p2] = await Promise.all([
+            arena.lastTierMatchmakingAt(0), arena.lastTierMatchmakingAt(1), arena.lastTierMatchmakingAt(2),
+            arena.effectiveTierPeriod(0), arena.effectiveTierPeriod(1), arena.effectiveTierPeriod(2),
+          ]);
+          const lasts = [Number(l0), Number(l1), Number(l2)];
+          const periods = [Number(p0), Number(p1), Number(p2)];
+          let soonestRemaining: number | null = null;
+          for (let tr = 0; tr < 3; tr++) {
+            if (lasts[tr] === 0) continue;                 // never run → available now
+            const remaining = lasts[tr] + periods[tr] - chainNow;
+            if (remaining > 0 && (soonestRemaining === null || remaining < soonestRemaining)) {
+              soonestRemaining = remaining;
+            }
+          }
+          setNextMatchmakingAt(soonestRemaining !== null ? wallNow + soonestRemaining : null);
+        } catch { /* pre-#33 arena — no tier cooldowns */ }
 
         const ghosts: Record<number, ArenaGhost> = {};
         await Promise.all(agentIds.map(async (aId) => {
@@ -245,6 +350,39 @@ export function useArenaEngine() {
           } catch { /* ignore */ }
         }));
         setGhosts(ghosts);
+
+        // Inventory for the focused agent. Refetch only when the selection
+        // changes (keyed on lastInvAgent) to avoid re-scanning card events every
+        // poll. getCard/isListed for basic info; fetchCardLastTx for "source".
+        const selId = useArenaStore.getState().selectedAgentId;
+        if (cardLedger && selId != null && selId !== lastInvAgent) {
+          lastInvAgent = selId;
+          try {
+            const owned: bigint[] = await cardLedger.getOwnedCards(selId);
+            const ownedIds = owned.map(Number);
+            const latestBlk = await provider.getBlockNumber();
+            const fromBlk = Math.max(0, latestBlk - EVENT_LOOKBACK_BLOCKS);
+            const lastTx = await fetchCardLastTx(arena, cardLedger, selId, fromBlk, latestBlk);
+            const cards = await Promise.all(ownedIds.map(async (cid) => {
+              const c = await cardLedger!.getCard(cid);
+              let listed = false;
+              try { listed = await cardLedger!.isListed(cid); } catch { /* ignore */ }
+              const lt = lastTx.get(cid);
+              return {
+                id: cid,
+                unitType: Number(c.unitType),
+                mintedAt: Number(c.mintedAt),
+                listed,
+                lastTxHash: lt?.tx,
+                lastTxKind: lt?.kind,
+              };
+            }));
+            setInventory(selId, cards);
+          } catch (e) {
+            lastInvAgent = null; // allow a retry next poll
+            console.warn('[arena] inventory fetch failed for', selId, e);
+          }
+        }
 
         // Pull `nextMatchId` and walk back, hydrating recent matches & settling info.
         const next: bigint = await arena.nextMatchId();
@@ -270,7 +408,17 @@ export function useArenaEngine() {
             // matches to keep RPC pressure low.
             if (mid >= nextId - 6 && !useArenaStore.getState().simulations[mid]) {
               try {
-                const sim = await arena.simulateMatch(mid);
+                // Fetch the trace and the post-ON_START starting stats in
+                // parallel. getInitialStats may be absent on an older contract
+                // (or fail transiently) — isolate its failure so the sim still
+                // loads, and surface the reason instead of swallowing it.
+                const [sim, s] = await Promise.all([
+                  arena.simulateMatch(mid),
+                  arena.getInitialStats(mid).catch((e: unknown) => {
+                    console.warn('[arena] getInitialStats failed for', mid, '— using base stats', e);
+                    return null;
+                  }),
+                ]);
                 const turns = Array.from(sim[0] as ReadonlyArray<readonly unknown[]>).map((t) => ({
                   attackerSide: Number(t[0]) as 0 | 1,
                   attackerSlot: Number(t[1]),
@@ -278,10 +426,22 @@ export function useArenaEngine() {
                   damage: Number(t[3]),
                   defenderDied: Boolean(t[4]),
                 }));
+                // Accurate ATK/HP for the replay (catalog base stats miss buffs).
+                let initial: ArenaSimulation['initial'];
+                if (s) {
+                  const toNums = (a: ReadonlyArray<unknown>) => Array.from(a).map((n) => Number(n));
+                  initial = {
+                    leftAtk: toNums(s[0]),
+                    leftHp: toNums(s[1]),
+                    rightAtk: toNums(s[2]),
+                    rightHp: toNums(s[3]),
+                  };
+                }
                 const simObj: ArenaSimulation = {
                   matchId: mid,
                   turns,
                   winnerId: Number(sim[1]),
+                  initial,
                 };
                 upsertSimulation(simObj);
               } catch (e) {
@@ -419,8 +579,8 @@ export function useArenaEngine() {
       }
     };
   }, [
-    setGhosts, upsertMatch, upsertSimulation, setLastMatchmaking,
-    setStaticConfig, setSelectedMatchId, setSelectedAgentId, pushHighlight,
+    setGhosts, upsertMatch, upsertSimulation, setNextMatchmakingAt, setInventory,
+    setStaticConfig, setExplorerUrl, setSelectedMatchId, setSelectedAgentId, pushHighlight,
   ]);
 }
 
