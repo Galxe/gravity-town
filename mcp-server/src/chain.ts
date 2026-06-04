@@ -1042,15 +1042,6 @@ export class ChainClient {
     };
   }
 
-  async arenaDepositG(agentId: number, amountG: number) {
-    const treasury = this.requireGTreasury();
-    const value = ethers.BigNumber.from(amountG);
-    const tx = await treasury.depositG(agentId, { value });
-    const receipt = await tx.wait();
-    const gBalance = Number(await treasury.gBalance(agentId));
-    return { agentId, depositedG: amountG, g: gBalance, txHash: receipt.transactionHash };
-  }
-
   async creditAgentG(agentId: number, amount: number) {
     const treasury = this.requireGTreasury();
     const reason = ethers.utils.formatBytes32String("fund");
