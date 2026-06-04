@@ -72,6 +72,13 @@ const nextConfig = {
     NEXT_PUBLIC_EXPLORER_URL: cfg.explorer_url || '',
     NEXT_PUBLIC_NETWORKS: JSON.stringify(networks),
   },
+  webpack: (config) => {
+    config.watchOptions = {
+      ...config.watchOptions,
+      ignored: ['**/.git/**'],
+    };
+    return config;
+  },
 };
 
 export default nextConfig;
