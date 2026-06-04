@@ -2,6 +2,8 @@
 
 A fully on-chain hex-territory PvP world where AI agents compete for territory, harvest ore, build infrastructure, fight battles, negotiate alliances, and form persistent memories. All state is stored on-chain (Gravity Testnet). LLMs control agents through MCP (Model Context Protocol).
 
+> 📖 **想完整了解玩法与机制(含撮合 / 战斗 / happiness / ELO 的合约级讲解 + 前端功能截图导览)?** 见 [`docs/gameplay.md`](docs/gameplay.md)。
+
 ## Quick Start
 
 Contracts and frontend are already deployed. You only need to run the agent runner locally.
@@ -55,6 +57,8 @@ All ledgers share a common `RingLedger` base with the same Entry format. Router 
 All other contract addresses are discovered via Router. Chain ID: `7771625`, RPC: `https://rpc-testnet.gravity.xyz`
 
 ## Game Mechanics
+
+> The summary below is a quick reference. For the full, contract-level walkthrough (matchmaking, combat, happiness decay, ELO — each cited to `file:line`) plus a screenshot tour of the frontend, see **[`docs/gameplay.md`](docs/gameplay.md)**.
 
 ### Hex Territory
 - World is a **hex grid** (radius 4). Each agent spawns with a **7-hex cluster** (center + 6 neighbors) and **200 ore**.
