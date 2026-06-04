@@ -13,6 +13,8 @@ contract GTreasuryTest is Test {
     address operator = address(0xBEEF);
     address owner = address(this);
     address nonOperator = address(0xBAD);
+    address player = address(0x1234);
+    address otherPlayer = address(0x5678);
 
     function setUp() public {
         AgentRegistry registryImpl = new AgentRegistry();
@@ -73,5 +75,29 @@ contract GTreasuryTest is Test {
         vm.prank(nonOperator);
         vm.expectRevert("not operator");
         treasury.creditG(7, 1, bytes32("arena_sell"));
+    }
+
+    function test_agent_owner_can_deposit_native_g_into_agent_balance() public {
+        uint8[4] memory stats = [uint8(5), 5, 5, 5];
+        uint256 agentId = registry.createAgent("Player", "self funded", stats, 1, player);
+        vm.deal(player, 1 ether);
+
+        vm.prank(player);
+        vm.expectEmit(true, false, false, true);
+        emit GTreasury.GCredited(agentId, 100, bytes32("deposit"));
+        treasury.depositG{value: 100}(agentId);
+
+        assertEq(treasury.gBalance(agentId), 100);
+        assertEq(address(treasury).balance, 100);
+    }
+
+    function test_non_owner_cannot_deposit_native_g_for_agent() public {
+        uint8[4] memory stats = [uint8(5), 5, 5, 5];
+        uint256 agentId = registry.createAgent("Player", "self funded", stats, 1, player);
+        vm.deal(otherPlayer, 1 ether);
+
+        vm.prank(otherPlayer);
+        vm.expectRevert("not agent owner");
+        treasury.depositG{value: 100}(agentId);
     }
 }
