@@ -106,16 +106,20 @@ export function LeaderboardPanel() {
                 </div>
                 <div className="flex items-center justify-between mt-0.5">
                   <div className="flex gap-0.5">
-                    {(g.recentResults.length > 0 ? g.recentResults : ['·','·','·','·','·']).slice(0, 5).map((r, i) => (
+                    {/* Always 5 cells: recent results (newest-first) padded with
+                        empty placeholders so every row reads as a fixed-width form
+                        strip. 🔥 = win, ✕ = loss, · = no game yet. */}
+                    {Array.from({ length: 5 }, (_, i) => g.recentResults[i] ?? null).map((r, i) => (
                       <span
                         key={i}
-                        className={
+                        className={[
+                          'leading-none',
                           r === 'W' ? 'text-emerald-400' :
                           r === 'L' ? 'text-rose-400' :
-                          'text-zinc-700'
-                        }
+                          'text-zinc-700',
+                        ].join(' ')}
                       >
-                        {r === 'W' ? '🔥' : r === 'L' ? '·' : '·'}
+                        {r === 'W' ? '🔥' : r === 'L' ? '✕' : '·'}
                       </span>
                     ))}
                   </div>

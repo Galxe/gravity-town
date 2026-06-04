@@ -216,12 +216,26 @@ export function useArenaEngine() {
       const latest = await provider.getBlockNumber();
       const from = Math.max(0, latest - EVENT_LOOKBACK_BLOCKS);
 
-      // MatchCreated events are intentionally NOT upserted here.
-      // The walk loop calls getMatch() which provides correct bench data.
-      // Upserting from MatchCreated would write attackerBench:[0,0,0,0,0],
-      // causing a premature render with empty slots before real data arrives.
+      // MatchCreated events are intentionally NOT upserted here (the walk loop
+      // calls getMatch() for correct bench data — upserting empty benches would
+      // render premature empty slots). We DO read them to learn each match's
+      // participants, so the settled loop below can identify the loser and
+      // backfill recent W/L form. Without this, recentResults starts empty on
+      // load and only accrues from matches that settle while the page is open.
+      const participants: Record<number, { attackerId: number; defenderId: number }> = {};
+      try {
+        const createdFilter = arena.filters.MatchCreated();
+        const createdEvents = await arena.queryFilter(createdFilter, from, latest);
+        for (const ev of createdEvents) {
+          if (!(ev instanceof EventLog)) continue;
+          const a = ev.args!;
+          participants[Number(a[0])] = { attackerId: Number(a[1]), defenderId: Number(a[2]) };
+        }
+      } catch (e) { console.warn('[arena] MatchCreated history fetch failed', e); }
 
-      // MatchSettled — drives highlight detection
+      // MatchSettled — drives highlight detection + recent-form backfill.
+      // queryFilter returns logs oldest-first; recentResults is most-recent-first,
+      // so prepending each result in iteration order leaves the newest at index 0.
       try {
         const settledFilter = arena.filters.MatchSettled();
         const events = await arena.queryFilter(settledFilter, from, latest);
@@ -249,6 +263,18 @@ export function useArenaEngine() {
             loserEloAfter: newLoseElo,
           });
           seenMatchSettled.current.add(matchId);
+
+          // Backfill recent W/L. Loser = the participant that isn't the winner.
+          const pair = participants[matchId];
+          const loserId = pair
+            ? (pair.attackerId === winnerId ? pair.defenderId : pair.attackerId)
+            : 0;
+          if (winnerId) {
+            recentResultsRef.current[winnerId] = ['W' as const, ...(recentResultsRef.current[winnerId] ?? [])].slice(0, 5);
+          }
+          if (loserId) {
+            recentResultsRef.current[loserId] = ['L' as const, ...(recentResultsRef.current[loserId] ?? [])].slice(0, 5);
+          }
         }
       } catch (e) { console.warn('[arena] MatchSettled history fetch failed', e); }
     };
