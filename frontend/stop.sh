@@ -11,15 +11,15 @@ fi
 
 PID="$(cat "$PIDFILE")"
 if kill -0 "$PID" 2>/dev/null; then
-    echo "Stopping frontend (PID $PID)..."
-    kill "$PID"
+    echo "Stopping frontend (process group $PID)..."
+    kill -- -"$PID" 2>/dev/null || kill "$PID"
     for i in {1..10}; do
         kill -0 "$PID" 2>/dev/null || break
         sleep 0.5
     done
     if kill -0 "$PID" 2>/dev/null; then
         echo "Force killing..."
-        kill -9 "$PID" 2>/dev/null || true
+        kill -9 -- -"$PID" 2>/dev/null || kill -9 "$PID" 2>/dev/null || true
     fi
     echo "Frontend stopped."
 else

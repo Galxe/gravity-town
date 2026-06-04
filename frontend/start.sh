@@ -16,6 +16,6 @@ fi
 
 echo "Starting frontend (config=$CONFIG, host=$HOST, port=$PORT)..."
 cd "$DIR"
-APP_CONFIG="$CONFIG" nohup npm run dev -- -H "$HOST" -p "$PORT" > "$DIR/.frontend.log" 2>&1 &
+setsid bash -c "APP_CONFIG='$CONFIG' exec npm run dev -- -H '$HOST' -p '$PORT'" > "$DIR/.frontend.log" 2>&1 &
 echo $! > "$PIDFILE"
 echo "Frontend started (PID $(cat "$PIDFILE")), log: .frontend.log"
