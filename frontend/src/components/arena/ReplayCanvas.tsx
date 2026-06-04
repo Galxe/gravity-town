@@ -5,6 +5,7 @@ import { UnitCard } from './UnitCard';
 import { BattleLog } from './BattleLog';
 import { useArenaStore, ArenaTurn, ArenaMatch } from '../../store/useArenaStore';
 import { getUnit } from '../../lib/arenaUnits';
+import { t } from '../../i18n';
 
 type Props = {
   match: ArenaMatch;
@@ -43,24 +44,40 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
     return () => clearTimeout(t);
   }, [autoplay, paused, sim, turnIndex, setTurnIndex]);
 
-  // Compute HP by replaying turns up to turnIndex.
-  const { leftHp, rightHp, leftMax, rightMax } = useMemo(() => {
-    const lHp: number[] = attackerBench.map((t) => getUnit(t)?.hp ?? 0);
-    const rHp: number[] = defenderBench.map((t) => getUnit(t)?.hp ?? 0);
+  // Compute current HP + ATK for every slot by replaying turns up to `turnIndex`.
+  // Seed from the contract's post-ON_START stats (sim.initial, via getInitialStats)
+  // when available — accurate; fall back to catalog base stats for older sims.
+  const { leftHp, rightHp, leftMax, rightMax, leftAtk, rightAtk } = useMemo(() => {
+    const lHp: number[] = sim?.initial?.leftHp ?? attackerBench.map((u) => getUnit(u)?.hp ?? 0);
+    const rHp: number[] = sim?.initial?.rightHp ?? defenderBench.map((u) => getUnit(u)?.hp ?? 0);
+    const lAtk: number[] = sim?.initial?.leftAtk ?? attackerBench.map((u) => getUnit(u)?.atk ?? 0);
+    const rAtk: number[] = sim?.initial?.rightAtk ?? defenderBench.map((u) => getUnit(u)?.atk ?? 0);
     const lMax = [...lHp];
     const rMax = [...rHp];
+    const lHpCur = [...lHp];
+    const rHpCur = [...rHp];
+    // A turn's `damage` equals the attacker's current ATK (no mitigation), so
+    // replaying reveals mid-combat ATK buffs (ON_HURT, ON_FRIEND_DEATH, …).
+    const lAtkCur = [...lAtk];
+    const rAtkCur = [...rAtk];
     if (sim) {
       const upto = Math.min(turnIndex, sim.turns.length);
       for (let i = 0; i < upto; i++) {
-        const t = sim.turns[i];
-        if (t.attackerSide === 0) {
-          rHp[t.defenderSlot] = Math.max(0, rHp[t.defenderSlot] - t.damage);
+        const tn = sim.turns[i];
+        if (tn.attackerSide === 0) {
+          rHpCur[tn.defenderSlot] = Math.max(0, rHpCur[tn.defenderSlot] - tn.damage);
+          lAtkCur[tn.attackerSlot] = tn.damage;
         } else {
-          lHp[t.defenderSlot] = Math.max(0, lHp[t.defenderSlot] - t.damage);
+          lHpCur[tn.defenderSlot] = Math.max(0, lHpCur[tn.defenderSlot] - tn.damage);
+          rAtkCur[tn.attackerSlot] = tn.damage;
         }
       }
     }
-    return { leftHp: lHp, rightHp: rHp, leftMax: lMax, rightMax: rMax };
+    return {
+      leftHp: lHpCur, rightHp: rHpCur,
+      leftMax: lMax, rightMax: rMax,
+      leftAtk: lAtkCur, rightAtk: rAtkCur,
+    };
   }, [sim, turnIndex, attackerBench, defenderBench]);
 
   // Track turn direction for animation triggering.
@@ -99,7 +116,9 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
 
   const ct = currentTurn;
 
-  const renderBench = (bench: number[], hpArr: number[], maxArr: number[], side: 'left' | 'right') => {
+  const renderBench = (
+    bench: number[], hpArr: number[], maxArr: number[], atkArr: number[], side: 'left' | 'right',
+  ) => {
     const sideNum = side === 'left' ? 0 : 1;
     return bench.map((u, i) => {
       const isAttacker = ct !== null && ct.attackerSide === sideNum && ct.attackerSlot === i;
@@ -111,6 +130,7 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
           unitType={u}
           hp={hpArr[i]}
           maxHp={maxArr[i]}
+          atk={atkArr[i]}
           dead={hpArr[i] <= 0 && maxArr[i] > 0}
           attackKey={isAttacker ? attackAnimKey : 0}
           hitKey={isDefender ? attackAnimKey : 0}
@@ -130,8 +150,8 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
         <div className="text-sky-300 font-semibold">⬅ {attackerName}</div>
         <div className="text-zinc-500 font-mono flex items-center gap-2">
           {paused && <span className="text-amber-400">⏸</span>}
-          turn {Math.min(turnIndex, finishedTurns)} / {finishedTurns}
-          {done && <span className="text-emerald-400">· complete</span>}
+          {t('replay.turn', { cur: Math.min(turnIndex, finishedTurns), total: finishedTurns })}
+          {done && <span className="text-emerald-400">{t('replay.complete')}</span>}
         </div>
         <div className="text-rose-300 font-semibold">{defenderName} ➡</div>
       </div>
@@ -174,18 +194,18 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
                 ].join(' ')}>
                   {winnerName}
                 </div>
-                <div className="text-[10px] text-amber-500 font-bold uppercase tracking-widest">Winner</div>
+                <div className="text-[10px] text-amber-500 font-bold uppercase tracking-widest">{t('replay.winner')}</div>
               </div>
             </div>
           );
         })()}
 
         <div className="flex gap-1.5">
-          {renderBench(attackerBench, leftHp, leftMax, 'left')}
+          {renderBench(attackerBench, leftHp, leftMax, leftAtk, 'left')}
         </div>
         <div className="px-2 text-zinc-500 text-2xl font-black">⚔</div>
         <div className="flex gap-1.5">
-          {renderBench(defenderBench, rightHp, rightMax, 'right')}
+          {renderBench(defenderBench, rightHp, rightMax, rightAtk, 'right')}
         </div>
       </div>
 
@@ -201,7 +221,7 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
 
       {!sim && (
         <div className="mt-3 min-h-[34px] px-3 py-2 rounded bg-zinc-900/60 border border-zinc-800 text-xs font-mono text-zinc-500">
-          loading simulation…
+          {t('replay.loading')}
         </div>
       )}
     </div>

@@ -2,11 +2,13 @@
 
 import { useEffect, useRef } from 'react';
 import { getUnit, TIER_COLOR, TIER_TEXT } from '../../lib/arenaUnits';
+import { t } from '../../i18n';
 
 type Props = {
   unitType: number;
   hp?: number;
   maxHp?: number;
+  atk?: number;             // effective ATK (post-ON_START); defaults to base
   dead?: boolean;
   attackKey?: number;
   hitKey?: number;
@@ -17,7 +19,7 @@ type Props = {
 };
 
 export function UnitCard({
-  unitType, hp, maxHp, dead, attackKey, hitKey, floatingDamage, enterDelay = 0, slotIndex, side,
+  unitType, hp, maxHp, atk, dead, attackKey, hitKey, floatingDamage, enterDelay = 0, slotIndex, side,
 }: Props) {
   const u = getUnit(unitType);
   const outerRef = useRef<HTMLDivElement>(null);
@@ -70,13 +72,17 @@ export function UnitCard({
   if (!u) {
     return (
       <div className="w-[78px] h-[100px] rounded-md border border-dashed border-zinc-700 bg-zinc-900/40 flex items-center justify-center text-zinc-700 text-xs">
-        empty
+        {t('unit.empty')}
       </div>
     );
   }
 
   const showHp = hp !== undefined && maxHp !== undefined && maxHp > 0;
   const hpPct = showHp ? Math.max(0, Math.min(100, (hp! / maxHp!) * 100)) : 100;
+
+  const unitName = t(`units.${u.type}.name`, undefined, u.name);
+  const unitAbility = t(`units.${u.type}.ability`, undefined, u.ability);
+  const unitTrigger = t(`triggers.${u.trigger}`, undefined, u.trigger);
 
   // React only manages dead-state and base layout — NOT animation classes.
   const outerClasses = [
@@ -91,7 +97,7 @@ export function UnitCard({
   ].filter(Boolean).join(' ');
 
   return (
-    <div ref={outerRef} className={`relative ${outerClasses}`} title={`${u.name} — ${u.trigger}: ${u.ability}`}>
+    <div ref={outerRef} className={`relative ${outerClasses}`} title={t('unit.tooltip', { name: unitName, trigger: unitTrigger, ability: unitAbility })}>
       {/* Damage float — outside the scale-x-[-1] inner div so text is never mirrored */}
       {floatingDamage != null && floatingDamage > 0 && (
         <span
@@ -105,7 +111,7 @@ export function UnitCard({
         <div className={side === 'right' ? 'scale-x-[-1] flex flex-col items-center w-full' : 'flex flex-col items-center w-full'}>
           <div className={`text-[9px] uppercase tracking-wide ${TIER_TEXT[u.tier]}`}>T{u.tier}</div>
           <div className="text-2xl leading-none mt-0.5">{u.emoji}</div>
-          <div className="text-[10px] mt-1 text-zinc-200 text-center font-medium leading-tight">{u.name}</div>
+          <div className="text-[10px] mt-1 text-zinc-200 text-center font-medium leading-tight">{unitName}</div>
         </div>
 
         <div className={side === 'right' ? 'scale-x-[-1] w-full' : 'w-full'}>
@@ -118,7 +124,7 @@ export function UnitCard({
             </div>
           )}
           <div className="flex items-center justify-between w-full text-[10px] font-mono">
-            <span className="text-orange-400">⚔ {u.atk}</span>
+            <span className="text-orange-400">⚔ {atk ?? u.atk}</span>
             <span className="text-emerald-400">❤ {showHp ? Math.max(0, hp!) : u.hp}</span>
           </div>
         </div>

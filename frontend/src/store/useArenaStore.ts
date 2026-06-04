@@ -10,7 +10,15 @@ export interface ArenaGhost {
   lastUpdate: number;
   exists: boolean;
   recentResults: ('W' | 'L')[]; // most-recent-first, max 5
+  // #33 — G economy / tier. Source of truth is the contract: `tier` mirrors
+  // `_tierFor(agentId)` (0=Bronze, 1=Silver, 2=Gold) and the frontend never
+  // re-derives the thresholds. Both undefined until gTreasury resolves.
+  gBalance?: number;
+  tier?: 0 | 1 | 2;
 }
+
+/** G-tier index → label, matching the on-chain `Tier` enum order (#33). */
+export type ArenaTier = 0 | 1 | 2;
 
 /** One match (settled or pending). */
 export interface ArenaMatch {
@@ -40,11 +48,31 @@ export interface ArenaTurn {
   defenderDied: boolean;
 }
 
+/** One card in an agent's inventory, plus the last on-chain tx that touched it. */
+export interface ArenaCard {
+  id: number;
+  unitType: number;
+  mintedAt: number;
+  listed: boolean;
+  lastTxHash?: string;   // "source" — tx of the most recent event touching this card
+  lastTxKind?: string;   // mint | buy | place | remove | list | unlist | market-buy
+}
+
+/** Post-ON_START starting stats per slot (after buffs/overlays). */
+export interface ArenaInitialStats {
+  leftAtk: number[];
+  leftHp: number[];
+  rightAtk: number[];
+  rightHp: number[];
+}
+
 /** Cached simulation result keyed by matchId. */
 export interface ArenaSimulation {
   matchId: number;
   turns: ArenaTurn[];
   winnerId: number;
+  /** True starting ATK/HP the trace runs on — used to render accurate cards. */
+  initial?: ArenaInitialStats;
 }
 
 /** Highlight ticker entry. */
@@ -59,67 +87,79 @@ export interface ArenaHighlight {
 export interface ArenaState {
   // Static config / world
   arenaEngineAddress: string | null;
-  matchmakingPeriod: number;            // seconds between bucket runs (constant in contract)
-  lastMatchmakingByBucket: Record<number, number>;  // bucketId -> ts (seconds)
+  explorerUrl: string | null;           // block-explorer base for the active network
+  // Soonest upcoming tier-matchmaking unlock (unix seconds), or null when every
+  // tier's cooldown has already elapsed (matchmaking can run now).
+  nextMatchmakingAt: number | null;
 
   // Live data
   ghosts: Record<number, ArenaGhost>;   // by agentId
   matches: Record<number, ArenaMatch>;  // by matchId
   simulations: Record<number, ArenaSimulation>;  // cached by matchId
+  inventories: Record<number, ArenaCard[]>;  // owned cards by agentId
 
   // UI state
   selectedMatchId: number | null;
   selectedAgentId: number | null;       // whose mind to show
   autoplay: boolean;
-  paused: boolean;                      // temporary pause during autoplay (Space key)
   turnIndex: number;                    // current turn cursor for the focus match
+  paused: boolean;                      // temporary pause during autoplay (Space key)
   highlights: ArenaHighlight[];         // most recent first, capped
+  tierFilter: ArenaTier | null;         // #33 leaderboard filter pill — null = all tiers
 
   // Setters
   setStaticConfig: (addr: string | null) => void;
+  setExplorerUrl: (url: string | null) => void;
   setGhosts: (ghosts: Record<number, ArenaGhost>) => void;
   upsertMatch: (m: ArenaMatch) => void;
   upsertSimulation: (sim: ArenaSimulation) => void;
-  setLastMatchmaking: (bucketId: number, ts: number) => void;
+  setInventory: (agentId: number, cards: ArenaCard[]) => void;
+  setNextMatchmakingAt: (ts: number | null) => void;
   setSelectedMatchId: (id: number | null) => void;
   setSelectedAgentId: (id: number | null) => void;
   setAutoplay: (v: boolean) => void;
-  setPaused: (v: boolean) => void;
   setTurnIndex: (n: number) => void;
+  setPaused: (v: boolean) => void;
   pushHighlight: (h: ArenaHighlight) => void;
+  setTierFilter: (t: ArenaTier | null) => void;
 }
 
 const HIGHLIGHT_CAP = 12;
 
 export const useArenaStore = create<ArenaState>((set) => ({
   arenaEngineAddress: null,
-  matchmakingPeriod: 1800,
-  lastMatchmakingByBucket: {},
+  explorerUrl: null,
+  nextMatchmakingAt: null,
 
   ghosts: {},
   matches: {},
   simulations: {},
+  inventories: {},
 
   selectedMatchId: null,
   selectedAgentId: null,
   autoplay: true,
-  paused: false,
   turnIndex: 0,
+  paused: false,
   highlights: [],
+  tierFilter: null,
 
   setStaticConfig: (addr) => set({ arenaEngineAddress: addr }),
+  setExplorerUrl: (url) => set({ explorerUrl: url }),
   setGhosts: (ghosts) => set({ ghosts }),
   upsertMatch: (m) =>
     set((s) => ({ matches: { ...s.matches, [m.matchId]: { ...s.matches[m.matchId], ...m } } })),
   upsertSimulation: (sim) =>
     set((s) => ({ simulations: { ...s.simulations, [sim.matchId]: sim } })),
-  setLastMatchmaking: (bucketId, ts) =>
-    set((s) => ({ lastMatchmakingByBucket: { ...s.lastMatchmakingByBucket, [bucketId]: ts } })),
+  setInventory: (agentId, cards) =>
+    set((s) => ({ inventories: { ...s.inventories, [agentId]: cards } })),
+  setNextMatchmakingAt: (ts) => set({ nextMatchmakingAt: ts }),
   setSelectedMatchId: (id) => set({ selectedMatchId: id, turnIndex: 0, paused: false }),
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
   setAutoplay: (v) => set({ autoplay: v }),
-  setPaused: (v) => set({ paused: v }),
   setTurnIndex: (n) => set({ turnIndex: n }),
+  setPaused: (v) => set({ paused: v }),
+  setTierFilter: (t) => set({ tierFilter: t }),
   pushHighlight: (h) =>
     set((s) => {
       // dedupe by id

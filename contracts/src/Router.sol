@@ -16,6 +16,9 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @dev Added in v2 — Arena side-system. Storage-appended so existing proxies
     ///      keep their previous slots intact across upgrade.
     address public arenaEngine;
+    /// @dev Added in v3 — Arena G ledger + persistent card ledger.
+    address public gTreasury;
+    address public cardLedger;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() { _disableInitializers(); }
@@ -46,6 +49,8 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function setGameEngine(address _v) external onlyOwner { gameEngine = _v; }
     function setEvaluationLedger(address _v) external onlyOwner { evaluationLedger = _v; }
     function setArenaEngine(address _v) external onlyOwner { arenaEngine = _v; }
+    function setGTreasury(address _v) external onlyOwner { gTreasury = _v; }
+    function setCardLedger(address _v) external onlyOwner { cardLedger = _v; }
 
     /// @notice Original 6-tuple getter. Kept intact for chain.ts and Upgrade.s.sol
     ///         compatibility — they decode the return ABI by length. Do NOT extend
@@ -75,5 +80,30 @@ contract Router is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         address _arenaEngine
     ) {
         return (registry, agentLedger, locationLedger, inboxLedger, gameEngine, evaluationLedger, arenaEngine);
+    }
+
+    /// @notice Extended getter including Arena G and card systems.
+    function getAddressesV3() external view returns (
+        address _registry,
+        address _agentLedger,
+        address _locationLedger,
+        address _inboxLedger,
+        address _gameEngine,
+        address _evaluationLedger,
+        address _arenaEngine,
+        address _gTreasury,
+        address _cardLedger
+    ) {
+        return (
+            registry,
+            agentLedger,
+            locationLedger,
+            inboxLedger,
+            gameEngine,
+            evaluationLedger,
+            arenaEngine,
+            gTreasury,
+            cardLedger
+        );
     }
 }

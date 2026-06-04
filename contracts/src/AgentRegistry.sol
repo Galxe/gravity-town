@@ -66,6 +66,7 @@ contract AgentRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function setOperator(address _op) external onlyOwner { operator = _op; }
     function addOperator(address _op) external onlyOwner { operators[_op] = true; }
     function removeOperator(address _op) external onlyOwner { operators[_op] = false; }
+    function isOperator(address addr) external view returns (bool) { return _isOperator(addr); }
 
     function createAgent(
         string calldata name,

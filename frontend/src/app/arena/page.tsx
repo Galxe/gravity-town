@@ -4,10 +4,11 @@ import { useEffect } from 'react';
 import { TopBar } from '@/components/arena/TopBar';
 import { LeaderboardPanel } from '@/components/arena/LeaderboardPanel';
 import { StagePanel } from '@/components/arena/StagePanel';
-import { AgentMindPanel } from '@/components/arena/AgentMindPanel';
+import { RightPanel } from '@/components/arena/RightPanel';
 import { HighlightTicker } from '@/components/arena/HighlightTicker';
 import { useArenaEngine } from '@/hooks/useArenaEngine';
 import { useGameEngine } from '@/hooks/useGameEngine';
+import { useLocale } from '@/i18n/useLocale';
 
 export default function ArenaPage() {
   // Pull Arena data (ghosts, matches, sims, events) into the arena store.
@@ -16,10 +17,16 @@ export default function ArenaPage() {
   // Agent Mind panel — these live on AgentLedger / EvaluationLedger.
   useGameEngine();
 
+  // Subscribing here makes the whole Arena tree re-render when the language
+  // changes (children aren't memoized, so one root subscription is enough).
+  useLocale((s) => s.locale);
+  const hydrateLocale = useLocale((s) => s.hydrate);
+
   useEffect(() => {
     document.body.classList.add('arena-route');
+    hydrateLocale();
     return () => { document.body.classList.remove('arena-route'); };
-  }, []);
+  }, [hydrateLocale]);
 
   return (
     <main className="w-screen h-screen flex flex-col bg-zinc-950 text-zinc-100 font-sans overflow-hidden">
@@ -35,7 +42,7 @@ export default function ArenaPage() {
         </section>
 
         <aside className="col-span-3 bg-zinc-950 border-l border-zinc-800 min-h-0">
-          <AgentMindPanel />
+          <RightPanel />
         </aside>
       </div>
 

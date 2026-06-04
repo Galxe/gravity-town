@@ -1,6 +1,7 @@
 'use client';
 
 import { useArenaStore } from '../../store/useArenaStore';
+import { t } from '../../i18n';
 
 const KIND_STYLE: Record<string, string> = {
   upset:          'bg-amber-950/60 border-amber-700 text-amber-200',
@@ -24,10 +25,10 @@ export function HighlightTicker() {
 
   return (
     <div className="w-full border-t border-zinc-800 bg-zinc-950 px-3 py-2 flex items-center gap-3 overflow-hidden">
-      <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold whitespace-nowrap">Highlights</div>
+      <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold whitespace-nowrap">{t('highlights.header')}</div>
       <div className="flex gap-2 overflow-x-auto no-scrollbar">
         {highlights.length === 0 && (
-          <div className="text-xs text-zinc-600 italic">waiting for upsets and streaks…</div>
+          <div className="text-xs text-zinc-600 italic">{t('highlights.waiting')}</div>
         )}
         {highlights.map((h) => (
           <button
