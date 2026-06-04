@@ -11,10 +11,10 @@ interface IRouterMin {
     function arenaEngine() external view returns (address);
 }
 
-/// @notice Seed the Arena on a FRESH local/dev chain so the frontend has data.
-///         Creates named agents spread across all three G-tiers, gives each a
-///         full 5-unit bench (buy card → place on slot), submits them, runs
-///         tier matchmaking, and settles the matches.
+/// @notice Seed the Arena on a FRESH local/dev chain with a varied roster:
+///         12 named agents, 4 in each G-tier (Bronze / Silver / Gold), each with
+///         a full 5-unit bench (buy card → place on slot). Submits everyone, runs
+///         per-tier matchmaking, and settles the matches.
 ///
 /// Assumes a freshly deployed chain. To reseed, restart anvil + redeploy first.
 ///
@@ -33,13 +33,21 @@ contract SeedArena is Script {
         ArenaEngine arena = ArenaEngine(IRouterMin(router).arenaEngine());
         GTreasury gt = arena.gTreasury();
 
-        string[6] memory names = ["Vex", "Rook", "Mira", "Nova", "Kael", "Zara"];
+        // 4 agents per tier. G is funded so the post-purchase balance (after a
+        // ~20G bench) sits inside the intended band, with spread within each tier
+        // so the leaderboard's G column varies.
+        //   Bronze < 100 · Silver 100-999 · Gold >= 1000
+        string[12] memory names = [
+            "Ash", "Bram", "Cael", "Dorn",      // Bronze
+            "Edda", "Finn", "Gwen", "Hale",     // Silver
+            "Iris", "Juno", "Kane", "Lux"       // Gold
+        ];
+        uint256[12] memory gFund = [
+            uint256(60), 80, 100, 110,          // Bronze
+            200, 350, 500, 800,                 // Silver
+            1300, 2600, 5000, 9000              // Gold
+        ];
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
-        // G funded per agent. After spending ~20G on a 5-card bench the remaining
-        // balance lands two agents in each tier: Bronze(<100), Silver(100-999),
-        // Gold(>=1000). Thresholds come from the contract; these are chosen to
-        // sit comfortably inside each band post-purchase.
-        uint256[6] memory gFund = [uint256(120), 120, 700, 700, 6000, 6000];
 
         vm.startBroadcast(deployerKey);
 
@@ -62,7 +70,7 @@ contract SeedArena is Script {
             arena.submit(agentId);
         }
 
-        // Pair + settle within each tier.
+        // Pair + settle within each tier (4 ghosts → 2 matches per tier).
         uint256 startMatch = arena.nextMatchId();
         arena.runMatchmaking(ArenaEngine.Tier.Bronze);
         arena.runMatchmaking(ArenaEngine.Tier.Silver);
@@ -79,7 +87,7 @@ contract SeedArena is Script {
         console.log("Matches created & settled:", endMatch - startMatch);
     }
 
-    /// @dev Distinct 5-unit lineups (unit types 1-12) so battles differ.
+    /// @dev Six distinct 5-unit lineups (unit types 1-12), cycled across agents.
     function _benchFor(uint256 i) internal pure returns (uint8[5] memory b) {
         uint256 r = i % 6;
         if (r == 0) {

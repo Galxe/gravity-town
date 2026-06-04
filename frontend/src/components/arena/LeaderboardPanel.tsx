@@ -3,18 +3,19 @@
 import { useArenaStore, ArenaTier } from '../../store/useArenaStore';
 import { t } from '../../i18n';
 
-/** Tier badge styling, keyed by the on-chain `Tier` enum index (#33). */
-const TIER_META: Record<ArenaTier, { label: string; short: string; cls: string }> = {
-  0: { label: 'Bronze', short: 'B', cls: 'bg-amber-900/40 text-amber-300 border border-amber-700/50' },
-  1: { label: 'Silver', short: 'S', cls: 'bg-zinc-600/40 text-zinc-200 border border-zinc-400/40' },
-  2: { label: 'Gold',   short: 'G', cls: 'bg-yellow-700/30 text-yellow-300 border border-yellow-500/50' },
+/** Tier badge styling, keyed by the on-chain `Tier` enum index (#33).
+ *  `short` is a language-neutral letter; the full name comes from i18n. */
+const TIER_META: Record<ArenaTier, { nameKey: string; short: string; cls: string }> = {
+  0: { nameKey: 'tier.bronze', short: 'B', cls: 'bg-amber-900/40 text-amber-300 border border-amber-700/50' },
+  1: { nameKey: 'tier.silver', short: 'S', cls: 'bg-zinc-600/40 text-zinc-200 border border-zinc-400/40' },
+  2: { nameKey: 'tier.gold',   short: 'G', cls: 'bg-yellow-700/30 text-yellow-300 border border-yellow-500/50' },
 };
 
-const TIER_FILTERS: { value: ArenaTier | null; label: string }[] = [
-  { value: null, label: 'All' },
-  { value: 0, label: 'Bronze' },
-  { value: 1, label: 'Silver' },
-  { value: 2, label: 'Gold' },
+const TIER_FILTERS: { value: ArenaTier | null; key: string }[] = [
+  { value: null, key: 'tier.all' },
+  { value: 0, key: 'tier.bronze' },
+  { value: 1, key: 'tier.silver' },
+  { value: 2, key: 'tier.gold' },
 ];
 
 /**
@@ -58,7 +59,7 @@ export function LeaderboardPanel() {
             const active = tierFilter === f.value;
             return (
               <button
-                key={f.label}
+                key={f.key}
                 onClick={() => setTierFilter(f.value)}
                 className={[
                   'px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-semibold transition-colors',
@@ -67,7 +68,7 @@ export function LeaderboardPanel() {
                     : 'bg-zinc-900 text-zinc-500 border border-zinc-800 hover:text-zinc-300',
                 ].join(' ')}
               >
-                {f.label}
+                {t(f.key)}
               </button>
             );
           })}
@@ -96,7 +97,7 @@ export function LeaderboardPanel() {
                     {/* #33 — tier badge. Defaults to Bronze when gTreasury unresolved. */}
                     <span
                       className={['px-1 py-px rounded text-[9px] font-bold leading-none', TIER_META[g.tier ?? 0].cls].join(' ')}
-                      title={TIER_META[g.tier ?? 0].label}
+                      title={t(TIER_META[g.tier ?? 0].nameKey)}
                     >
                       {TIER_META[g.tier ?? 0].short}
                     </span>

@@ -9,6 +9,10 @@ import { useLocale } from '../../i18n/useLocale';
 // added to LOCALES without an explicit label here.
 const LANG_LABEL: Record<string, string> = { zh: '中', en: 'EN' };
 
+// Tier roster: short letter (language-neutral, like ELO) + i18n full name.
+const TIER_SHORT = ['B', 'S', 'G'] as const;
+const TIER_NAME_KEY = ['tier.bronze', 'tier.silver', 'tier.gold'] as const;
+
 /**
  * Top status strip:
  *  - LIVE indicator (red pulsing dot when at least one match arrived within ~5min)
@@ -19,8 +23,7 @@ const LANG_LABEL: Record<string, string> = { zh: '中', en: 'EN' };
 export function TopBar() {
   const matches      = useArenaStore((s) => s.matches);
   const ghosts       = useArenaStore((s) => s.ghosts);
-  const lastByBucket = useArenaStore((s) => s.lastMatchmakingByBucket);
-  const period       = useArenaStore((s) => s.matchmakingPeriod);
+  const nextMatchmakingAt = useArenaStore((s) => s.nextMatchmakingAt);
   const arenaAddr    = useArenaStore((s) => s.arenaEngineAddress);
   const locale       = useLocale((s) => s.locale);
   const setLocale    = useLocale((s) => s.setLocale);
@@ -37,22 +40,15 @@ export function TopBar() {
 
   const ongoing = Object.values(matches).filter((m) => !m.settled && m.attackerId > 0).length;
 
-  // Next matchmaking ETA across all known buckets.
-  let nextEta: number | null = null;
-  for (const bucketId of Object.keys(lastByBucket)) {
-    const last = lastByBucket[Number(bucketId)] ?? 0;
-    const eta = last + period;
-    if (eta > now && (nextEta === null || eta < nextEta)) nextEta = eta;
-  }
-  const etaSecs = nextEta ? Math.max(0, nextEta - now) : null;
+  // Next matchmaking ETA — soonest tier still on cooldown (computed in the hook).
+  const etaSecs = nextMatchmakingAt ? Math.max(0, nextMatchmakingAt - now) : null;
 
-  // Bucket roster — count ghosts per bucket
-  const bucketCounts: Record<number, number> = {};
+  // Tier roster — count submitted ghosts per G-tier (Bronze/Silver/Gold).
+  const tierCounts: [number, number, number] = [0, 0, 0];
   for (const g of Object.values(ghosts)) {
     if (!g.exists) continue;
-    bucketCounts[g.bucketId] = (bucketCounts[g.bucketId] ?? 0) + 1;
+    tierCounts[g.tier ?? 0] += 1;
   }
-  const bucketEntries = Object.entries(bucketCounts).sort((a, b) => Number(a[0]) - Number(b[0]));
 
   return (
     <div className="w-full px-4 py-2 border-b border-zinc-800 bg-gradient-to-r from-zinc-950 via-zinc-900 to-zinc-950 flex items-center gap-4">
@@ -83,16 +79,15 @@ export function TopBar() {
       </div>
 
       <div className="text-xs flex items-center gap-1">
-        <span className="text-zinc-500">{t('topbar.buckets')}</span>
+        <span className="text-zinc-500">{t('topbar.tiers')}</span>
         <div className="flex gap-1">
-          {bucketEntries.length === 0 && <span className="text-zinc-700">{t('topbar.none')}</span>}
-          {bucketEntries.map(([b, n]) => (
+          {([0, 1, 2] as const).map((tr) => (
             <span
-              key={b}
+              key={tr}
               className="px-1.5 py-[1px] rounded border border-zinc-700 bg-zinc-900 text-zinc-300 font-mono"
-              title={t('topbar.bucketTitle', { b, lo: Number(b) * 200, hi: Number(b) * 200 + 199 })}
+              title={t(TIER_NAME_KEY[tr])}
             >
-              B{b}:{n}
+              {TIER_SHORT[tr]}:{tierCounts[tr]}
             </span>
           ))}
         </div>

@@ -10,11 +10,17 @@ export const zh = {
     nextMatchmaking: '下次撮合',
     eta: '{m}分 {s}秒',
     ongoing: '进行中',
-    buckets: '分段',
+    tiers: '分段',
     none: '无',
-    bucketTitle: '分段 {b}（ELO {lo}-{hi}）',
     arena: '竞技场 {addr}',
     arenaNotDeployed: '竞技场：未部署',
+  },
+
+  tier: {
+    all: '全部',
+    bronze: '青铜',
+    silver: '白银',
+    gold: '黄金',
   },
 
   stage: {

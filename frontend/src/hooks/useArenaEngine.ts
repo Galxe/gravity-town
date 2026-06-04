@@ -36,6 +36,9 @@ const ARENA_ABI = [
   // (the fallback source when the Router lacks getAddressesV3).
   'function tierStates(uint256[]) view returns (uint8[] tiers, uint256[] gBalances)',
   'function gTreasury() view returns (address)',
+  // #33 — per-tier matchmaking cooldown, for the "next matchmaking" countdown.
+  'function lastTierMatchmakingAt(uint8) view returns (uint64)',
+  'function effectiveTierPeriod(uint8) view returns (uint64)',
   // Events — used to drive ongoing list + highlight ticker.
   'event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed)',
   'event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo)',
@@ -52,7 +55,7 @@ export function useArenaEngine() {
   const setGhosts        = useArenaStore((s) => s.setGhosts);
   const upsertMatch      = useArenaStore((s) => s.upsertMatch);
   const upsertSimulation = useArenaStore((s) => s.upsertSimulation);
-  const setLastMatchmaking = useArenaStore((s) => s.setLastMatchmaking);
+  const setNextMatchmakingAt = useArenaStore((s) => s.setNextMatchmakingAt);
   const setStaticConfig  = useArenaStore((s) => s.setStaticConfig);
   const setSelectedMatchId = useArenaStore((s) => s.setSelectedMatchId);
   const setSelectedAgentId = useArenaStore((s) => s.setSelectedAgentId);
@@ -217,13 +220,42 @@ export function useArenaEngine() {
         const tierOf: Record<number, 0 | 1 | 2> = {};
         const gOf: Record<number, number> = {};
         try {
-          const [tiers, gBalances] = await arena.tierStates(agentIds);
+          // ethers v6 returns a frozen Result from getAllAgentIds; passing it
+          // straight into another call throws "Cannot assign to read only
+          // property". Hand tierStates a plain mutable copy.
+          const [tiers, gBalances] = await arena.tierStates(Array.from(agentIds));
           agentIds.forEach((aId, i) => {
             const id = Number(aId);
             tierOf[id] = Number(tiers[i]) as 0 | 1 | 2;
             if (hasGTreasury) gOf[id] = Number(gBalances[i]);
           });
         } catch { /* pre-#33 arena — leave tier/G unset */ }
+
+        // #33 — soonest tier whose matchmaking cooldown is still ticking, for the
+        // "next matchmaking" countdown. null when every tier is already unlocked.
+        // The cooldown is measured against CHAIN time (block.timestamp), which on
+        // a dev node can lag wall-clock; compute remaining against chain time, then
+        // express it as a wall-clock target so the on-screen ticker counts down.
+        try {
+          const block = await provider.getBlock('latest');
+          const chainNow = block ? Number(block.timestamp) : Math.floor(Date.now() / 1000);
+          const wallNow = Math.floor(Date.now() / 1000);
+          const [l0, l1, l2, p0, p1, p2] = await Promise.all([
+            arena.lastTierMatchmakingAt(0), arena.lastTierMatchmakingAt(1), arena.lastTierMatchmakingAt(2),
+            arena.effectiveTierPeriod(0), arena.effectiveTierPeriod(1), arena.effectiveTierPeriod(2),
+          ]);
+          const lasts = [Number(l0), Number(l1), Number(l2)];
+          const periods = [Number(p0), Number(p1), Number(p2)];
+          let soonestRemaining: number | null = null;
+          for (let tr = 0; tr < 3; tr++) {
+            if (lasts[tr] === 0) continue;                 // never run → available now
+            const remaining = lasts[tr] + periods[tr] - chainNow;
+            if (remaining > 0 && (soonestRemaining === null || remaining < soonestRemaining)) {
+              soonestRemaining = remaining;
+            }
+          }
+          setNextMatchmakingAt(soonestRemaining !== null ? wallNow + soonestRemaining : null);
+        } catch { /* pre-#33 arena — no tier cooldowns */ }
 
         const ghosts: Record<number, ArenaGhost> = {};
         await Promise.all(agentIds.map(async (aId) => {
@@ -442,7 +474,7 @@ export function useArenaEngine() {
       }
     };
   }, [
-    setGhosts, upsertMatch, upsertSimulation, setLastMatchmaking,
+    setGhosts, upsertMatch, upsertSimulation, setNextMatchmakingAt,
     setStaticConfig, setSelectedMatchId, setSelectedAgentId, pushHighlight,
   ]);
 }

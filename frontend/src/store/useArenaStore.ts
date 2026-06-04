@@ -77,8 +77,9 @@ export interface ArenaHighlight {
 export interface ArenaState {
   // Static config / world
   arenaEngineAddress: string | null;
-  matchmakingPeriod: number;            // seconds between bucket runs (constant in contract)
-  lastMatchmakingByBucket: Record<number, number>;  // bucketId -> ts (seconds)
+  // Soonest upcoming tier-matchmaking unlock (unix seconds), or null when every
+  // tier's cooldown has already elapsed (matchmaking can run now).
+  nextMatchmakingAt: number | null;
 
   // Live data
   ghosts: Record<number, ArenaGhost>;   // by agentId
@@ -98,7 +99,7 @@ export interface ArenaState {
   setGhosts: (ghosts: Record<number, ArenaGhost>) => void;
   upsertMatch: (m: ArenaMatch) => void;
   upsertSimulation: (sim: ArenaSimulation) => void;
-  setLastMatchmaking: (bucketId: number, ts: number) => void;
+  setNextMatchmakingAt: (ts: number | null) => void;
   setSelectedMatchId: (id: number | null) => void;
   setSelectedAgentId: (id: number | null) => void;
   setAutoplay: (v: boolean) => void;
@@ -111,8 +112,7 @@ const HIGHLIGHT_CAP = 12;
 
 export const useArenaStore = create<ArenaState>((set) => ({
   arenaEngineAddress: null,
-  matchmakingPeriod: 1800,
-  lastMatchmakingByBucket: {},
+  nextMatchmakingAt: null,
 
   ghosts: {},
   matches: {},
@@ -131,8 +131,7 @@ export const useArenaStore = create<ArenaState>((set) => ({
     set((s) => ({ matches: { ...s.matches, [m.matchId]: { ...s.matches[m.matchId], ...m } } })),
   upsertSimulation: (sim) =>
     set((s) => ({ simulations: { ...s.simulations, [sim.matchId]: sim } })),
-  setLastMatchmaking: (bucketId, ts) =>
-    set((s) => ({ lastMatchmakingByBucket: { ...s.lastMatchmakingByBucket, [bucketId]: ts } })),
+  setNextMatchmakingAt: (ts) => set({ nextMatchmakingAt: ts }),
   setSelectedMatchId: (id) => set({ selectedMatchId: id, turnIndex: 0 }),
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
   setAutoplay: (v) => set({ autoplay: v }),

@@ -11,11 +11,17 @@ export const en = {
     nextMatchmaking: 'next matchmaking',
     eta: '{m}m {s}s',
     ongoing: 'ongoing',
-    buckets: 'buckets',
+    tiers: 'tiers',
     none: 'none',
-    bucketTitle: 'Bucket {b} (ELO {lo}-{hi})',
     arena: 'arena {addr}',
     arenaNotDeployed: 'arena: not deployed',
+  },
+
+  tier: {
+    all: 'All',
+    bronze: 'Bronze',
+    silver: 'Silver',
+    gold: 'Gold',
   },
 
   stage: {
