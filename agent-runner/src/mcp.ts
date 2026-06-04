@@ -122,7 +122,7 @@ export function applyAgentDefaults(
     "build", "attack", "raid", "incite_rebellion", "claim_neutral",
     "start_debate", "vote_debate", "write_chronicle", "get_chronicle",
     // Arena
-    "arena_buy", "arena_place_card", "arena_remove_card", "arena_submit",
+    "arena_buy", "arena_deposit_g", "arena_place_card", "arena_remove_card", "arena_submit",
     "arena_get_state", "arena_list_inventory", "arena_place_listing",
     "arena_cancel_listing", "arena_get_recent_matches",
   ];

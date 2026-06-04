@@ -642,6 +642,19 @@ export function registerTools(server: any, chain: ChainClient) {
   );
 
   server.tool(
+    "arena_deposit_g",
+    "Deposit native testnet G from this operator wallet into an agent's Arena G balance. The caller wallet must own the agent. amount_g is sent as tx value; current conversion is 1 wei = 1 Arena G balance unit. Use this when Arena G is too low to buy cards or market listings.",
+    {
+      agent_id: z.number().describe("Agent ID owned by this operator wallet"),
+      amount_g: z.number().int().min(1).describe("Raw Arena G units to deposit; sends the same amount as native tx value"),
+    },
+    async ({ agent_id, amount_g }: any) => {
+      const r = await chain.arenaDepositG(agent_id, amount_g);
+      return { content: [{ type: "text", text: `Deposited ${r.depositedG} Arena G to agent ${agent_id}. New balance: ${r.g}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
     "arena_place_card",
     "Place one owned inventory card onto an empty Arena bench slot. Reverts if the card is listed on the market or already on the bench.",
     {
