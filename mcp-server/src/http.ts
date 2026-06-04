@@ -2,7 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
-import { registerTools } from "./tools.js";
+import { registerTools, ToolOptions } from "./tools.js";
 import { ChainClient, ChainConfig } from "./chain.js";
 
 function getConfig(): ChainConfig {
@@ -18,13 +18,21 @@ function getConfig(): ChainConfig {
   return { rpcUrl, privateKey, routerAddress, chainId };
 }
 
-function createServer(chain: ChainClient): McpServer {
+function parseToolOptions(): ToolOptions {
+  const raw = process.env.OWNER_KEYS || "";
+  if (!raw) return {};
+  const keys = new Set(raw.split(",").map((k) => k.trim().toLowerCase()).filter(Boolean));
+  if (keys.size > 0) console.error(`OWNER_KEYS: ${keys.size} address(es) loaded`);
+  return { ownerKeys: keys };
+}
+
+function createServer(chain: ChainClient, toolOpts: ToolOptions): McpServer {
   const server = new McpServer({
     name: "gravity-town",
     version: "0.2.0",
   });
 
-  registerTools(server, chain);
+  registerTools(server, chain, toolOpts);
   return server;
 }
 
@@ -32,13 +40,14 @@ async function main() {
   const config = getConfig();
   const chain = new ChainClient(config);
   await chain.ready();
+  const toolOpts = parseToolOptions();
   const app = createMcpExpressApp({ host: process.env.MCP_HOST || "127.0.0.1" });
   const host = process.env.MCP_HOST || "127.0.0.1";
   const port = Number.parseInt(process.env.MCP_PORT || "3000", 10);
   const path = process.env.MCP_PATH || "/mcp";
 
   app.post(path, async (req: any, res: any) => {
-    const server = createServer(chain);
+    const server = createServer(chain, toolOpts);
 
     try {
       const transport = new StreamableHTTPServerTransport({

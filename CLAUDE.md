@@ -126,8 +126,14 @@ game/
 │   ├── src/game/       # Terrain generation, building tags, hex math
 │   ├── src/components/ # React UI (Sidebar, HUD, AgentDetail, LocationDetail)
 │   └── public/tiles/   # Kenney CC0 hex tile assets (terrain, buildings, meeples)
-└── skill.md            # AI agent world guide / system prompt
+├── skill.md            # AI agent world guide / system prompt
+└── docs/
+    └── arena-guide.md  # Arena autobattler complete gameplay guide
 ```
+
+## Arena (Side-Game)
+
+SAP-style async autobattler layered on the main world. Full guide: [docs/arena-guide.md](docs/arena-guide.md). Claude Code skill: `/arena`.
 
 ## Development
 

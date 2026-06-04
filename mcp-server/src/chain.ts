@@ -99,35 +99,42 @@ const ROUTER_ABI = [
 // ──────────────────── Arena ABI ────────────────────
 
 const ARENA_ENGINE_ABI = [
-  "event GhostSubmitted(uint256 indexed agentId, uint16 elo, uint16 bucketId)",
   "event CardBought(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint16 cost)",
   "event CardPlaced(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot)",
   "event CardRemoved(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot)",
   "event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed)",
   "event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo)",
-  "event MatchmakingRan(uint16 indexed bucketId, uint256 matchesCreated)",
+  "event GhostSubmitted(uint256 indexed agentId, uint8 tier, uint16 elo, uint256 gAtSubmit)",
+  "event SubmissionWithdrawn(uint256 indexed agentId, uint8 tier)",
+  "event MatchmadeInTier(uint8 indexed tier, uint256 matchId, uint256 attacker, uint256 defender)",
   "function buy(uint256 agentId, uint8 unitType) returns (uint256 cardId)",
   "function placeCard(uint256 agentId, uint256 cardId, uint8 slot)",
   "function removeCard(uint256 agentId, uint8 slot)",
-  "function move(uint256 agentId, uint8 fromSlot, uint8 toSlot)",
-  "function freeze(uint256 agentId, uint8 shopSlot)",
-  "function roll(uint256 agentId)",
   "function submit(uint256 agentId)",
-  "function runMatchmaking(uint16 bucketId) returns (uint256 matchesCreated)",
+  "function withdrawSubmission(uint256 agentId)",
+  "function runMatchmaking(uint8 tier) returns (uint256 matchesCreated)",
   "function settleMatch(uint256 matchId)",
   "function getGhost(uint256 agentId) view returns (uint8[5] bench, uint16 elo, uint16 bucketId, uint64 lastUpdate, bool exists)",
   "function getGhostCards(uint256 agentId) view returns (uint256[5] cardIds)",
   "function isCardOnBench(uint256 agentId, uint256 cardId) view returns (bool)",
   "function getMatch(uint256 matchId) view returns (uint256 attackerId, uint256 defenderId, uint8[5] attackerBench, uint8[5] defenderBench, uint64 seed, uint64 createdAt, bool settled, uint256 winnerId)",
   "function simulateMatch(uint256 matchId) view returns (tuple(uint8 attackerSide, uint8 attackerSlot, uint8 defenderSlot, uint16 damage, bool defenderDied)[] turns, uint256 winnerAgentId)",
-  "function bucketSize(uint16 bucketId) view returns (uint256)",
-  "function bucketOf(uint256 agentId) view returns (uint16)",
   "function nextMatchId() view returns (uint256)",
+  "function previewEloUpdate(uint16 winnerElo, uint16 loserElo) view returns (uint16 newWinner, uint16 newLoser)",
+  "function tierPopulation(uint8 tier) view returns (uint256)",
+  "function tierStates(uint256[] agentIds) view returns (uint8[] tiers, uint256[] gBalances)",
+  "function isSubmitted(uint256 agentId) view returns (bool)",
+  "function submittedTier(uint256 agentId) view returns (uint8)",
+  "function activeMatchOf(uint256 agentId) view returns (uint256)",
+  "function effectiveTierPeriod(uint8 tier) view returns (uint64)",
+  "function setMatchmakingPeriod(uint8 tier, uint64 secs)",
 ];
 
 const G_TREASURY_ABI = [
   "function gBalance(uint256 agentId) view returns (uint256)",
+  "function creditG(uint256 agentId, uint256 amount, bytes32 reason)",
   "function depositG(uint256 agentId) payable",
+  "event GCredited(uint256 indexed agentId, uint256 amount, bytes32 reason)",
 ];
 
 const CARD_LEDGER_ABI = [
@@ -832,19 +839,21 @@ export class ChainClient {
     const arena = this.requireArena();
     const tx = await arena.submit(agentId);
     const receipt = await tx.wait();
-    let elo = 0, bucketId = 0;
+    let tier = 0, elo = 0, gAtSubmit = 0;
     const iface = arena.interface;
     for (const log of receipt.logs) {
       try {
         const parsed = iface.parseLog(log);
         if (parsed.name === "GhostSubmitted") {
+          tier = Number(parsed.args.tier);
           elo = Number(parsed.args.elo);
-          bucketId = Number(parsed.args.bucketId);
+          gAtSubmit = Number(parsed.args.gAtSubmit);
           break;
         }
       } catch {}
     }
-    return { elo, bucketId, txHash: receipt.transactionHash };
+    const labels = ["Bronze", "Silver", "Gold"];
+    return { tier, tierLabel: labels[tier] || "?", elo, gAtSubmit, txHash: receipt.transactionHash };
   }
 
   async arenaGetGhost(agentId: number) {
@@ -959,24 +968,23 @@ export class ChainClient {
     return { matchId, winnerAgentId: Number(winnerAgentId), turns: turnsDecoded };
   }
 
-  async arenaRunMatchmaking(bucketId: number) {
+  async arenaRunMatchmaking(tier: number) {
     const arena = this.requireArena();
-    const tx = await arena.runMatchmaking(bucketId);
+    const tx = await arena.runMatchmaking(tier);
     const receipt = await tx.wait();
-    let matchesCreated = 0;
     const matchIds: number[] = [];
     const iface = arena.interface;
     for (const log of receipt.logs) {
       try {
         const parsed = iface.parseLog(log);
-        if (parsed.name === "MatchmakingRan") {
-          matchesCreated = Number(parsed.args.matchesCreated);
+        if (parsed.name === "MatchmadeInTier") {
+          matchIds.push(Number(parsed.args.matchId));
         } else if (parsed.name === "MatchCreated") {
           matchIds.push(Number(parsed.args.matchId));
         }
       } catch {}
     }
-    return { matchesCreated, matchIds, txHash: receipt.transactionHash };
+    return { matchesCreated: matchIds.length, matchIds, txHash: receipt.transactionHash };
   }
 
   async arenaSettleMatch(matchId: number) {
@@ -999,13 +1007,76 @@ export class ChainClient {
     return { winnerId, newWinnerElo, newLoserElo, txHash: receipt.transactionHash };
   }
 
-  async arenaBucketSize(bucketId: number): Promise<number> {
-    const arena = this.requireArena();
-    return Number(await arena.bucketSize(bucketId));
-  }
 
   async arenaNextMatchId(): Promise<number> {
     const arena = this.requireArena();
     return Number(await arena.nextMatchId());
+  }
+
+  async arenaPreviewElo(winnerElo: number, loserElo: number) {
+    const arena = this.requireArena();
+    const [newWinner, newLoser] = await arena.previewEloUpdate(winnerElo, loserElo);
+    return {
+      winnerElo, loserElo,
+      newWinnerElo: Number(newWinner),
+      newLoserElo: Number(newLoser),
+      winnerDelta: Number(newWinner) - winnerElo,
+      loserDelta: Number(newLoser) - loserElo,
+    };
+  }
+
+  async arenaGetCard(cardId: number) {
+    const cl = this.requireCardLedger();
+    const card = await cl.getCard(cardId);
+    const unitType = Number(card.unitType);
+    const u = UNIT_CATALOG.find((x) => x.id === unitType);
+    return {
+      cardId: Number(card.id),
+      unitType,
+      ownerAgent: Number(card.ownerAgent),
+      mintedAt: Number(card.mintedAt),
+      name: u?.name || "?",
+      atk: u?.atk,
+      hp: u?.hp,
+      ability: u?.ability,
+    };
+  }
+
+  async creditAgentG(agentId: number, amount: number) {
+    const treasury = this.requireGTreasury();
+    const reason = ethers.utils.formatBytes32String("fund");
+    const tx = await treasury.creditG(agentId, amount, reason);
+    const receipt = await tx.wait();
+    const newBalance = Number(await treasury.gBalance(agentId));
+    return { agentId, amount, newBalance, txHash: receipt.transactionHash };
+  }
+
+  async arenaTierPopulation(tier: number): Promise<number> {
+    const arena = this.requireArena();
+    return Number(await arena.tierPopulation(tier));
+  }
+
+  async arenaGetTierInfo(agentId: number) {
+    const arena = this.requireArena();
+    const [tiers, gBalances] = await arena.tierStates([agentId]);
+    const tier = Number(tiers[0]);
+    const gBalance = Number(gBalances[0]);
+    const labels = ["Bronze", "Silver", "Gold"];
+    const population = Number(await arena.tierPopulation(tier));
+    return { tier, label: labels[tier] || "?", gBalance, agentsInTier: population };
+  }
+
+  async arenaWithdrawSubmission(agentId: number) {
+    const arena = this.requireArena();
+    const tx = await arena.withdrawSubmission(agentId);
+    const receipt = await tx.wait();
+    return { agentId, txHash: receipt.transactionHash };
+  }
+
+  async arenaSetMatchmakingPeriod(tier: number, secs: number) {
+    const arena = this.requireArena();
+    const tx = await arena.setMatchmakingPeriod(tier, secs);
+    const receipt = await tx.wait();
+    return { tier, secs, txHash: receipt.transactionHash };
   }
 }
