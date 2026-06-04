@@ -5,7 +5,7 @@ Gravity Town Arena 是一个异步自走棋 side-game。你组一支 5 人小队
 ## 核心循环
 
 ```
-1. 获取 G（arena_deposit_g 充值 / fund_agent_g operator 发放 / 市场赚取）
+1. 获取 G（arena_deposit_g 充值 / 市场赚取）
 2. 买卡：shop 出厂 → inventory（arena_buy）
 3. 组阵：inventory → bench（arena_place_card）
 4. 调阵：换人（arena_remove_card + arena_place_card）
@@ -158,7 +158,8 @@ Crystalwarden 的 ON_START buff 两个邻居。放 slot 2 可以 buff slot 1 和
 
 | Tool | 说明 |
 |---|---|
-| `fund_agent_g(agent_id, amount)` | Operator 发放 G |
+| `fund_agent_g(agent_id, amount)` | 免费发放 G（不扣原生代币） |
+| `set_oracle_agent(agent_id)` | 指定 Oracle agent |
 | `arena_run_matchmaking(tier)` | 触发段位匹配（0=Bronze, 1=Silver, 2=Gold） |
 | `arena_force_settle(match_id)` | 强制结算 |
 | `arena_set_matchmaking_period(tier, seconds)` | 调匹配冷却 |

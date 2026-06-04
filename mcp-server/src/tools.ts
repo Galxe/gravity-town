@@ -497,17 +497,6 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
     }
   );
 
-  server.tool(
-    "set_oracle_agent",
-    "Designate the on-chain Oracle agent (operator/owner only). Once set, that agent's start_debate creates 4-hour oracle debates with required ore bets. Pass agent_id=0 to clear.",
-    {
-      agent_id: z.number().describe("Agent ID to designate as Oracle (0 to clear)"),
-    },
-    async ({ agent_id }: any) => {
-      const r = await chain.setOracleAgent(agent_id);
-      return { content: [{ type: "text", text: `Oracle agent set to #${agent_id}. tx: ${r.txHash}` }] };
-    }
-  );
 
   server.tool(
     "get_oracle_agent",
@@ -765,11 +754,44 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
     }
   );
 
-  // ── Arena keeper / admin tools (OWNER_KEYS gated) ──
+  // ── Admin tools (OWNER_KEYS gated) ──
+  // These tools require the caller wallet to be in OWNER_KEYS.
+  // AI agents should NOT call these — they are for human operators only.
+
+  server.tool(
+    "set_oracle_agent",
+    "[ADMIN] Designate the on-chain Oracle agent. Once set, that agent's start_debate creates 4-hour oracle debates with required ore bets. Pass agent_id=0 to clear.",
+    {
+      agent_id: z.number().describe("Agent ID to designate as Oracle (0 to clear)"),
+    },
+    async ({ agent_id }: any) => {
+      if (!isOwnerCall()) {
+        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
+      }
+      const r = await chain.setOracleAgent(agent_id);
+      return { content: [{ type: "text", text: `Oracle agent set to #${agent_id}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "fund_agent_g",
+    "[ADMIN] Credit G to an agent's Arena balance for free (no native token cost). Typical amounts: 20-50 G for a starter bench.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      amount: z.number().min(1).describe("Amount of G to credit"),
+    },
+    async ({ agent_id, amount }: any) => {
+      if (!isOwnerCall()) {
+        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
+      }
+      const r = await chain.creditAgentG(agent_id, amount);
+      return { content: [{ type: "text", text: `Credited ${amount} G to agent ${agent_id}. New balance: ${r.newBalance} G. tx: ${r.txHash}` }] };
+    }
+  );
 
   server.tool(
     "arena_run_matchmaking",
-    "Run matchmaking for a tier (0=Bronze, 1=Silver, 2=Gold). Pairs ghosts via Fisher-Yates shuffle. Rate-limited per tier. OWNER-ONLY.",
+    "[ADMIN] Run matchmaking for a tier (0=Bronze, 1=Silver, 2=Gold). Pairs ghosts via Fisher-Yates shuffle. Rate-limited per tier.",
     {
       tier: z.number().min(0).max(2).describe("Tier: 0=Bronze, 1=Silver, 2=Gold"),
     },
@@ -785,7 +807,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_force_settle",
-    "Settle an unsettled match. Computes deterministic combat, updates ELO, writes evaluation on loser. Anyone can call on-chain, but MCP-gated to OWNER_KEYS.",
+    "[ADMIN] Settle an unsettled match. Computes deterministic combat, updates ELO, writes evaluation on loser.",
     {
       match_id: z.number().describe("Match ID to settle"),
     },
@@ -795,6 +817,23 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
       }
       const r = await chain.arenaSettleMatch(match_id);
       return { content: [{ type: "text", text: `Match ${match_id} settled. Winner: agent #${r.winnerId}. New ELO — winner: ${r.newWinnerElo}, loser: ${r.newLoserElo}. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_set_matchmaking_period",
+    "[ADMIN] Set matchmaking cooldown for a tier. Demo: set to 60 for fast iteration.",
+    {
+      tier: z.number().min(0).max(2).describe("Tier: 0=Bronze, 1=Silver, 2=Gold"),
+      seconds: z.number().min(1).describe("Cooldown in seconds"),
+    },
+    async ({ tier, seconds }: any) => {
+      if (!isOwnerCall()) {
+        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
+      }
+      const r = await chain.arenaSetMatchmakingPeriod(tier, seconds);
+      const labels = ["Bronze", "Silver", "Gold"];
+      return { content: [{ type: "text", text: `Set ${labels[tier]} matchmaking period to ${seconds}s. tx: ${r.txHash}` }] };
     }
   );
 
@@ -838,23 +877,6 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
   );
 
   server.tool(
-    "arena_set_matchmaking_period",
-    "Set matchmaking cooldown for a tier. OWNER-ONLY. Demo: set to 60 for fast iteration.",
-    {
-      tier: z.number().min(0).max(2).describe("Tier: 0=Bronze, 1=Silver, 2=Gold"),
-      seconds: z.number().min(1).describe("Cooldown in seconds"),
-    },
-    async ({ tier, seconds }: any) => {
-      if (!isOwnerCall()) {
-        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
-      }
-      const r = await chain.arenaSetMatchmakingPeriod(tier, seconds);
-      const labels = ["Bronze", "Silver", "Gold"];
-      return { content: [{ type: "text", text: `Set ${labels[tier]} matchmaking period to ${seconds}s. tx: ${r.txHash}` }] };
-    }
-  );
-
-  server.tool(
     "arena_deposit_g",
     "Deposit native testnet G from this operator wallet into an agent's Arena G balance. The caller wallet must own the agent. amount_g is sent as tx value; current conversion is 1 wei = 1 Arena G balance unit. Use this when Arena G is too low to buy cards.",
     {
@@ -867,18 +889,6 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
     }
   );
 
-  server.tool(
-    "fund_agent_g",
-    "Credit G to an agent's Arena balance (operator only). REQUIRED before buying cards — new agents start with 0 G. Typical amounts: 20-50 G for a starter bench.",
-    {
-      agent_id: z.number().describe("Agent ID"),
-      amount: z.number().min(1).describe("Amount of G to credit"),
-    },
-    async ({ agent_id, amount }: any) => {
-      const r = await chain.creditAgentG(agent_id, amount);
-      return { content: [{ type: "text", text: `Credited ${amount} G to agent ${agent_id}. New balance: ${r.newBalance} G. tx: ${r.txHash}` }] };
-    }
-  );
 
   server.tool(
     "arena_get_tier_info",

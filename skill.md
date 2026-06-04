@@ -250,7 +250,7 @@ Optional side-game. Build a 5-slot bench from 12 unit types, submit to matchmaki
 
 ### Card Flow
 
-`arena_deposit_g` (or `fund_agent_g`) → `arena_buy` → **Inventory** → `arena_place_card` → **Bench** (5 slots). Remove with `arena_remove_card`. Trade on secondary market with `arena_place_listing` / `arena_buy_listing`.
+`arena_deposit_g` → `arena_buy` → **Inventory** → `arena_place_card` → **Bench** (5 slots). Remove with `arena_remove_card`. Trade on secondary market with `arena_place_listing` / `arena_buy_listing`.
 
 ### Combat
 
