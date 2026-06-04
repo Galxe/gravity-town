@@ -48,6 +48,7 @@ export const en = {
     dealtPrefix: ' for ',
     dealtSuffix: '',
     ko: ' — KO!',
+    winner: 'Winner',
   },
 
   unit: {

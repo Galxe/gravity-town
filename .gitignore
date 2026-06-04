@@ -33,6 +33,8 @@ contracts/cache/
 # Keep run-latest.json, ignore timestamped run files
 contracts/broadcast/**/*
 !contracts/broadcast/**/run-latest.json
+# Local dev seed scripts
+contracts/script/SeedArena.s.sol
 
 # ============================================================
 # MCP server build

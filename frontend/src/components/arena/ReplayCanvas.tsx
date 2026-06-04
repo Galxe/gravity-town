@@ -1,172 +1,229 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { UnitCard } from './UnitCard';
-import { useArenaStore, ArenaTurn } from '../../store/useArenaStore';
+import { BattleLog } from './BattleLog';
+import { useArenaStore, ArenaTurn, ArenaMatch } from '../../store/useArenaStore';
 import { getUnit } from '../../lib/arenaUnits';
 import { t } from '../../i18n';
 
 type Props = {
-  matchId: number;
-  attackerBench: number[];
-  defenderBench: number[];
+  match: ArenaMatch;
   attackerName: string;
   defenderName: string;
 };
 
-/**
- * Battle replay rendered with React DOM + CSS — no Phaser, no canvas.
- * Drives an HP map per turn deterministically, animates KOs, and pushes
- * `turnIndex` forward on a fixed 800ms cadence when autoplay is on.
- */
-export function ReplayCanvas({
-  matchId, attackerBench, defenderBench, attackerName, defenderName,
-}: Props) {
+export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
+  const { matchId, attackerBench, defenderBench } = match;
+
   const sim = useArenaStore((s) => s.simulations[matchId]);
+  const ghosts = useArenaStore((s) => s.ghosts);
   const autoplay = useArenaStore((s) => s.autoplay);
+  const paused = useArenaStore((s) => s.paused);
   const turnIndex = useArenaStore((s) => s.turnIndex);
   const setTurnIndex = useArenaStore((s) => s.setTurnIndex);
+  const setPaused = useArenaStore((s) => s.setPaused);
 
-  // Reset cursor when match changes.
+  // Animation state: which turn is actively animating.
+  const prevTurnRef = useRef(turnIndex);
+  const [attackAnimKey, setAttackAnimKey] = useState(0);
+  const [currentTurn, setCurrentTurn] = useState<ArenaTurn | null>(null);
+
+  // Reset cursor and animation state when match changes.
   useEffect(() => {
     setTurnIndex(0);
+    setAttackAnimKey(0);
+    setCurrentTurn(null);
   }, [matchId, setTurnIndex]);
 
-  // Autoplay tick. Stop at end of turns.
+  // Autoplay tick.
   useEffect(() => {
-    if (!autoplay || !sim) return;
+    if (!autoplay || paused || !sim) return;
     if (turnIndex >= sim.turns.length) return;
     const t = setTimeout(() => setTurnIndex(turnIndex + 1), 800);
     return () => clearTimeout(t);
-  }, [autoplay, sim, turnIndex, setTurnIndex]);
+  }, [autoplay, paused, sim, turnIndex, setTurnIndex]);
 
-  // Compute current HP for every slot by replaying turns up to `turnIndex`.
-  // Seed from the contract's post-ON_START stats when available (accurate);
-  // fall back to catalog base stats for older sims.
-  const { leftHp, rightHp, leftMax, rightMax, leftAtk, rightAtk, lastTurn } = useMemo(() => {
-    const lHp: number[] = sim?.initial?.leftHp ?? attackerBench.map((t) => getUnit(t)?.hp ?? 0);
-    const rHp: number[] = sim?.initial?.rightHp ?? defenderBench.map((t) => getUnit(t)?.hp ?? 0);
-    const lAtk: number[] = sim?.initial?.leftAtk ?? attackerBench.map((t) => getUnit(t)?.atk ?? 0);
-    const rAtk: number[] = sim?.initial?.rightAtk ?? defenderBench.map((t) => getUnit(t)?.atk ?? 0);
+  // Compute current HP + ATK for every slot by replaying turns up to `turnIndex`.
+  // Seed from the contract's post-ON_START stats (sim.initial, via getInitialStats)
+  // when available — accurate; fall back to catalog base stats for older sims.
+  const { leftHp, rightHp, leftMax, rightMax, leftAtk, rightAtk } = useMemo(() => {
+    const lHp: number[] = sim?.initial?.leftHp ?? attackerBench.map((u) => getUnit(u)?.hp ?? 0);
+    const rHp: number[] = sim?.initial?.rightHp ?? defenderBench.map((u) => getUnit(u)?.hp ?? 0);
+    const lAtk: number[] = sim?.initial?.leftAtk ?? attackerBench.map((u) => getUnit(u)?.atk ?? 0);
+    const rAtk: number[] = sim?.initial?.rightAtk ?? defenderBench.map((u) => getUnit(u)?.atk ?? 0);
+    const lMax = [...lHp];
+    const rMax = [...rHp];
     const lHpCur = [...lHp];
     const rHpCur = [...rHp];
-    // Mutable ATK copies: a turn's `damage` equals the attacker's current ATK
-    // (no armor/mitigation in the engine), so replaying turns reveals mid-combat
-    // ATK buffs (ON_HURT, ON_FRIEND_DEATH, …) without any extra contract data.
+    // A turn's `damage` equals the attacker's current ATK (no mitigation), so
+    // replaying reveals mid-combat ATK buffs (ON_HURT, ON_FRIEND_DEATH, …).
     const lAtkCur = [...lAtk];
     const rAtkCur = [...rAtk];
-    let lt: ArenaTurn | null = null;
     if (sim) {
       const upto = Math.min(turnIndex, sim.turns.length);
       for (let i = 0; i < upto; i++) {
-        const t = sim.turns[i];
-        if (t.attackerSide === 0) {
-          rHpCur[t.defenderSlot] = Math.max(0, rHpCur[t.defenderSlot] - t.damage);
-          lAtkCur[t.attackerSlot] = t.damage;
+        const tn = sim.turns[i];
+        if (tn.attackerSide === 0) {
+          rHpCur[tn.defenderSlot] = Math.max(0, rHpCur[tn.defenderSlot] - tn.damage);
+          lAtkCur[tn.attackerSlot] = tn.damage;
         } else {
-          lHpCur[t.defenderSlot] = Math.max(0, lHpCur[t.defenderSlot] - t.damage);
-          rAtkCur[t.attackerSlot] = t.damage;
+          lHpCur[tn.defenderSlot] = Math.max(0, lHpCur[tn.defenderSlot] - tn.damage);
+          rAtkCur[tn.attackerSlot] = tn.damage;
         }
-        lt = t;
       }
     }
     return {
       leftHp: lHpCur, rightHp: rHpCur,
-      leftMax: lHp, rightMax: rHp,
+      leftMax: lMax, rightMax: rMax,
       leftAtk: lAtkCur, rightAtk: rAtkCur,
-      lastTurn: lt,
     };
   }, [sim, turnIndex, attackerBench, defenderBench]);
+
+  // Track turn direction for animation triggering.
+  useEffect(() => {
+    if (turnIndex > prevTurnRef.current && sim && turnIndex > 0) {
+      setCurrentTurn(sim.turns[turnIndex - 1]);
+      setAttackAnimKey((k) => k + 1);
+    } else if (turnIndex < prevTurnRef.current) {
+      // Scrubbing backward — clear animation.
+      setCurrentTurn(null);
+    }
+    prevTurnRef.current = turnIndex;
+  }, [turnIndex, sim]);
+
+  // Keyboard shortcuts.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!sim) return;
+      if (e.key === ' ') {
+        e.preventDefault();
+        setPaused(!paused);
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setTurnIndex(Math.min(turnIndex + 1, sim.turns.length));
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setTurnIndex(Math.max(0, turnIndex - 1));
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [sim, paused, turnIndex, setPaused, setTurnIndex]);
 
   const finishedTurns = sim ? sim.turns.length : 0;
   const done = sim && turnIndex >= sim.turns.length;
 
+  const ct = currentTurn;
+
+  const renderBench = (
+    bench: number[], hpArr: number[], maxArr: number[], atkArr: number[], side: 'left' | 'right',
+  ) => {
+    const sideNum = side === 'left' ? 0 : 1;
+    return bench.map((u, i) => {
+      const isAttacker = ct !== null && ct.attackerSide === sideNum && ct.attackerSlot === i;
+      const isDefender = ct !== null && ct.attackerSide !== sideNum && ct.defenderSlot === i;
+      // Stable key — only changes on match switch. Attack/hit animations triggered via DOM refs.
+      return (
+        <UnitCard
+          key={`${side}-${i}-m${matchId}`}
+          unitType={u}
+          hp={hpArr[i]}
+          maxHp={maxArr[i]}
+          atk={atkArr[i]}
+          dead={hpArr[i] <= 0 && maxArr[i] > 0}
+          attackKey={isAttacker ? attackAnimKey : 0}
+          hitKey={isDefender ? attackAnimKey : 0}
+          floatingDamage={isDefender && ct ? ct.damage : null}
+          enterDelay={side === 'left' ? i * 80 : (bench.length - 1 - i) * 80}
+          slotIndex={i}
+          side={side}
+        />
+      );
+    });
+  };
+
   return (
     <div className="w-full">
-      {/* Turn counter (team names now sit beside each row below) */}
-      <div className="flex items-center justify-center mb-2 text-xs">
-        <div className="text-zinc-500 font-mono">
+      {/* Side labels + turn counter */}
+      <div className="flex items-center justify-between mb-2 text-xs">
+        <div className="text-sky-300 font-semibold">⬅ {attackerName}</div>
+        <div className="text-zinc-500 font-mono flex items-center gap-2">
+          {paused && <span className="text-amber-400">⏸</span>}
           {t('replay.turn', { cur: Math.min(turnIndex, finishedTurns), total: finishedTurns })}
-          {done && <span className="ml-2 text-emerald-400">{t('replay.complete')}</span>}
+          {done && <span className="text-emerald-400">{t('replay.complete')}</span>}
+        </div>
+        <div className="text-rose-300 font-semibold">{defenderName} ➡</div>
+      </div>
+
+      {/* Scrubber */}
+      {sim && (
+        <div className="mb-3 px-1">
+          <input
+            type="range"
+            min={0}
+            max={sim.turns.length}
+            value={turnIndex}
+            onChange={(e) => {
+              setPaused(true);
+              setTurnIndex(Number(e.target.value));
+            }}
+            className="w-full h-1.5 accent-sky-500 cursor-pointer"
+          />
+        </div>
+      )}
+
+      {/* Battle grid */}
+      <div className="relative flex items-center justify-center gap-2 px-2 py-4 rounded-lg bg-gradient-to-b from-zinc-900/60 to-zinc-950/60 border border-zinc-800">
+        {/* Winner stamp overlay */}
+        {done && sim && (() => {
+          const winnerSide = sim.winnerId === match.attackerId ? 'left' : 'right';
+          const winnerName = sim.winnerId === match.attackerId ? attackerName : defenderName;
+          return (
+            <div
+              className={[
+                'absolute inset-y-0 w-[45%] flex items-center justify-center pointer-events-none z-20',
+                winnerSide === 'left' ? 'left-0' : 'right-0',
+              ].join(' ')}
+            >
+              <div className="animate-arena-stamp flex flex-col items-center gap-1 select-none">
+                <div className="text-5xl">🏆</div>
+                <div className={[
+                  'text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded border-2',
+                  'text-amber-300 border-amber-400 bg-amber-950/80',
+                ].join(' ')}>
+                  {winnerName}
+                </div>
+                <div className="text-[10px] text-amber-500 font-bold uppercase tracking-widest">{t('replay.winner')}</div>
+              </div>
+            </div>
+          );
+        })()}
+
+        <div className="flex gap-1.5">
+          {renderBench(attackerBench, leftHp, leftMax, leftAtk, 'left')}
+        </div>
+        <div className="px-2 text-zinc-500 text-2xl font-black">⚔</div>
+        <div className="flex gap-1.5">
+          {renderBench(defenderBench, rightHp, rightMax, rightAtk, 'right')}
         </div>
       </div>
 
-      {/* Battle board: attacker row stacked on top of defender row, so all 5
-          cards per side fit the narrow stage. Wraps instead of clipping when
-          the stage is extremely tight. */}
-      <div className="flex flex-col items-center gap-1.5 px-2 py-4 rounded-lg bg-gradient-to-b from-zinc-900/60 to-zinc-950/60 border border-zinc-800">
-        <div className="flex justify-center w-full">
-          <div className="relative flex justify-center gap-1.5 flex-wrap">
-          <div className="absolute right-full mr-3 top-1/2 -translate-y-1/2 whitespace-nowrap text-sky-300 font-semibold text-sm">{attackerName}</div>
-          {attackerBench.map((u, i) => {
-            const isDefender = lastTurn?.attackerSide === 1 && lastTurn?.defenderSlot === i;
-            return (
-              <UnitCard
-                key={`L-${i}`}
-                unitType={u}
-                hp={leftHp[i]}
-                maxHp={leftMax[i]}
-                atk={leftAtk[i]}
-                dead={leftHp[i] <= 0 && leftMax[i] > 0}
-                flashing={isDefender ? 'hit' : null}
-                slotIndex={i}
-                side="left"
-              />
-            );
-          })}
-          </div>
-        </div>
+      {/* Battle log */}
+      {sim && (
+        <BattleLog
+          sim={sim}
+          match={match}
+          ghosts={ghosts}
+          turnIndex={turnIndex}
+        />
+      )}
 
-        {/* horizontal divider between the two team rows */}
-        <div className="flex items-center gap-2 w-full max-w-[440px] my-0.5 text-zinc-600">
-          <div className="h-px flex-1 bg-zinc-800" />
-          <span className="text-lg font-black leading-none">⚔</span>
-          <div className="h-px flex-1 bg-zinc-800" />
+      {!sim && (
+        <div className="mt-3 min-h-[34px] px-3 py-2 rounded bg-zinc-900/60 border border-zinc-800 text-xs font-mono text-zinc-500">
+          {t('replay.loading')}
         </div>
-
-        <div className="flex justify-center w-full">
-          <div className="relative flex justify-center gap-1.5 flex-wrap">
-          <div className="absolute right-full mr-3 top-1/2 -translate-y-1/2 whitespace-nowrap text-rose-300 font-semibold text-sm">{defenderName}</div>
-          {defenderBench.map((u, i) => {
-            const isDefender = lastTurn?.attackerSide === 0 && lastTurn?.defenderSlot === i;
-            return (
-              <UnitCard
-                key={`R-${i}`}
-                unitType={u}
-                hp={rightHp[i]}
-                maxHp={rightMax[i]}
-                atk={rightAtk[i]}
-                dead={rightHp[i] <= 0 && rightMax[i] > 0}
-                flashing={isDefender ? 'hit' : null}
-                slotIndex={i}
-                side="right"
-              />
-            );
-          })}
-          </div>
-        </div>
-      </div>
-
-      {/* Turn description ticker */}
-      <div className="mt-3 min-h-[34px] px-3 py-2 rounded bg-zinc-900/60 border border-zinc-800 text-xs font-mono text-zinc-300">
-        {!sim && <span className="text-zinc-500">{t('replay.loading')}</span>}
-        {sim && turnIndex === 0 && <span className="text-zinc-500">{t('replay.ready')}</span>}
-        {sim && lastTurn && (
-          <span>
-            <span className={lastTurn.attackerSide === 0 ? 'text-sky-300' : 'text-rose-300'}>
-              {lastTurn.attackerSide === 0 ? attackerName : defenderName}
-            </span>
-            {' '}{t('replay.slotLabel')} #{lastTurn.attackerSlot}
-            {' '}{t('replay.hitVerb')}{' '}
-            <span className={lastTurn.attackerSide === 0 ? 'text-rose-300' : 'text-sky-300'}>
-              {lastTurn.attackerSide === 0 ? defenderName : attackerName}
-            </span>
-            {' '}{t('replay.slotLabel')} #{lastTurn.defenderSlot}
-            {t('replay.dealtPrefix')}<span className="text-orange-300">{lastTurn.damage}</span>{t('replay.dealtSuffix')}
-            {lastTurn.defenderDied && <span className="text-rose-500">{t('replay.ko')}</span>}
-          </span>
-        )}
-      </div>
+      )}
     </div>
   );
 }

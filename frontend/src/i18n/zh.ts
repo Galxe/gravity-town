@@ -47,6 +47,7 @@ export const zh = {
     dealtPrefix: '，造成 ',
     dealtSuffix: ' 点伤害',
     ko: ' — 击杀！',
+    winner: '胜者',
   },
 
   unit: {

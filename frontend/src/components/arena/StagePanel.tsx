@@ -15,8 +15,8 @@ export function StagePanel() {
   const matches = useArenaStore((s) => s.matches);
   const ghosts = useArenaStore((s) => s.ghosts);
   const sim = useArenaStore((s) => selectedMatchId ? s.simulations[selectedMatchId] : null);
-  const autoplay = useArenaStore((s) => s.autoplay);
-  const setAutoplay = useArenaStore((s) => s.setAutoplay);
+  const paused = useArenaStore((s) => s.paused);
+  const setPaused = useArenaStore((s) => s.setPaused);
   const setTurnIndex = useArenaStore((s) => s.setTurnIndex);
 
   const m = selectedMatchId ? matches[selectedMatchId] : null;
@@ -65,9 +65,7 @@ export function StagePanel() {
 
       <div className="mt-4">
         <ReplayCanvas
-          matchId={m.matchId}
-          attackerBench={m.attackerBench}
-          defenderBench={m.defenderBench}
+          match={m}
           attackerName={attackerName}
           defenderName={defenderName}
         />
@@ -76,13 +74,13 @@ export function StagePanel() {
       {/* Play controls */}
       <div className="mt-3 flex items-center gap-3 justify-center">
         <button
-          onClick={() => setAutoplay(!autoplay)}
+          onClick={() => setPaused(!paused)}
           className="px-3 py-1.5 rounded border border-zinc-700 hover:border-zinc-500 text-xs font-medium text-zinc-200 transition-colors"
         >
-          {autoplay ? t('stage.pause') : t('stage.play')}
+          {paused ? t('stage.play') : t('stage.pause')}
         </button>
         <button
-          onClick={() => { setTurnIndex(0); setAutoplay(true); }}
+          onClick={() => { setTurnIndex(0); setPaused(false); }}
           className="px-3 py-1.5 rounded border border-zinc-700 hover:border-zinc-500 text-xs font-medium text-zinc-200 transition-colors"
         >
           {t('stage.replay')}

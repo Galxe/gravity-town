@@ -103,6 +103,7 @@ export interface ArenaState {
   selectedAgentId: number | null;       // whose mind to show
   autoplay: boolean;
   turnIndex: number;                    // current turn cursor for the focus match
+  paused: boolean;                      // temporary pause during autoplay (Space key)
   highlights: ArenaHighlight[];         // most recent first, capped
   tierFilter: ArenaTier | null;         // #33 leaderboard filter pill — null = all tiers
 
@@ -118,6 +119,7 @@ export interface ArenaState {
   setSelectedAgentId: (id: number | null) => void;
   setAutoplay: (v: boolean) => void;
   setTurnIndex: (n: number) => void;
+  setPaused: (v: boolean) => void;
   pushHighlight: (h: ArenaHighlight) => void;
   setTierFilter: (t: ArenaTier | null) => void;
 }
@@ -138,6 +140,7 @@ export const useArenaStore = create<ArenaState>((set) => ({
   selectedAgentId: null,
   autoplay: true,
   turnIndex: 0,
+  paused: false,
   highlights: [],
   tierFilter: null,
 
@@ -151,10 +154,11 @@ export const useArenaStore = create<ArenaState>((set) => ({
   setInventory: (agentId, cards) =>
     set((s) => ({ inventories: { ...s.inventories, [agentId]: cards } })),
   setNextMatchmakingAt: (ts) => set({ nextMatchmakingAt: ts }),
-  setSelectedMatchId: (id) => set({ selectedMatchId: id, turnIndex: 0 }),
+  setSelectedMatchId: (id) => set({ selectedMatchId: id, turnIndex: 0, paused: false }),
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
   setAutoplay: (v) => set({ autoplay: v }),
   setTurnIndex: (n) => set({ turnIndex: n }),
+  setPaused: (v) => set({ paused: v }),
   setTierFilter: (t) => set({ tierFilter: t }),
   pushHighlight: (h) =>
     set((s) => {
