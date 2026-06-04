@@ -37,6 +37,13 @@ contract GTreasury is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit GFunded(agentId, amount, msg.sender);
     }
 
+    function depositG(uint256 agentId) external payable {
+        require(msg.sender == registry.agentOwner(agentId), "not agent owner");
+        require(msg.value > 0, "zero deposit");
+        gBalance[agentId] += msg.value;
+        emit GCredited(agentId, msg.value, bytes32("deposit"));
+    }
+
     function spendG(uint256 agentId, uint256 amount, bytes32 reason) external onlyOperator {
         require(gBalance[agentId] >= amount, "insufficient G");
         gBalance[agentId] -= amount;

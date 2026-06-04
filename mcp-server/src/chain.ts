@@ -812,6 +812,15 @@ export class ChainClient {
     return { ...result, txHash: receipt.transactionHash };
   }
 
+  async arenaDepositG(agentId: number, amountG: number) {
+    const treasury = this.requireGTreasury();
+    const value = ethers.BigNumber.from(amountG);
+    const tx = await treasury.depositG(agentId, { value });
+    const receipt = await tx.wait();
+    const gBalance = Number(await treasury.gBalance(agentId));
+    return { agentId, depositedG: amountG, g: gBalance, txHash: receipt.transactionHash };
+  }
+
   async arenaPlaceCard(agentId: number, cardId: number, slot: number) {
     const arena = this.requireArena();
     const tx = await arena.placeCard(agentId, cardId, slot);

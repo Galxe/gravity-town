@@ -444,6 +444,7 @@ export function buildSystemPrompt(
     "Tools:",
     "  arena_list_units() — see all 12 units (stats + abilities). Look at this BEFORE buying.",
     "  arena_get_state(agent_id) — see your current bench, ELO, bucket, G balance, and ore.",
+    "  arena_deposit_g(agent_id, amount_g) — deposit native testnet G into your Arena G balance when you are too low to buy cards. amount_g is raw Arena G units; current conversion is 1 wei = 1 Arena G balance unit.",
     "  arena_buy(agent_id, unit_type) — buy a persistent card for unit_type (1-12) into inventory. Costs G, not ore.",
     "  arena_place_card(agent_id, card_id, slot) — place an inventory card onto an empty bench slot (0-4).",
     "  arena_remove_card(agent_id, slot) — remove a bench card back to inventory. No G refund.",
@@ -455,7 +456,7 @@ export function buildSystemPrompt(
     "  arena_simulate_match(match_id) — replay a past match turn-by-turn.",
     "",
     "Strategy hints (you discover the rest yourself):",
-    "  - Spend spare Arena G on cards; main-world ore is for hex economy and combat.",
+    "  - If Arena G is low, use arena_deposit_g before buying. Then spend spare Arena G on cards; main-world ore is for hex economy and combat.",
     "  - Front line tanks shield damage dealers; place Stoneguard / Crystalwarden up front, glass cannons behind.",
     "  - Battlemage's right-neighbor buff and Crystalwarden's both-neighbor buff reward THINKING about slot order.",
     "  - Submitting an empty bench reverts — buy at least one unit first.",
@@ -588,8 +589,8 @@ export function buildUserPrompt(context: AgentContext): string {
       `Your ghost — ELO ${arena.elo ?? 0}, bucket ${arena.bucketId ?? 0}, G ${arena.g ?? "?"}, ${filledSlots}/5 slots filled.`,
       `Bench: ${benchSummary}`,
       filledSlots === 0
-        ? "You have NO bench units yet. If you have G (>= 3), consider arena_list_units → arena_buy → arena_place_card → arena_submit to enter the Arena. (Optional.)"
-        : "Submit with arena_submit to get matched against another ghost. Or refine your bench with arena_buy, arena_place_card, arena_remove_card, and arena_list_inventory.",
+        ? "You have NO bench units yet. If Arena G is below 3, call arena_deposit_g first; then consider arena_list_units → arena_buy → arena_list_inventory → arena_place_card → arena_submit. (Optional.)"
+        : "Submit with arena_submit to get matched against another ghost. Or refine your bench with arena_buy, arena_list_inventory, arena_place_card, and arena_remove_card.",
     ].join("\n");
   }
 
@@ -648,7 +649,7 @@ export function createToolDefinitions(agentId: number, tools: McpTool[]): ToolDe
       "build", "attack", "raid", "incite_rebellion", "claim_neutral",
       "start_debate", "vote_debate", "write_chronicle", "get_chronicle",
       // Arena side-system
-      "arena_buy", "arena_place_card", "arena_remove_card", "arena_submit",
+      "arena_buy", "arena_deposit_g", "arena_place_card", "arena_remove_card", "arena_submit",
       "arena_get_state", "arena_list_inventory", "arena_place_listing",
       "arena_cancel_listing", "arena_get_recent_matches",
     ];
