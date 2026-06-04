@@ -147,13 +147,13 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
     <div className="w-full">
       {/* Side labels + turn counter */}
       <div className="flex items-center justify-between mb-2 text-xs">
-        <div className="text-sky-300 font-semibold">⬅ {attackerName}</div>
+        <div className="text-sky-300 font-semibold">⬆ {attackerName}</div>
         <div className="text-zinc-500 font-mono flex items-center gap-2">
           {paused && <span className="text-amber-400">⏸</span>}
           {t('replay.turn', { cur: Math.min(turnIndex, finishedTurns), total: finishedTurns })}
           {done && <span className="text-emerald-400">{t('replay.complete')}</span>}
         </div>
-        <div className="text-rose-300 font-semibold">{defenderName} ➡</div>
+        <div className="text-rose-300 font-semibold">{defenderName} ⬇</div>
       </div>
 
       {/* Scrubber */}
@@ -173,17 +173,17 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
         </div>
       )}
 
-      {/* Battle grid */}
-      <div className="relative flex items-center justify-center gap-2 px-2 py-4 rounded-lg bg-gradient-to-b from-zinc-900/60 to-zinc-950/60 border border-zinc-800">
+      {/* Battle grid — two rows: attacker on top, defender on bottom */}
+      <div className="relative flex flex-col items-center justify-center gap-2 px-2 py-4 rounded-lg bg-gradient-to-b from-zinc-900/60 to-zinc-950/60 border border-zinc-800">
         {/* Winner stamp overlay */}
         {done && sim && (() => {
-          const winnerSide = sim.winnerId === match.attackerId ? 'left' : 'right';
+          const winnerSide = sim.winnerId === match.attackerId ? 'top' : 'bottom';
           const winnerName = sim.winnerId === match.attackerId ? attackerName : defenderName;
           return (
             <div
               className={[
-                'absolute inset-y-0 w-[45%] flex items-center justify-center pointer-events-none z-20',
-                winnerSide === 'left' ? 'left-0' : 'right-0',
+                'absolute inset-x-0 h-[50%] flex items-center justify-center pointer-events-none z-20',
+                winnerSide === 'top' ? 'top-0' : 'bottom-0',
               ].join(' ')}
             >
               <div className="animate-arena-stamp flex flex-col items-center gap-1 select-none">
@@ -203,7 +203,7 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
         <div className="flex gap-1.5">
           {renderBench(attackerBench, leftHp, leftMax, leftAtk, 'left')}
         </div>
-        <div className="px-2 text-zinc-500 text-2xl font-black">⚔</div>
+        <div className="py-1 text-zinc-500 text-2xl font-black">⚔</div>
         <div className="flex gap-1.5">
           {renderBench(defenderBench, rightHp, rightMax, rightAtk, 'right')}
         </div>
