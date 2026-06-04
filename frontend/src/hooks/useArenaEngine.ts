@@ -144,9 +144,10 @@ export function useArenaEngine() {
     setExplorerUrl((active?.explorer_url ?? FALLBACK_EXPLORER) || null);
     const CHAIN_ID    = active?.chain_id       ?? FALLBACK_CHAIN;
 
+    const fullRpcUrl = RPC_URL.startsWith('/') ? `${window.location.origin}${RPC_URL}` : RPC_URL;
     const provider = CHAIN_ID
-      ? new JsonRpcProvider(RPC_URL, CHAIN_ID)
-      : new JsonRpcProvider(RPC_URL);
+      ? new JsonRpcProvider(fullRpcUrl, CHAIN_ID)
+      : new JsonRpcProvider(fullRpcUrl);
 
     let registry: Contract;
     let arena: Contract;
