@@ -112,7 +112,7 @@ const EVENT_LOOKBACK_BLOCKS = 5000;
 // sequential matchId — not by block — so the 5-game form strip is unaffected by
 // EVENT_LOOKBACK_BLOCKS. CAP bounds the walk for a barely-played roster; BATCH
 // is the getMatch() concurrency per round.
-const FORM_WALK_CAP = 1000;
+const FORM_WALK_CAP = 200;
 const FORM_WALK_BATCH = 20;
 
 /** Drive the Arena store from chain + event logs. */
