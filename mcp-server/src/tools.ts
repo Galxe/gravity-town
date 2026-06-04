@@ -606,11 +606,19 @@ export function registerTools(server: any, chain: ChainClient) {
     }
   );
 
-  // ============ ARENA (side-system: SAP-style autobattler) ============
+  // ============ ARENA (autobattler) ============
+  //
+  // FLOW: fund_agent_g → arena_buy → arena_place_card (slots 0-4) → arena_submit → wait for matchmaking
+  // ECONOMY: G is the Arena currency. New agents start with 0 G. Use fund_agent_g to credit G first.
+  //   - Earn G by: selling cards on market (arena_place_listing), winning matches (ELO + G rewards).
+  //   - Spend G on: buying cards from shop (arena_buy, 3-6 G) or market (arena_buy_listing).
+  // BENCH: 5 slots (0-4). Place cards with arena_place_card. Slot order matters for abilities (e.g. "buff neighbors").
+  // MATCHMAKING: After arena_submit, your ghost enters a bucket by ELO. When enough ghosts exist, matches auto-run.
+  //
 
   server.tool(
     "arena_list_units",
-    "List all 12 Arena unit types — name, ATK/HP/cost, ability text. Use this to decide what to buy. Tier 1 cost 3, tier 2 cost 4, tier 3 cost 5, tier 4 cost 6.",
+    "List all 12 Arena unit types — name, ATK/HP/cost, ability text. Use this to decide what to buy. 4 tiers: T1 cost 3G, T2 cost 4G, T3 cost 5G, T4 cost 6G. Call this first to plan your build.",
     {},
     async () => {
       return { content: [{ type: "text", text: JSON.stringify(UNIT_CATALOG, null, 2) }] };
@@ -619,7 +627,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_get_state",
-    "Get your Arena ghost: 5-slot bench (unit names + stats + backing cardId), ELO, matchmaking bucket, G balance, and main-world ore pool.",
+    "Get your Arena state: 5-slot bench, ELO rating, G balance, and ore pool. Check G balance here before buying cards. G=0 means you need fund_agent_g first.",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const r = await chain.arenaGetGhost(agent_id);
@@ -628,8 +636,21 @@ export function registerTools(server: any, chain: ChainClient) {
   );
 
   server.tool(
+    "fund_agent_g",
+    "Credit G to an agent's Arena balance (operator only). REQUIRED before buying cards — new agents start with 0 G. Typical amounts: 20-50 G for a starter bench.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      amount: z.number().min(1).describe("Amount of G to credit"),
+    },
+    async ({ agent_id, amount }: any) => {
+      const r = await chain.creditAgentG(agent_id, amount);
+      return { content: [{ type: "text", text: `Credited ${amount} G to agent ${agent_id}. New balance: ${r.newBalance} G. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
     "arena_buy",
-    "Buy a persistent Arena card with G into inventory. Costs G (3-6 depending on tier). Does not place the card on your bench.",
+    "Buy a card from the shop into inventory (NOT onto bench). Costs 3-6 G by tier. After buying, use arena_place_card to put it on your bench. Check G balance with arena_get_state first.",
     {
       agent_id: z.number().describe("Agent ID"),
       unit_type: z.number().min(1).max(12).describe("Unit type id 1-12 (see arena_list_units)"),
@@ -643,7 +664,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_place_card",
-    "Place one owned inventory card onto an empty Arena bench slot. Reverts if the card is listed on the market or already on the bench.",
+    "Place an inventory card onto a bench slot (0-4). Slot order matters — abilities like 'buff neighbors' depend on adjacency. Must own the card and slot must be empty.",
     {
       agent_id: z.number().describe("Agent ID"),
       card_id: z.number().describe("Owned card ID"),
@@ -680,7 +701,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_list_market",
-    "List active secondary-market Arena card listings. Optionally filter by unit type.",
+    "Browse the player-to-player card market. Cards here may be cheaper than the shop. Use arena_buy_listing to purchase.",
     {
       unit_type: z.number().min(1).max(12).optional().describe("Optional unit type id 1-12"),
       offset: z.number().min(0).default(0),
@@ -694,7 +715,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_place_listing",
-    "List one owned inventory Arena card on the secondary market for G. Reverts if the card is currently on your bench.",
+    "Sell a card on the market for G. Card must be in inventory (not on bench). The G goes to your Arena balance when someone buys it.",
     {
       agent_id: z.number().describe("Seller agent ID"),
       card_id: z.number().describe("Owned card ID"),
@@ -721,7 +742,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_buy_listing",
-    "Buy an active secondary-market card listing with G.",
+    "Buy a card from the player market. Often cheaper than the shop. Set max_price_g as your ceiling — reverts if listing price exceeds it.",
     {
       buyer_agent_id: z.number().describe("Buyer agent ID"),
       card_id: z.number().describe("Listed card ID"),
@@ -735,7 +756,7 @@ export function registerTools(server: any, chain: ChainClient) {
 
   server.tool(
     "arena_submit",
-    "Submit your current bench as a 'ghost' to the matchmaking pool. Once enough ghosts join your ELO bucket, runMatchmaking pairs you up. Wins boost ELO, losses drop it. Bench must have at least 1 unit.",
+    "Submit your bench to the matchmaking pool. This is the FINAL step — your 5-slot lineup becomes a 'ghost' that fights other ghosts automatically. Wins earn ELO + G, losses drop ELO. Bench must have at least 1 card placed.",
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const r = await chain.arenaSubmit(agent_id);

@@ -127,6 +127,8 @@ const ARENA_ENGINE_ABI = [
 
 const G_TREASURY_ABI = [
   "function gBalance(uint256 agentId) view returns (uint256)",
+  "function creditG(uint256 agentId, uint256 amount, bytes32 reason)",
+  "event GCredited(uint256 indexed agentId, uint256 amount, bytes32 reason)",
 ];
 
 const CARD_LEDGER_ABI = [
@@ -997,5 +999,14 @@ export class ChainClient {
   async arenaNextMatchId(): Promise<number> {
     const arena = this.requireArena();
     return Number(await arena.nextMatchId());
+  }
+
+  async creditAgentG(agentId: number, amount: number) {
+    const treasury = this.requireGTreasury();
+    const reason = ethers.utils.formatBytes32String("fund");
+    const tx = await treasury.creditG(agentId, amount, reason);
+    const receipt = await tx.wait();
+    const newBalance = Number(await treasury.gBalance(agentId));
+    return { agentId, amount, newBalance, txHash: receipt.transactionHash };
   }
 }
