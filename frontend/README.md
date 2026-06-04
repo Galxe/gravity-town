@@ -2,16 +2,17 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 ## Getting Started
 
-First, run the development server:
+Run the development server:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Via start/stop scripts (background mode, with pidfile guard)
+./start.sh              # default: localhost config, port 3000
+./start.sh gravity      # gravity testnet config
+./start.sh gravity 3001 # custom port
+./stop.sh               # graceful stop
+
+# Or directly in foreground
+APP_CONFIG=gravity npm run dev -- -H 0.0.0.0 -p 3000
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.

@@ -24,6 +24,8 @@ frontend/.vercel
 frontend/*.tsbuildinfo
 frontend/next-env.d.ts
 frontend/.env*
+frontend/.frontend.pid
+frontend/.frontend.log
 
 # ============================================================
 # Contracts (Foundry)
