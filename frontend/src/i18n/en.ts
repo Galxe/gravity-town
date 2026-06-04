@@ -67,6 +67,7 @@ export const en = {
   },
 
   mind: {
+    tab: 'Mind',
     pickAgent: "Pick an agent from the leaderboard to see what they're thinking.",
     header: 'Agent Mind',
     thoughts: '{n} arena thoughts on-chain',
@@ -81,5 +82,24 @@ export const en = {
   highlights: {
     header: 'Highlights',
     waiting: 'waiting for upsets and streaks…',
+  },
+
+  inventory: {
+    tab: 'Inventory',
+    pickAgent: 'Pick an agent from the leaderboard to see their card inventory.',
+    empty: 'This agent has no cards yet.',
+    count: '{n} cards',
+    source: 'source',
+    listed: 'listed',
+    noTx: 'none',
+    kind: {
+      mint: 'mint',
+      buy: 'buy',
+      place: 'place',
+      remove: 'remove',
+      list: 'list',
+      unlist: 'unlist',
+      'market-buy': 'market buy',
+    },
   },
 } as const;

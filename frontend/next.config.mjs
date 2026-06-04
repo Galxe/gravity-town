@@ -53,6 +53,7 @@ const networks = NETWORK_FILES.map(({ key, label, file }) => {
     wss_url: c.wss_url || '',
     chain_id: Number(c.chain_id),
     router_address: c.router_address,
+    explorer_url: c.explorer_url || '',
   };
 }).filter(Boolean);
 
@@ -68,6 +69,7 @@ const nextConfig = {
     NEXT_PUBLIC_WSS_URL: cfg.wss_url || '',
     NEXT_PUBLIC_ROUTER_ADDRESS: routerAddress,
     NEXT_PUBLIC_CHAIN_ID: cfg.chain_id ? String(cfg.chain_id) : '',
+    NEXT_PUBLIC_EXPLORER_URL: cfg.explorer_url || '',
     NEXT_PUBLIC_NETWORKS: JSON.stringify(networks),
   },
 };

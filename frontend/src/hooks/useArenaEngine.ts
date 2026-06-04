@@ -4,8 +4,9 @@ import { useGameStore } from '../store/useGameStore';
 import { useArenaStore, ArenaGhost, ArenaMatch, ArenaSimulation } from '../store/useArenaStore';
 import { getActiveNetwork } from '../lib/networks';
 
-const FALLBACK_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL        || 'http://127.0.0.1:8545';
-const FALLBACK_ROUTER  = process.env.NEXT_PUBLIC_ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000';
+const FALLBACK_RPC_URL  = process.env.NEXT_PUBLIC_RPC_URL        || 'http://127.0.0.1:8545';
+const FALLBACK_ROUTER   = process.env.NEXT_PUBLIC_ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000';
+const FALLBACK_EXPLORER = process.env.NEXT_PUBLIC_EXPLORER_URL   || '';
 const FALLBACK_CHAIN   = process.env.NEXT_PUBLIC_CHAIN_ID ? Number(process.env.NEXT_PUBLIC_CHAIN_ID) : undefined;
 
 // Router address discovery — V3 (9-tuple, adds cardLedger + gTreasury from #32)
@@ -39,12 +40,69 @@ const ARENA_ABI = [
   // #33 — per-tier matchmaking cooldown, for the "next matchmaking" countdown.
   'function lastTierMatchmakingAt(uint8) view returns (uint64)',
   'function effectiveTierPeriod(uint8) view returns (uint64)',
+  'function cardLedger() view returns (address)',
   // Events — used to drive ongoing list + highlight ticker.
   'event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed)',
   'event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo)',
+  // Card lifecycle events on the arena (carry the tx hash for inventory "source").
+  'event CardBought(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint16 cost)',
+  'event CardPlaced(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot)',
+  'event CardRemoved(uint256 indexed agentId, uint256 indexed cardId, uint8 unitType, uint8 slot)',
+];
+
+// CardLedger — inventory + listing reads, plus the market/mint events whose tx
+// hash powers the inventory "source" column.
+const CARDLEDGER_ABI = [
+  'function getOwnedCards(uint256 agentId) view returns (uint256[])',
+  'function getCard(uint256 cardId) view returns (uint256 id, uint8 unitType, uint256 ownerAgent, uint256 mintedAt)',
+  'function isListed(uint256 cardId) view returns (bool)',
+  'event CardMinted(uint256 indexed cardId, uint256 indexed ownerAgent, uint8 unitType)',
+  'event CardListed(uint256 indexed cardId, uint256 indexed sellerAgent, uint256 askPriceG)',
+  'event ListingCancelled(uint256 indexed cardId, uint256 indexed sellerAgent)',
+  'event ListedCardBought(uint256 indexed cardId, uint256 indexed sellerAgent, uint256 indexed buyerAgent, uint256 priceG)',
 ];
 
 const POLL_MS = 4000;
+
+/**
+ * Most-recent on-chain tx touching each of `agentId`'s cards. Scans the card
+ * lifecycle events (filtered to this agent) and keeps the latest per cardId by
+ * (block, logIndex). The tx hash isn't in contract storage — it only exists on
+ * the event log — so this is the only way to surface a card's "source".
+ */
+async function fetchCardLastTx(
+  arena: Contract,
+  cardLedger: Contract,
+  agentId: number,
+  from: number,
+  to: number,
+): Promise<Map<number, { tx: string; kind: string }>> {
+  const specs: { c: Contract; filter: unknown; kind: string }[] = [
+    { c: arena,      filter: arena.filters.CardBought(agentId),                 kind: 'buy' },
+    { c: arena,      filter: arena.filters.CardPlaced(agentId),                 kind: 'place' },
+    { c: arena,      filter: arena.filters.CardRemoved(agentId),                kind: 'remove' },
+    { c: cardLedger, filter: cardLedger.filters.CardMinted(null, agentId),      kind: 'mint' },
+    { c: cardLedger, filter: cardLedger.filters.CardListed(null, agentId),      kind: 'list' },
+    { c: cardLedger, filter: cardLedger.filters.ListingCancelled(null, agentId), kind: 'unlist' },
+    { c: cardLedger, filter: cardLedger.filters.ListedCardBought(null, null, agentId), kind: 'market-buy' },
+  ];
+  const best = new Map<number, { rank: number; tx: string; kind: string }>();
+  await Promise.all(specs.map(async (s) => {
+    try {
+      const logs = await s.c.queryFilter(s.filter as Parameters<Contract['queryFilter']>[0], from, to);
+      for (const ev of logs) {
+        if (!(ev instanceof EventLog)) continue;
+        const cardId = Number(ev.args.cardId);
+        const rank = ev.blockNumber * 1e6 + (ev.index ?? 0);
+        const prev = best.get(cardId);
+        if (!prev || rank > prev.rank) best.set(cardId, { rank, tx: ev.transactionHash, kind: s.kind });
+      }
+    } catch { /* event type not present on this contract version */ }
+  }));
+  const out = new Map<number, { tx: string; kind: string }>();
+  best.forEach((v, id) => out.set(id, { tx: v.tx, kind: v.kind }));
+  return out;
+}
 
 // Lookback for events on first load. We pull bounded history so cold-start
 // shows a populated leaderboard / ticker even if no fresh match has arrived.
@@ -56,7 +114,9 @@ export function useArenaEngine() {
   const upsertMatch      = useArenaStore((s) => s.upsertMatch);
   const upsertSimulation = useArenaStore((s) => s.upsertSimulation);
   const setNextMatchmakingAt = useArenaStore((s) => s.setNextMatchmakingAt);
+  const setInventory = useArenaStore((s) => s.setInventory);
   const setStaticConfig  = useArenaStore((s) => s.setStaticConfig);
+  const setExplorerUrl   = useArenaStore((s) => s.setExplorerUrl);
   const setSelectedMatchId = useArenaStore((s) => s.setSelectedMatchId);
   const setSelectedAgentId = useArenaStore((s) => s.setSelectedAgentId);
   const pushHighlight    = useArenaStore((s) => s.pushHighlight);
@@ -80,6 +140,8 @@ export function useArenaEngine() {
     const active = (onLocalhostBuild && !userPicked) ? undefined : getActiveNetwork();
     const RPC_URL     = active?.rpc_url        ?? FALLBACK_RPC_URL;
     const ROUTER_ADDR = active?.router_address ?? FALLBACK_ROUTER;
+    // Explorer base for the network actually in use (null on localhost → tx not linked).
+    setExplorerUrl((active?.explorer_url ?? FALLBACK_EXPLORER) || null);
     const CHAIN_ID    = active?.chain_id       ?? FALLBACK_CHAIN;
 
     const provider = CHAIN_ID
@@ -88,10 +150,12 @@ export function useArenaEngine() {
 
     let registry: Contract;
     let arena: Contract;
+    let cardLedger: Contract | null = null;   // null until the card economy is wired
     let hasGTreasury = false;   // whether the arena's G economy is wired (gates the G column)
     let arenaAddr: string = '';
     let resolved = false;
     let initialEventsPulled = false;
+    let lastInvAgent: number | null = null;   // inventory refetch is keyed on selection
 
     const ZERO = '0x0000000000000000000000000000000000000000';
 
@@ -100,12 +164,14 @@ export function useArenaEngine() {
       const router = new Contract(ROUTER_ADDR, ROUTER_ABI, provider);
       let registryAddr = '';
       let gtAddr = '';
+      let cardAddr = '';
       try {
         // V3 tuple (#32 Router): [0]registry .. [6]arenaEngine, [7]gTreasury, [8]cardLedger.
         const v3 = await router.getAddressesV3();
         registryAddr = v3[0];
         arenaAddr = v3[6];
         gtAddr = v3[7];
+        cardAddr = v3[8];
       } catch {
         try {
           const tuple = await router.getAddressesV2();
@@ -130,6 +196,12 @@ export function useArenaEngine() {
           try { gtAddr = await arena.gTreasury(); } catch { gtAddr = ''; }
         }
         hasGTreasury = !!gtAddr && gtAddr !== ZERO;
+        // cardLedger ladder: Router V3 [8] → ArenaEngine.cardLedger(). Drives the
+        // inventory panel; null when the card economy isn't wired.
+        if (!cardAddr || cardAddr === ZERO) {
+          try { cardAddr = await arena.cardLedger(); } catch { cardAddr = ''; }
+        }
+        cardLedger = (cardAddr && cardAddr !== ZERO) ? new Contract(cardAddr, CARDLEDGER_ABI, provider) : null;
       } else {
         setStaticConfig(null);
       }
@@ -278,6 +350,39 @@ export function useArenaEngine() {
           } catch { /* ignore */ }
         }));
         setGhosts(ghosts);
+
+        // Inventory for the focused agent. Refetch only when the selection
+        // changes (keyed on lastInvAgent) to avoid re-scanning card events every
+        // poll. getCard/isListed for basic info; fetchCardLastTx for "source".
+        const selId = useArenaStore.getState().selectedAgentId;
+        if (cardLedger && selId != null && selId !== lastInvAgent) {
+          lastInvAgent = selId;
+          try {
+            const owned: bigint[] = await cardLedger.getOwnedCards(selId);
+            const ownedIds = owned.map(Number);
+            const latestBlk = await provider.getBlockNumber();
+            const fromBlk = Math.max(0, latestBlk - EVENT_LOOKBACK_BLOCKS);
+            const lastTx = await fetchCardLastTx(arena, cardLedger, selId, fromBlk, latestBlk);
+            const cards = await Promise.all(ownedIds.map(async (cid) => {
+              const c = await cardLedger!.getCard(cid);
+              let listed = false;
+              try { listed = await cardLedger!.isListed(cid); } catch { /* ignore */ }
+              const lt = lastTx.get(cid);
+              return {
+                id: cid,
+                unitType: Number(c.unitType),
+                mintedAt: Number(c.mintedAt),
+                listed,
+                lastTxHash: lt?.tx,
+                lastTxKind: lt?.kind,
+              };
+            }));
+            setInventory(selId, cards);
+          } catch (e) {
+            lastInvAgent = null; // allow a retry next poll
+            console.warn('[arena] inventory fetch failed for', selId, e);
+          }
+        }
 
         // Pull `nextMatchId` and walk back, hydrating recent matches & settling info.
         const next: bigint = await arena.nextMatchId();
@@ -474,8 +579,8 @@ export function useArenaEngine() {
       }
     };
   }, [
-    setGhosts, upsertMatch, upsertSimulation, setNextMatchmakingAt,
-    setStaticConfig, setSelectedMatchId, setSelectedAgentId, pushHighlight,
+    setGhosts, upsertMatch, upsertSimulation, setNextMatchmakingAt, setInventory,
+    setStaticConfig, setExplorerUrl, setSelectedMatchId, setSelectedAgentId, pushHighlight,
   ]);
 }
 

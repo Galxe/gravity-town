@@ -4,7 +4,7 @@ import { useEffect } from 'react';
 import { TopBar } from '@/components/arena/TopBar';
 import { LeaderboardPanel } from '@/components/arena/LeaderboardPanel';
 import { StagePanel } from '@/components/arena/StagePanel';
-import { AgentMindPanel } from '@/components/arena/AgentMindPanel';
+import { RightPanel } from '@/components/arena/RightPanel';
 import { HighlightTicker } from '@/components/arena/HighlightTicker';
 import { useArenaEngine } from '@/hooks/useArenaEngine';
 import { useGameEngine } from '@/hooks/useGameEngine';
@@ -42,7 +42,7 @@ export default function ArenaPage() {
         </section>
 
         <aside className="col-span-3 bg-zinc-950 border-l border-zinc-800 min-h-0">
-          <AgentMindPanel />
+          <RightPanel />
         </aside>
       </div>
 

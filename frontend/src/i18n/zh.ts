@@ -66,6 +66,7 @@ export const zh = {
   },
 
   mind: {
+    tab: '思维',
     pickAgent: '从排行榜选择一个 agent，查看它的思考。',
     header: 'Agent 思维',
     thoughts: '链上 {n} 条竞技场思考',
@@ -80,6 +81,25 @@ export const zh = {
   highlights: {
     header: '高光',
     waiting: '等待爆冷与连胜…',
+  },
+
+  inventory: {
+    tab: '背包',
+    pickAgent: '从排行榜选择一个 agent，查看其卡牌背包。',
+    empty: '该 agent 暂无卡牌。',
+    count: '{n} 张卡牌',
+    source: '来源',
+    listed: '挂单中',
+    noTx: '无记录',
+    kind: {
+      mint: '铸造',
+      buy: '购买',
+      place: '上场',
+      remove: '下场',
+      list: '挂单',
+      unlist: '取消挂单',
+      'market-buy': '市场购入',
+    },
   },
 
   // Unit catalog — names + ability prose. Tooltip rebuilt as

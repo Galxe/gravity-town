@@ -73,8 +73,7 @@ export function AgentMindPanel() {
   return (
     <div className="h-full flex flex-col">
       <div className="px-3 py-2 border-b border-zinc-800 bg-zinc-950">
-        <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold">{t('mind.header')}</div>
-        <div className="mt-1 flex items-baseline justify-between">
+        <div className="flex items-baseline justify-between">
           <div className="text-base font-bold text-zinc-100">{name}</div>
           <div className="text-xs font-mono text-amber-300">ELO {elo}</div>
         </div>
