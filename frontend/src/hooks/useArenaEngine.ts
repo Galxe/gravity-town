@@ -114,29 +114,10 @@ export function useArenaEngine() {
       const latest = await provider.getBlockNumber();
       const from = Math.max(0, latest - EVENT_LOOKBACK_BLOCKS);
 
-      // MatchCreated
-      try {
-        const createdFilter = arena.filters.MatchCreated();
-        const events = await arena.queryFilter(createdFilter, from, latest);
-        for (const ev of events) {
-          if (!(ev instanceof EventLog)) continue;
-          const args = ev.args!;
-          const matchId = Number(args[0]);
-          const attackerId = Number(args[1]);
-          const defenderId = Number(args[2]);
-          const seed = (args[3] as bigint).toString();
-          const m: ArenaMatch = {
-            matchId, attackerId, defenderId,
-            attackerBench: [0, 0, 0, 0, 0],
-            defenderBench: [0, 0, 0, 0, 0],
-            seed,
-            createdAt: 0,
-            settled: false,
-            winnerId: 0,
-          };
-          upsertMatch(m);
-        }
-      } catch (e) { console.warn('[arena] MatchCreated history fetch failed', e); }
+      // MatchCreated events are intentionally NOT upserted here.
+      // The walk loop calls getMatch() which provides correct bench data.
+      // Upserting from MatchCreated would write attackerBench:[0,0,0,0,0],
+      // causing a premature render with empty slots before real data arrives.
 
       // MatchSettled — drives highlight detection
       try {
@@ -149,13 +130,17 @@ export function useArenaEngine() {
           const winnerId = Number(args[1]);
           const newWinElo = Number(args[2]);
           const newLoseElo = Number(args[3]);
+          // Preserve existing attackerId/defenderId — overwriting with 0 would
+          // cause StagePanel to unmount ReplayCanvas (m.attackerId === 0 check).
+          const prev = useArenaStore.getState().matches[matchId];
           upsertMatch({
             matchId,
-            attackerId: 0, defenderId: 0,
-            attackerBench: [0, 0, 0, 0, 0],
-            defenderBench: [0, 0, 0, 0, 0],
-            seed: '0',
-            createdAt: 0,
+            attackerId: prev?.attackerId ?? 0,
+            defenderId: prev?.defenderId ?? 0,
+            attackerBench: prev?.attackerBench ?? [0, 0, 0, 0, 0],
+            defenderBench: prev?.defenderBench ?? [0, 0, 0, 0, 0],
+            seed: prev?.seed ?? '0',
+            createdAt: prev?.createdAt ?? 0,
             settled: true,
             winnerId,
             winnerEloAfter: newWinElo,

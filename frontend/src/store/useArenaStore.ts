@@ -71,6 +71,7 @@ export interface ArenaState {
   selectedMatchId: number | null;
   selectedAgentId: number | null;       // whose mind to show
   autoplay: boolean;
+  paused: boolean;                      // temporary pause during autoplay (Space key)
   turnIndex: number;                    // current turn cursor for the focus match
   highlights: ArenaHighlight[];         // most recent first, capped
 
@@ -83,6 +84,7 @@ export interface ArenaState {
   setSelectedMatchId: (id: number | null) => void;
   setSelectedAgentId: (id: number | null) => void;
   setAutoplay: (v: boolean) => void;
+  setPaused: (v: boolean) => void;
   setTurnIndex: (n: number) => void;
   pushHighlight: (h: ArenaHighlight) => void;
 }
@@ -101,6 +103,7 @@ export const useArenaStore = create<ArenaState>((set) => ({
   selectedMatchId: null,
   selectedAgentId: null,
   autoplay: true,
+  paused: false,
   turnIndex: 0,
   highlights: [],
 
@@ -112,9 +115,10 @@ export const useArenaStore = create<ArenaState>((set) => ({
     set((s) => ({ simulations: { ...s.simulations, [sim.matchId]: sim } })),
   setLastMatchmaking: (bucketId, ts) =>
     set((s) => ({ lastMatchmakingByBucket: { ...s.lastMatchmakingByBucket, [bucketId]: ts } })),
-  setSelectedMatchId: (id) => set({ selectedMatchId: id, turnIndex: 0 }),
+  setSelectedMatchId: (id) => set({ selectedMatchId: id, turnIndex: 0, paused: false }),
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
   setAutoplay: (v) => set({ autoplay: v }),
+  setPaused: (v) => set({ paused: v }),
   setTurnIndex: (n) => set({ turnIndex: n }),
   pushHighlight: (h) =>
     set((s) => {
