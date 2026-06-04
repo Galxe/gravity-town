@@ -10,6 +10,8 @@ import "../src/LocationLedger.sol";
 import "../src/InboxLedger.sol";
 import "../src/EvaluationLedger.sol";
 import "../src/GameEngine.sol";
+import "../src/GTreasury.sol";
+import "../src/CardLedger.sol";
 import "../src/ArenaEngine.sol";
 
 /// @notice Upgrade all implementations behind existing proxies.
@@ -102,7 +104,52 @@ contract UpgradeScript is Script {
             }
         }
 
-        // 5. ArenaEngine: deploy fresh proxy if router slot is unset, else upgrade.
+        // 5. GTreasury: deploy fresh proxy if router slot is unset, else upgrade.
+        address treasuryProxy;
+        (bool okTreasury, bytes memory treasuryData) = routerProxy.staticcall(abi.encodeWithSignature("gTreasury()"));
+        if (okTreasury && treasuryData.length >= 32) {
+            treasuryProxy = abi.decode(treasuryData, (address));
+        }
+
+        if (treasuryProxy == address(0)) {
+            console.log("GTreasury not found - deploying new proxy...");
+            GTreasury treasuryImpl = new GTreasury();
+            ERC1967Proxy newTreasury = new ERC1967Proxy(
+                address(treasuryImpl),
+                abi.encodeCall(GTreasury.initialize, (registryProxy))
+            );
+            treasuryProxy = address(newTreasury);
+            Router(routerProxy).setGTreasury(treasuryProxy);
+            console.log("GTreasury        (new):", treasuryProxy);
+        } else {
+            GTreasury(treasuryProxy).upgradeToAndCall(address(new GTreasury()), "");
+            console.log("GTreasury upgraded:", treasuryProxy);
+        }
+
+        // 6. CardLedger: deploy fresh proxy if router slot is unset, else upgrade.
+        address cardLedgerProxy;
+        (bool okCards, bytes memory cardData) = routerProxy.staticcall(abi.encodeWithSignature("cardLedger()"));
+        if (okCards && cardData.length >= 32) {
+            cardLedgerProxy = abi.decode(cardData, (address));
+        }
+
+        if (cardLedgerProxy == address(0)) {
+            console.log("CardLedger not found - deploying new proxy...");
+            CardLedger cardImpl = new CardLedger();
+            ERC1967Proxy newCards = new ERC1967Proxy(
+                address(cardImpl),
+                abi.encodeCall(CardLedger.initialize, (registryProxy, treasuryProxy))
+            );
+            cardLedgerProxy = address(newCards);
+            Router(routerProxy).setCardLedger(cardLedgerProxy);
+            console.log("CardLedger       (new):", cardLedgerProxy);
+        } else {
+            CardLedger(cardLedgerProxy).upgradeToAndCall(address(new CardLedger()), "");
+            console.log("CardLedger upgraded:", cardLedgerProxy);
+        }
+        AgentRegistry(registryProxy).addOperator(cardLedgerProxy);
+
+        // 7. ArenaEngine: deploy fresh proxy if router slot is unset, else upgrade.
         //    Same shape as the EvaluationLedger backfill above.
         address arenaProxy;
         (bool okArena, bytes memory arenaData) = routerProxy.staticcall(abi.encodeWithSignature("arenaEngine()"));
@@ -115,16 +162,39 @@ contract UpgradeScript is Script {
             ArenaEngine arenaImpl = new ArenaEngine();
             ERC1967Proxy newArena = new ERC1967Proxy(
                 address(arenaImpl),
-                abi.encodeCall(ArenaEngine.initialize, (registryProxy, engineProxy, evalLedgerProxy))
+                abi.encodeCall(ArenaEngine.initialize, (
+                    registryProxy,
+                    engineProxy,
+                    evalLedgerProxy,
+                    treasuryProxy,
+                    cardLedgerProxy
+                ))
             );
             arenaProxy = address(newArena);
             Router(routerProxy).setArenaEngine(arenaProxy);
-            // Arena needs to call GameEngine.spendOre and EvaluationLedger.write.
+            // Arena needs to mint cards, spend/credit G, and write evaluations.
             AgentRegistry(registryProxy).addOperator(arenaProxy);
             console.log("ArenaEngine      (new):", arenaProxy);
         } else {
             ArenaEngine(arenaProxy).upgradeToAndCall(address(new ArenaEngine()), "");
+            ArenaEngine(arenaProxy).setGTreasury(treasuryProxy);
+            ArenaEngine(arenaProxy).setCardLedger(cardLedgerProxy);
+            AgentRegistry(registryProxy).addOperator(arenaProxy);
             console.log("ArenaEngine upgraded:", arenaProxy);
+        }
+        CardLedger(cardLedgerProxy).setArenaEngine(arenaProxy);
+
+        // 8. Seed the market once, after all operators and links exist.
+        if (!ArenaEngine(arenaProxy).marketSeeded()) {
+            address operator = AgentRegistry(registryProxy).operator();
+            bytes32 seedName = keccak256(bytes("MarketSeed"));
+            uint256 seedAgentId = AgentRegistry(registryProxy).namedAgents(operator, seedName);
+            if (seedAgentId == 0) {
+                uint8[4] memory seedStats = [uint8(5), 5, 5, 5];
+                (seedAgentId, ) = engine.createAgent("MarketSeed", "arena market maker", seedStats, operator);
+            }
+            ArenaEngine(arenaProxy).bootstrapMarket(seedAgentId);
+            console.log("Bootstrapped arena market with seed agent:", seedAgentId);
         }
 
         vm.stopBroadcast();

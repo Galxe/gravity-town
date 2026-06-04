@@ -10,7 +10,15 @@ export interface ArenaGhost {
   lastUpdate: number;
   exists: boolean;
   recentResults: ('W' | 'L')[]; // most-recent-first, max 5
+  // #33 — G economy / tier. Source of truth is the contract: `tier` mirrors
+  // `_tierFor(agentId)` (0=Bronze, 1=Silver, 2=Gold) and the frontend never
+  // re-derives the thresholds. Both undefined until gTreasury resolves.
+  gBalance?: number;
+  tier?: 0 | 1 | 2;
 }
+
+/** G-tier index → label, matching the on-chain `Tier` enum order (#33). */
+export type ArenaTier = 0 | 1 | 2;
 
 /** One match (settled or pending). */
 export interface ArenaMatch {
@@ -73,6 +81,7 @@ export interface ArenaState {
   autoplay: boolean;
   turnIndex: number;                    // current turn cursor for the focus match
   highlights: ArenaHighlight[];         // most recent first, capped
+  tierFilter: ArenaTier | null;         // #33 leaderboard filter pill — null = all tiers
 
   // Setters
   setStaticConfig: (addr: string | null) => void;
@@ -85,6 +94,7 @@ export interface ArenaState {
   setAutoplay: (v: boolean) => void;
   setTurnIndex: (n: number) => void;
   pushHighlight: (h: ArenaHighlight) => void;
+  setTierFilter: (t: ArenaTier | null) => void;
 }
 
 const HIGHLIGHT_CAP = 12;
@@ -103,6 +113,7 @@ export const useArenaStore = create<ArenaState>((set) => ({
   autoplay: true,
   turnIndex: 0,
   highlights: [],
+  tierFilter: null,
 
   setStaticConfig: (addr) => set({ arenaEngineAddress: addr }),
   setGhosts: (ghosts) => set({ ghosts }),
@@ -116,6 +127,7 @@ export const useArenaStore = create<ArenaState>((set) => ({
   setSelectedAgentId: (id) => set({ selectedAgentId: id }),
   setAutoplay: (v) => set({ autoplay: v }),
   setTurnIndex: (n) => set({ turnIndex: n }),
+  setTierFilter: (t) => set({ tierFilter: t }),
   pushHighlight: (h) =>
     set((s) => {
       // dedupe by id
