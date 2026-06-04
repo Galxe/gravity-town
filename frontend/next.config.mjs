@@ -58,11 +58,14 @@ const networks = NETWORK_FILES.map(({ key, label, file }) => {
 }).filter(Boolean);
 
 const isDev = process.env.NODE_ENV !== 'production';
+const isVercel = process.env.VERCEL === '1';
+const isStaticExport = !isDev && !isVercel;
+const useRpcProxy = (isDev || isVercel) && !!cfg.rpc_url;
 
-// Dev mode: proxy RPC through Next.js to bypass CORS restrictions on remote RPCs.
-// Also rewrite each network's rpc_url to the proxy path so the runtime picker works.
+// Proxy RPC through Next/Vercel to bypass CORS restrictions on remote RPCs.
+// Static export cannot apply rewrites, so exported builds keep direct RPC URLs.
 const rpcProxyRewrites = [];
-if (isDev && cfg.rpc_url) {
+if (useRpcProxy) {
   rpcProxyRewrites.push({ source: '/rpc', destination: cfg.rpc_url });
   for (const n of networks) {
     const proxyPath = `/rpc-${n.key}`;
@@ -73,22 +76,20 @@ if (isDev && cfg.rpc_url) {
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Required by frontend/Dockerfile (COPY --from=builder /app/out). Without this,
-  // `next build` emits .next/ instead of out/, the Docker build fails on the COPY,
-  // and the frontend-image workflow can't push a new tag to ghcr. PR #25
-  // accidentally dropped this line; restoring here.
-  ...(isDev ? {} : { output: 'export' }),
+  // Docker/static builds need out/. Vercel needs the Next runtime so RPC rewrites
+  // can proxy CORS-restricted chain endpoints.
+  ...(isStaticExport ? { output: 'export' } : {}),
   env: {
-    NEXT_PUBLIC_RPC_URL: isDev ? '/rpc' : cfg.rpc_url,
+    NEXT_PUBLIC_RPC_URL: useRpcProxy ? '/rpc' : cfg.rpc_url,
     NEXT_PUBLIC_WSS_URL: cfg.wss_url || '',
     NEXT_PUBLIC_ROUTER_ADDRESS: routerAddress,
     NEXT_PUBLIC_CHAIN_ID: cfg.chain_id ? String(cfg.chain_id) : '',
     NEXT_PUBLIC_EXPLORER_URL: cfg.explorer_url || '',
     NEXT_PUBLIC_NETWORKS: JSON.stringify(networks),
   },
-  async rewrites() {
-    return rpcProxyRewrites;
-  },
+  ...(useRpcProxy
+    ? { async rewrites() { return rpcProxyRewrites; } }
+    : {}),
   webpack: (config) => {
     config.watchOptions = {
       ...config.watchOptions,
