@@ -108,6 +108,13 @@ async function fetchCardLastTx(
 // shows a populated leaderboard / ticker even if no fresh match has arrived.
 const EVENT_LOOKBACK_BLOCKS = 5000;
 
+// Recent-form backfill (see backfillRecentForm). Walk matches backward by
+// sequential matchId — not by block — so the 5-game form strip is unaffected by
+// EVENT_LOOKBACK_BLOCKS. CAP bounds the walk for a barely-played roster; BATCH
+// is the getMatch() concurrency per round.
+const FORM_WALK_CAP = 1000;
+const FORM_WALK_BATCH = 20;
+
 /** Drive the Arena store from chain + event logs. */
 export function useArenaEngine() {
   const setGhosts        = useArenaStore((s) => s.setGhosts);
@@ -156,6 +163,7 @@ export function useArenaEngine() {
     let arenaAddr: string = '';
     let resolved = false;
     let initialEventsPulled = false;
+    let formBackfilled = false;   // recent W/L form is walked once from getMatch (see backfillRecentForm)
     let lastInvAgent: number | null = null;   // inventory refetch is keyed on selection
 
     const ZERO = '0x0000000000000000000000000000000000000000';
@@ -216,26 +224,12 @@ export function useArenaEngine() {
       const latest = await provider.getBlockNumber();
       const from = Math.max(0, latest - EVENT_LOOKBACK_BLOCKS);
 
-      // MatchCreated events are intentionally NOT upserted here (the walk loop
-      // calls getMatch() for correct bench data — upserting empty benches would
-      // render premature empty slots). We DO read them to learn each match's
-      // participants, so the settled loop below can identify the loser and
-      // backfill recent W/L form. Without this, recentResults starts empty on
-      // load and only accrues from matches that settle while the page is open.
-      const participants: Record<number, { attackerId: number; defenderId: number }> = {};
-      try {
-        const createdFilter = arena.filters.MatchCreated();
-        const createdEvents = await arena.queryFilter(createdFilter, from, latest);
-        for (const ev of createdEvents) {
-          if (!(ev instanceof EventLog)) continue;
-          const a = ev.args!;
-          participants[Number(a[0])] = { attackerId: Number(a[1]), defenderId: Number(a[2]) };
-        }
-      } catch (e) { console.warn('[arena] MatchCreated history fetch failed', e); }
+      // MatchCreated events are intentionally NOT upserted here.
+      // The walk loop calls getMatch() which provides correct bench data.
+      // Upserting from MatchCreated would write attackerBench:[0,0,0,0,0],
+      // causing a premature render with empty slots before real data arrives.
 
-      // MatchSettled — drives highlight detection + recent-form backfill.
-      // queryFilter returns logs oldest-first; recentResults is most-recent-first,
-      // so prepending each result in iteration order leaves the newest at index 0.
+      // MatchSettled — drives highlight detection
       try {
         const settledFilter = arena.filters.MatchSettled();
         const events = await arena.queryFilter(settledFilter, from, latest);
@@ -263,20 +257,55 @@ export function useArenaEngine() {
             loserEloAfter: newLoseElo,
           });
           seenMatchSettled.current.add(matchId);
-
-          // Backfill recent W/L. Loser = the participant that isn't the winner.
-          const pair = participants[matchId];
-          const loserId = pair
-            ? (pair.attackerId === winnerId ? pair.defenderId : pair.attackerId)
-            : 0;
-          if (winnerId) {
-            recentResultsRef.current[winnerId] = ['W' as const, ...(recentResultsRef.current[winnerId] ?? [])].slice(0, 5);
-          }
-          if (loserId) {
-            recentResultsRef.current[loserId] = ['L' as const, ...(recentResultsRef.current[loserId] ?? [])].slice(0, 5);
-          }
         }
       } catch (e) { console.warn('[arena] MatchSettled history fetch failed', e); }
+    };
+
+    // Backfill the leaderboard's recent W/L form once, by walking matches
+    // backward from `nextMatchId` via getMatch(). Reading by sequential matchId
+    // (not getLogs) sidesteps the event lookback window entirely — older matches
+    // that scrolled past EVENT_LOOKBACK_BLOCKS still count. Stops early once
+    // every roster agent has 5 results; hard-capped at FORM_WALK_CAP matches so
+    // a sparsely-played agent can't drag the walk back forever. Runs once; the
+    // live MatchSettled handler keeps the form fresh afterwards.
+    const backfillRecentForm = async (agentIds: number[]) => {
+      if (formBackfilled || !arena) return;
+      const nextId = Number(await arena.nextMatchId());
+      if (nextId <= 1) { formBackfilled = true; return; }
+      const floor = Math.max(1, nextId - FORM_WALK_CAP);
+      const form: Record<number, ('W' | 'L')[]> = {};
+      const allFilled = () => agentIds.every((id) => (form[id]?.length ?? 0) >= 5);
+
+      // Walk newest→oldest in batches; pushing in this order leaves the most
+      // recent result at index 0 (recentResults is most-recent-first).
+      outer:
+      for (let hi = nextId - 1; hi >= floor; hi -= FORM_WALK_BATCH) {
+        const lo = Math.max(floor, hi - FORM_WALK_BATCH + 1);
+        const ids: number[] = [];
+        for (let mid = hi; mid >= lo; mid--) ids.push(mid);
+        const rows = await Promise.all(
+          ids.map((mid) => arena!.getMatch(mid).catch(() => null)),
+        );
+        for (const r of rows) {
+          if (!r) continue;
+          const settled = Boolean(r[6]);
+          const winnerId = Number(r[7]);
+          if (!settled || !winnerId) continue;        // skip pending/unresolved
+          const attackerId = Number(r[0]);
+          const defenderId = Number(r[1]);
+          const loserId = winnerId === attackerId ? defenderId : attackerId;
+          for (const [id, res] of [[winnerId, 'W'], [loserId, 'L']] as const) {
+            if (!id) continue;
+            const arr = form[id] ?? (form[id] = []);
+            if (arr.length < 5) arr.push(res);
+          }
+          if (allFilled()) break outer;
+        }
+      }
+      // Replace wholesale — this is the one-time source of truth at load; the
+      // live handler appends from here on.
+      recentResultsRef.current = form;
+      formBackfilled = true;
     };
 
     const pullData = async () => {
@@ -340,6 +369,10 @@ export function useArenaEngine() {
           }
           setNextMatchmakingAt(soonestRemaining !== null ? wallNow + soonestRemaining : null);
         } catch { /* pre-#33 arena — no tier cooldowns */ }
+
+        // Recent W/L form, once, before ghosts are built so each ghost captures
+        // its filled strip (recentResults is snapshotted per-ghost below).
+        if (!formBackfilled) await backfillRecentForm(agentIds.map(Number));
 
         const ghosts: Record<number, ArenaGhost> = {};
         await Promise.all(agentIds.map(async (aId) => {
