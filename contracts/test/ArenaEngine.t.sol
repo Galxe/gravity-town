@@ -202,19 +202,7 @@ contract ArenaEngineTest is Test {
     //                     BUCKETING
     // ══════════════════════════════════════════════════════════
 
-    function test_submit_enters_correct_elo_bucket() public {
-        uint256 aid = _createAgent(player1);
-        _buy(aid, player1, 1, 0);
-
-        vm.prank(player1);
-        arena.submit(aid);
-
-        // Default ELO 1000 → bucket = 1000/200 = 5
-        assertEq(arena.bucketOf(aid), 5);
-        assertEq(arena.bucketSize(5), 1);
-    }
-
-    function test_matchmaking_pairs_within_bucket() public {
+    function test_matchmaking_pairs_within_tier() public {
         uint256 a1 = _createAgent(player1);
         uint256 a2 = _createAgent(player2);
         uint256 a3 = _createAgent(player3);
@@ -231,9 +219,9 @@ contract ArenaEngineTest is Test {
         vm.prank(player3); arena.submit(a3);
         vm.prank(player4); arena.submit(a4);
 
-        assertEq(arena.bucketSize(5), 4);
+        assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 4);
 
-        uint256 created = arena.runMatchmaking(5);
+        uint256 created = arena.runMatchmaking(ArenaEngine.Tier.Silver);
         assertEq(created, 2); // 4 ghosts → 2 matches
 
         // Inspect both matches: every participant should be one of {a1..a4}
@@ -256,9 +244,9 @@ contract ArenaEngineTest is Test {
         _buy(a2, player2, 1, 0);
         vm.prank(player1); arena.submit(a1);
         vm.prank(player2); arena.submit(a2);
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
         vm.expectRevert("rate limited");
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -273,7 +261,7 @@ contract ArenaEngineTest is Test {
 
         vm.prank(player1); arena.submit(a1);
         vm.prank(player2); arena.submit(a2);
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
 
         (ArenaEngine.Turn[] memory turns1, uint256 winner1) = arena.simulateMatch(1);
         (ArenaEngine.Turn[] memory turns2, uint256 winner2) = arena.simulateMatch(1);
@@ -297,7 +285,7 @@ contract ArenaEngineTest is Test {
 
         vm.prank(player1); arena.submit(a1);
         vm.prank(player2); arena.submit(a2);
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
 
         ( , uint16 e1Before, , , ) = arena.getGhost(a1);
         ( , uint16 e2Before, , , ) = arena.getGhost(a2);
@@ -329,7 +317,7 @@ contract ArenaEngineTest is Test {
         _buy(a2, player2, 1, 0);
         vm.prank(player1); arena.submit(a1);
         vm.prank(player2); arena.submit(a2);
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
         arena.settleMatch(1);
         vm.expectRevert("already settled");
         arena.settleMatch(1);
@@ -436,7 +424,7 @@ contract ArenaEngineTest is Test {
         _buy(a2, player2, 1, 0);  // Mineworker 2/3
         vm.prank(player1); arena.submit(a1);
         vm.prank(player2); arena.submit(a2);
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
         arena.settleMatch(1);
 
         ( , , , , , , , uint256 winnerId) = arena.getMatch(1);
@@ -453,37 +441,6 @@ contract ArenaEngineTest is Test {
         assertEq(entries[0].relatedAgents[0], winnerId);
     }
 
-    function test_settle_updates_bucket_on_cross_boundary() public {
-        // Setup: a1 starts at bucket 5 (ELO 1000). After settling enough wins to
-        // cross 1200 it should land in bucket 6. We force the cross-boundary by
-        // running multiple matches with a much weaker opponent.
-        uint256 a1 = _createAgent(player1);
-        uint256 a2 = _createAgent(player2);
-        _buy(a1, player1, 10, 0); _buy(a1, player1, 10, 1); _buy(a1, player1, 10, 2);
-        _buy(a2, player2, 1, 0);
-        vm.prank(player1); arena.submit(a1);
-        vm.prank(player2); arena.submit(a2);
-
-        // Run multiple matchmaking cycles + settle; a1 should accumulate wins.
-        uint16 startBucket = arena.bucketOf(a1);
-        assertEq(startBucket, 5);
-
-        uint256 nextMatchId = arena.nextMatchId();
-        arena.runMatchmaking(5);
-        arena.settleMatch(nextMatchId);
-
-        // After at least one win, a1's ELO increased by at least 1.
-        ( , uint16 elo1, uint16 b1, , ) = arena.getGhost(a1);
-        // bucket is elo/200; if elo crossed 1200 the bucket id would be 6.
-        assertEq(b1, elo1 / 200);
-        // The mapping should be self-consistent
-        if (elo1 >= 1200) {
-            assertEq(arena.bucketOf(a1), 6);
-        } else {
-            assertEq(arena.bucketOf(a1), 5);
-        }
-    }
-
     // ──────────────────── Matchmaking edges ────────────────────
 
     function test_runMatchmaking_odd_n_one_sits_out() public {
@@ -497,7 +454,7 @@ contract ArenaEngineTest is Test {
         vm.prank(player2); arena.submit(a2);
         vm.prank(player3); arena.submit(a3);
 
-        uint256 created = arena.runMatchmaking(5);
+        uint256 created = arena.runMatchmaking(ArenaEngine.Tier.Silver);
         assertEq(created, 1, "3 ghosts -> 1 pair, 1 sits out");
     }
 
@@ -511,7 +468,7 @@ contract ArenaEngineTest is Test {
         vm.prank(player1); arena.submit(a1);
         vm.prank(player2); arena.submit(a2);
 
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
         ( , , uint8[5] memory attBenchBefore, uint8[5] memory defBenchBefore, , , , ) = arena.getMatch(1);
 
         // After matchmaking, a1 buys a different unit at slot 1 — the queued
@@ -523,27 +480,6 @@ contract ArenaEngineTest is Test {
             assertEq(attBenchBefore[i], attBenchAfter[i], "attacker bench snapshot mutated");
             assertEq(defBenchBefore[i], defBenchAfter[i], "defender bench snapshot mutated");
         }
-    }
-
-    function test_runMatchmaking_respects_bucket_cap() public {
-        // Stand up one real agent who'll do the failing submit. Then force the
-        // bucket array length to MAX_BUCKET_SIZE directly via storage so we
-        // don't have to spin up 256 real agents (gas-prohibitive). The cap
-        // check inside _addToBucket only reads `.length`, so this exercises the
-        // exact branch we care about.
-        uint16 cap = arena.MAX_BUCKET_SIZE();
-
-        // bucketGhosts is storage slot 4 on ArenaEngine. Slot for bucketGhosts[5].length:
-        bytes32 lengthSlot = keccak256(abi.encode(uint16(5), uint256(4)));
-        vm.store(address(arena), lengthSlot, bytes32(uint256(cap)));
-        assertEq(arena.bucketSize(5), cap, "bucket length write didn't take");
-
-        // Now a real submit at bucket 5 must revert with "bucket full".
-        uint256 aid = _createAgent(player1);
-        _buy(aid, player1, 1, 0);
-        vm.prank(player1);
-        vm.expectRevert("bucket full");
-        arena.submit(aid);
     }
 
     // ──────────────────── Buy / freeze / roll guards ────────────────────
@@ -617,7 +553,7 @@ contract ArenaEngineTest is Test {
         _buy(a2, player2, 1, 0); // mirror unit on defender (also +1 ATK)
         vm.prank(player1); arena.submit(a1);
         vm.prank(player2); arena.submit(a2);
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
 
         (ArenaEngine.Turn[] memory turns, ) = arena.simulateMatch(1);
         // First turn: left attacks right. Damage equals attacker's ATK
@@ -641,7 +577,7 @@ contract ArenaEngineTest is Test {
         _buy(a2, player2, 2, 0); // Stoneguard
         vm.prank(player1); arena.submit(a1);
         vm.prank(player2); arena.submit(a2);
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
 
         // The Mineworker's ATK in this match's snapshotted state must reflect
         // both buffs. We assert by replaying the match and looking for at least
@@ -707,7 +643,7 @@ contract ArenaEngineTest is Test {
         _buy(a2, player2, 1, 0);
         vm.prank(player1); arena.submit(a1);
         vm.prank(player2); arena.submit(a2);
-        arena.runMatchmaking(5);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
 
         ( , uint16 e1Before, , , ) = arena.getGhost(a1);
         ( , uint16 e2Before, , , ) = arena.getGhost(a2);
@@ -781,7 +717,7 @@ contract ArenaEngineTest is Test {
             // Absolute warp so the rate-limit period clears regardless of where
             // block.timestamp happens to land between vm. calls.
             vm.warp(baseTs + (i + 1) * 1801);
-            arena.runMatchmaking(5);
+            arena.runMatchmaking(ArenaEngine.Tier.Silver);
             uint256 mid = arena.nextMatchId() - 1;
             (uint256 atkId, uint256 defId, , , , , , ) = arena.getMatch(mid);
             ( , uint256 winner) = arena.simulateMatch(mid);
