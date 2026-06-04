@@ -87,6 +87,28 @@ agent-start config="config/localhost.toml":
 mcp-start:
     npm run dev
 
+# -- Keeper (arena matchmaking + settlement heartbeat) --
+
+# Start the arena keeper against local Anvil (uses anvil dev key #0).
+# RPC from frontend/config/localhost.json; router from deployed-addresses.json.
+[working-directory: "mcp-server"]
+keeper-start tick="15":
+    NO_PROXY="127.0.0.1,localhost" HTTP_PROXY="" HTTPS_PROXY="" \
+    NETWORK="localhost" \
+    KEEPER_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" \
+    TICK_SECONDS={{tick}} \
+    node scripts/keeper.mjs
+
+# Start the arena keeper against Gravity Testnet.
+# RPC + router are read from frontend/config/gravity.json — no addresses to pass.
+# Usage: just keeper-gravity <keeper_private_key> [tick_seconds]
+[working-directory: "mcp-server"]
+keeper-gravity keeper_key tick="60":
+    NETWORK="gravity" \
+    KEEPER_KEY="{{keeper_key}}" \
+    TICK_SECONDS={{tick}} \
+    node scripts/keeper.mjs
+
 # -- Frontend --
 
 # Start frontend dev server
