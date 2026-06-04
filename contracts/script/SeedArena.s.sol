@@ -4,18 +4,19 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "../src/GameEngine.sol";
 import "../src/ArenaEngine.sol";
+import "../src/GTreasury.sol";
 
 interface IRouterMin {
     function gameEngine() external view returns (address);
     function arenaEngine() external view returns (address);
 }
 
-/// @notice Seed the Arena on a FRESH local/dev chain so the frontend has data:
-///         creates a handful of named agents, builds a distinct 5-unit bench for
-///         each, submits them, pairs them, and settles the matches.
+/// @notice Seed the Arena on a FRESH local/dev chain so the frontend has data.
+///         Creates named agents spread across all three G-tiers, gives each a
+///         full 5-unit bench (buy card → place on slot), submits them, runs
+///         tier matchmaking, and settles the matches.
 ///
-/// Assumes a freshly deployed chain (no name collisions). To reseed, restart
-/// anvil + redeploy first.
+/// Assumes a freshly deployed chain. To reseed, restart anvil + redeploy first.
 ///
 /// Usage:
 ///   NO_PROXY=127.0.0.1,localhost \
@@ -30,9 +31,15 @@ contract SeedArena is Script {
 
         GameEngine engine = GameEngine(IRouterMin(router).gameEngine());
         ArenaEngine arena = ArenaEngine(IRouterMin(router).arenaEngine());
+        GTreasury gt = arena.gTreasury();
 
         string[6] memory names = ["Vex", "Rook", "Mira", "Nova", "Kael", "Zara"];
         uint8[4] memory stats = [uint8(5), 5, 5, 5];
+        // G funded per agent. After spending ~20G on a 5-card bench the remaining
+        // balance lands two agents in each tier: Bronze(<100), Silver(100-999),
+        // Gold(>=1000). Thresholds come from the contract; these are chosen to
+        // sit comfortably inside each band post-purchase.
+        uint256[6] memory gFund = [uint256(120), 120, 700, 700, 6000, 6000];
 
         vm.startBroadcast(deployerKey);
 
@@ -43,22 +50,23 @@ contract SeedArena is Script {
                 stats,
                 owner
             );
+            gt.fundAgentG(agentId, gFund[k]);
 
             uint8[5] memory bench = _benchFor(k);
             for (uint8 s = 0; s < 5; s++) {
                 if (bench[s] != 0) {
-                    arena.buy(agentId, bench[s], s);
+                    uint256 cardId = arena.buy(agentId, bench[s]); // mint to inventory
+                    arena.placeCard(agentId, cardId, s);           // place on bench
                 }
             }
             arena.submit(agentId);
         }
 
-        // Fresh ghosts all start at ELO 1000 → bucket 5. Run the band around it
-        // so post-settlement ELO drift into neighbouring buckets is covered too.
+        // Pair + settle within each tier.
         uint256 startMatch = arena.nextMatchId();
-        for (uint16 bucketId = 4; bucketId <= 6; bucketId++) {
-            try arena.runMatchmaking(bucketId) {} catch {}
-        }
+        arena.runMatchmaking(ArenaEngine.Tier.Bronze);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
+        arena.runMatchmaking(ArenaEngine.Tier.Gold);
         uint256 endMatch = arena.nextMatchId();
 
         for (uint256 m = startMatch; m < endMatch; m++) {

@@ -8,13 +8,18 @@ const FALLBACK_RPC_URL = process.env.NEXT_PUBLIC_RPC_URL        || 'http://127.0
 const FALLBACK_ROUTER  = process.env.NEXT_PUBLIC_ROUTER_ADDRESS || '0x0000000000000000000000000000000000000000';
 const FALLBACK_CHAIN   = process.env.NEXT_PUBLIC_CHAIN_ID ? Number(process.env.NEXT_PUBLIC_CHAIN_ID) : undefined;
 
-// Router v2 (7-tuple) — preferred. Falls back to legacy 6-tuple if Router not upgraded.
+// Router address discovery — V3 (9-tuple, adds cardLedger + gTreasury from #32)
+// → V2 (7-tuple, adds arenaEngine) → V1 (6-tuple). We probe the richest getter
+// first and fall back, so an un-upgraded Router never throws "method not found".
 const ROUTER_ABI = [
+  'function getAddressesV3() view returns (address,address,address,address,address,address,address,address,address)',
   'function getAddressesV2() view returns (address,address,address,address,address,address,address)',
   'function getAddresses() view returns (address,address,address,address,address,address)',
   'function arenaEngine() view returns (address)',
+  'function gTreasury() view returns (address)',
 ];
 
+// #32's GTreasury — #33 only needs read access to balances for tier display.
 const REGISTRY_ABI = [
   'function getAgent(uint256) view returns (string, string, uint8[4], uint256, uint256)',
   'function getAllAgentIds() view returns (uint256[])',
@@ -26,13 +31,14 @@ const ARENA_ABI = [
   'function simulateMatch(uint256) view returns (tuple(uint8 attackerSide, uint8 attackerSlot, uint8 defenderSlot, uint16 damage, bool defenderDied)[] turns, uint256 winnerAgentId)',
   'function getInitialStats(uint256) view returns (uint16[5] leftAtk, uint16[5] leftHp, uint16[5] rightAtk, uint16[5] rightHp)',
   'function nextMatchId() view returns (uint256)',
-  'function lastMatchmakingAt(uint16) view returns (uint64)',
-  'function MATCHMAKING_PERIOD() view returns (uint32)',
-  'function bucketOf(uint256) view returns (uint16)',
+  // #33 — batched canonical tier (0=Bronze,1=Silver,2=Gold) + G balance for the
+  // whole leaderboard in ONE call, plus the gTreasury address the arena reads from
+  // (the fallback source when the Router lacks getAddressesV3).
+  'function tierStates(uint256[]) view returns (uint8[] tiers, uint256[] gBalances)',
+  'function gTreasury() view returns (address)',
   // Events — used to drive ongoing list + highlight ticker.
   'event MatchCreated(uint256 indexed matchId, uint256 indexed attackerId, uint256 indexed defenderId, uint64 seed)',
   'event MatchSettled(uint256 indexed matchId, uint256 indexed winnerId, uint16 newWinnerElo, uint16 newLoserElo)',
-  'event MatchmakingRan(uint16 indexed bucketId, uint256 matchesCreated)',
 ];
 
 const POLL_MS = 4000;
@@ -79,29 +85,48 @@ export function useArenaEngine() {
 
     let registry: Contract;
     let arena: Contract;
+    let hasGTreasury = false;   // whether the arena's G economy is wired (gates the G column)
     let arenaAddr: string = '';
     let resolved = false;
     let initialEventsPulled = false;
+
+    const ZERO = '0x0000000000000000000000000000000000000000';
 
     const resolveContracts = async () => {
       if (resolved) return;
       const router = new Contract(ROUTER_ADDR, ROUTER_ABI, provider);
       let registryAddr = '';
+      let gtAddr = '';
       try {
-        const tuple = await router.getAddressesV2();
-        registryAddr = tuple[0];
-        arenaAddr = tuple[6];
+        // V3 tuple (#32 Router): [0]registry .. [6]arenaEngine, [7]gTreasury, [8]cardLedger.
+        const v3 = await router.getAddressesV3();
+        registryAddr = v3[0];
+        arenaAddr = v3[6];
+        gtAddr = v3[7];
       } catch {
-        // Old router without V2 — fall back to the 6-tuple call.
-        const tuple6 = await router.getAddresses();
-        registryAddr = tuple6[0];
-        // legacy router — try arenaEngine() getter as fallback
-        try { arenaAddr = await router.arenaEngine(); } catch { arenaAddr = ''; }
+        try {
+          const tuple = await router.getAddressesV2();
+          registryAddr = tuple[0];
+          arenaAddr = tuple[6];
+        } catch {
+          // Oldest router — fall back to the 6-tuple call.
+          const tuple6 = await router.getAddresses();
+          registryAddr = tuple6[0];
+          try { arenaAddr = await router.arenaEngine(); } catch { arenaAddr = ''; }
+        }
       }
       registry = new Contract(registryAddr, REGISTRY_ABI, provider);
-      if (arenaAddr && arenaAddr !== '0x0000000000000000000000000000000000000000') {
+      if (arenaAddr && arenaAddr !== ZERO) {
         arena = new Contract(arenaAddr, ARENA_ABI, provider);
         setStaticConfig(arenaAddr);
+        // gTreasury source ladder: Router V3 (above) → ArenaEngine.gTreasury().
+        // During the #32-mock period the Router has no V3, so the arena getter is
+        // the live source. We only need to know whether it's wired — balances come
+        // through arena.tierStates(). Unset → G column hidden, tiers default Bronze.
+        if (!gtAddr || gtAddr === ZERO) {
+          try { gtAddr = await arena.gTreasury(); } catch { gtAddr = ''; }
+        }
+        hasGTreasury = !!gtAddr && gtAddr !== ZERO;
       } else {
         setStaticConfig(null);
       }
@@ -186,11 +211,26 @@ export function useArenaEngine() {
           names[id] = name;
         }));
 
+        // #33 — batched tier + G for the whole roster in ONE call (replaces the
+        // old per-agent _tierFor + gBalance pair). Best-effort: a pre-#33 arena
+        // without tierStates leaves the map empty → tiers default Bronze, G hidden.
+        const tierOf: Record<number, 0 | 1 | 2> = {};
+        const gOf: Record<number, number> = {};
+        try {
+          const [tiers, gBalances] = await arena.tierStates(agentIds);
+          agentIds.forEach((aId, i) => {
+            const id = Number(aId);
+            tierOf[id] = Number(tiers[i]) as 0 | 1 | 2;
+            if (hasGTreasury) gOf[id] = Number(gBalances[i]);
+          });
+        } catch { /* pre-#33 arena — leave tier/G unset */ }
+
         const ghosts: Record<number, ArenaGhost> = {};
         await Promise.all(agentIds.map(async (aId) => {
           const id = Number(aId);
           try {
             const [bench, elo, bucketId, lastUpdate, exists] = await arena.getGhost(id);
+
             ghosts[id] = {
               agentId: id,
               agentName: names[id] ?? `Agent #${id}`,
@@ -200,6 +240,8 @@ export function useArenaEngine() {
               lastUpdate: Number(lastUpdate),
               exists: Boolean(exists),
               recentResults: recentResultsRef.current[id] ?? [],
+              tier: tierOf[id],                                  // #33 — from batched tierStates
+              gBalance: hasGTreasury ? gOf[id] : undefined,      // hidden until G economy wired
             };
           } catch { /* ignore */ }
         }));
@@ -285,15 +327,6 @@ export function useArenaEngine() {
           }
         }
 
-        // Pull bucket matchmaking timestamps for the buckets we know about.
-        const buckets = new Set<number>();
-        for (const g of Object.values(ghosts)) buckets.add(g.bucketId);
-        await Promise.all(Array.from(buckets).map(async (b) => {
-          try {
-            const ts = await arena.lastMatchmakingAt(b);
-            setLastMatchmaking(b, Number(ts));
-          } catch { /* ignore */ }
-        }));
       } catch (err) {
         console.error('[arena] poll error:', err);
       } finally {

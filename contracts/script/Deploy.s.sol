@@ -9,6 +9,8 @@ import "../src/LocationLedger.sol";
 import "../src/InboxLedger.sol";
 import "../src/EvaluationLedger.sol";
 import "../src/GameEngine.sol";
+import "../src/GTreasury.sol";
+import "../src/CardLedger.sol";
 import "../src/ArenaEngine.sol";
 import "../src/Router.sol";
 
@@ -63,6 +65,20 @@ contract DeployScript is Script {
         );
         GameEngine engine = GameEngine(address(engineProxy));
 
+        // ──── Deploy Arena G treasury + persistent card ledger ────
+        GTreasury treasuryImpl = new GTreasury();
+        ERC1967Proxy treasuryProxy = new ERC1967Proxy(
+            address(treasuryImpl),
+            abi.encodeCall(GTreasury.initialize, (address(registry)))
+        );
+
+        CardLedger cardLedgerImpl = new CardLedger();
+        ERC1967Proxy cardLedgerProxy = new ERC1967Proxy(
+            address(cardLedgerImpl),
+            abi.encodeCall(CardLedger.initialize, (address(registry), address(treasuryProxy)))
+        );
+        CardLedger cardLedger = CardLedger(address(cardLedgerProxy));
+
         // ──── Deploy Router ────
         ERC1967Proxy routerProxy = new ERC1967Proxy(
             address(routerImpl),
@@ -76,8 +92,9 @@ contract DeployScript is Script {
             ))
         );
 
-        // ──── Grant GameEngine operator on Registry ────
+        // ──── Grant operators on Registry ────
         registry.addOperator(address(engine));
+        registry.addOperator(address(cardLedgerProxy));
 
         // ──── Set ledgers on GameEngine ────
         engine.setAgentLedger(address(agentLedgerProxy));
@@ -90,13 +107,21 @@ contract DeployScript is Script {
             abi.encodeCall(ArenaEngine.initialize, (
                 address(registry),
                 address(engine),
-                address(evalLedgerProxy)
+                address(evalLedgerProxy),
+                address(treasuryProxy),
+                address(cardLedgerProxy)
             ))
         );
-        // Arena needs to be operator so it can call GameEngine.spendOre and
-        // EvaluationLedger.write.
+        // Arena needs to mint cards, spend/credit G, and write evaluations.
         registry.addOperator(address(arenaProxy));
+        cardLedger.setArenaEngine(address(arenaProxy));
         Router(address(routerProxy)).setArenaEngine(address(arenaProxy));
+        Router(address(routerProxy)).setGTreasury(address(treasuryProxy));
+        Router(address(routerProxy)).setCardLedger(address(cardLedgerProxy));
+
+        uint8[4] memory seedStats = [uint8(5), 5, 5, 5];
+        (uint256 seedAgentId, ) = engine.createAgent("MarketSeed", "arena market maker", seedStats, operator);
+        ArenaEngine(address(arenaProxy)).bootstrapMarket(seedAgentId);
 
         // ──── Initialize World Bible ────
         engine.initWorldBible();
@@ -111,10 +136,22 @@ contract DeployScript is Script {
         console.log("EvaluationLedger (proxy):", address(evalLedgerProxy));
         console.log("GameEngine       (proxy):", address(engineProxy));
         console.log("ArenaEngine      (proxy):", address(arenaProxy));
+        console.log("GTreasury        (proxy):", address(treasuryProxy));
+        console.log("CardLedger       (proxy):", address(cardLedgerProxy));
 
         string memory json = string.concat(
             '{\n',
-            '  "routerAddress": "', vm.toString(address(routerProxy)), '"\n',
+            '  "routerAddress": "', vm.toString(address(routerProxy)), '",\n',
+            '  "agentRegistry": "', vm.toString(address(registryProxy)), '",\n',
+            '  "agentLedger": "', vm.toString(address(agentLedgerProxy)), '",\n',
+            '  "locationLedger": "', vm.toString(address(locationLedgerProxy)), '",\n',
+            '  "inboxLedger": "', vm.toString(address(inboxLedgerProxy)), '",\n',
+            '  "evaluationLedger": "', vm.toString(address(evalLedgerProxy)), '",\n',
+            '  "gameEngine": "', vm.toString(address(engineProxy)), '",\n',
+            '  "arenaEngine": "', vm.toString(address(arenaProxy)), '",\n',
+            '  "gTreasury": "', vm.toString(address(treasuryProxy)), '",\n',
+            '  "cardLedger": "', vm.toString(address(cardLedgerProxy)), '",\n',
+            '  "marketSeedAgentId": "', vm.toString(seedAgentId), '"\n',
             '}'
         );
         vm.writeFile("../deployed-addresses.json", json);
