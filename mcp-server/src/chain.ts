@@ -133,6 +133,7 @@ const ARENA_ENGINE_ABI = [
 const G_TREASURY_ABI = [
   "function gBalance(uint256 agentId) view returns (uint256)",
   "function creditG(uint256 agentId, uint256 amount, bytes32 reason)",
+  "function depositG(uint256 agentId) payable",
   "event GCredited(uint256 indexed agentId, uint256 amount, bytes32 reason)",
 ];
 
@@ -1030,6 +1031,15 @@ export class ChainClient {
       hp: u?.hp,
       ability: u?.ability,
     };
+  }
+
+  async arenaDepositG(agentId: number, amountG: number) {
+    const treasury = this.requireGTreasury();
+    const value = ethers.BigNumber.from(amountG);
+    const tx = await treasury.depositG(agentId, { value });
+    const receipt = await tx.wait();
+    const gBalance = Number(await treasury.gBalance(agentId));
+    return { agentId, depositedG: amountG, g: gBalance, txHash: receipt.transactionHash };
   }
 
   async creditAgentG(agentId: number, amount: number) {
