@@ -154,7 +154,32 @@ export function ReplayCanvas({ match, attackerName, defenderName }: Props) {
       )}
 
       {/* Battle grid */}
-      <div className="flex items-center justify-center gap-2 px-2 py-4 rounded-lg bg-gradient-to-b from-zinc-900/60 to-zinc-950/60 border border-zinc-800">
+      <div className="relative flex items-center justify-center gap-2 px-2 py-4 rounded-lg bg-gradient-to-b from-zinc-900/60 to-zinc-950/60 border border-zinc-800">
+        {/* Winner stamp overlay */}
+        {done && sim && (() => {
+          const winnerSide = sim.winnerId === match.attackerId ? 'left' : 'right';
+          const winnerName = sim.winnerId === match.attackerId ? attackerName : defenderName;
+          return (
+            <div
+              className={[
+                'absolute inset-y-0 w-[45%] flex items-center justify-center pointer-events-none z-20',
+                winnerSide === 'left' ? 'left-0' : 'right-0',
+              ].join(' ')}
+            >
+              <div className="animate-arena-stamp flex flex-col items-center gap-1 select-none">
+                <div className="text-5xl">🏆</div>
+                <div className={[
+                  'text-[11px] font-black uppercase tracking-widest px-2 py-0.5 rounded border-2',
+                  'text-amber-300 border-amber-400 bg-amber-950/80',
+                ].join(' ')}>
+                  {winnerName}
+                </div>
+                <div className="text-[10px] text-amber-500 font-bold uppercase tracking-widest">Winner</div>
+              </div>
+            </div>
+          );
+        })()}
+
         <div className="flex gap-1.5">
           {renderBench(attackerBench, leftHp, leftMax, 'left')}
         </div>

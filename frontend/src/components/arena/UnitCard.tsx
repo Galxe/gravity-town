@@ -91,21 +91,17 @@ export function UnitCard({
   ].filter(Boolean).join(' ');
 
   return (
-    <div ref={outerRef} className={outerClasses} title={`${u.name} — ${u.trigger}: ${u.ability}`}>
+    <div ref={outerRef} className={`relative ${outerClasses}`} title={`${u.name} — ${u.trigger}: ${u.ability}`}>
+      {/* Damage float — outside the scale-x-[-1] inner div so text is never mirrored */}
+      {floatingDamage != null && floatingDamage > 0 && (
+        <span
+          key={hitKey}
+          className="absolute -top-6 left-1/2 -translate-x-1/2 text-red-400 font-bold text-sm pointer-events-none select-none z-10 animate-arena-damage-float"
+        >
+          -{floatingDamage}
+        </span>
+      )}
       <div className={innerClasses}>
-        {floatingDamage != null && floatingDamage > 0 && (
-          <span
-            key={hitKey}
-            className={[
-              'absolute -top-6 left-1/2 -translate-x-1/2 text-red-400 font-bold text-sm',
-              'pointer-events-none select-none z-10 animate-arena-damage-float',
-              side === 'right' ? 'scale-x-[-1]' : '',
-            ].join(' ')}
-          >
-            -{floatingDamage}
-          </span>
-        )}
-
         <div className={side === 'right' ? 'scale-x-[-1] flex flex-col items-center w-full' : 'flex flex-col items-center w-full'}>
           <div className={`text-[9px] uppercase tracking-wide ${TIER_TEXT[u.tier]}`}>T{u.tier}</div>
           <div className="text-2xl leading-none mt-0.5">{u.emoji}</div>

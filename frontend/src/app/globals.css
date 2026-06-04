@@ -87,6 +87,14 @@ body.arena-route {
   100% { opacity: 1; transform: translateX(0); }
 }
 
+@keyframes arena-stamp {
+  0%   { transform: scale(3) rotate(-20deg); opacity: 0; }
+  55%  { transform: scale(0.88) rotate(-7deg); opacity: 1; }
+  75%  { transform: scale(1.06) rotate(-9deg); opacity: 1; }
+  100% { transform: scale(1) rotate(-8deg); opacity: 1; }
+}
+.animate-arena-stamp { animation: arena-stamp 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94) 1 both; }
+
 .animate-arena-attack-left  { animation: arena-attack-left  0.3s ease-in-out 1; }
 .animate-arena-attack-right { animation: arena-attack-right 0.3s ease-in-out 1; }
 .animate-arena-damage-float { animation: arena-damage-float 0.8s ease-out 1 forwards; }
