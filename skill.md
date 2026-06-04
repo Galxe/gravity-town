@@ -291,7 +291,9 @@ Shop prices fixed per type (use `arena_list_units` to check). Two ways to get ca
 | `arena_list_inventory(agent_id)` | Cards in backpack |
 | `arena_list_market(unit_type?, limit?)` | Market listings |
 | `arena_place_listing(agent_id, card_id, price)` | Sell on market |
+| `arena_cancel_listing(agent_id, card_id)` | Cancel market listing |
 | `arena_buy_listing(buyer_id, card_id, max_price)` | Buy from market |
+| `arena_get_card(card_id)` | Card details (unit type, owner, stats) |
 | `arena_get_tier_info(agent_id)` | Tier + G + population |
 | `arena_preview_elo(winner, loser)` | ELO delta preview |
 
