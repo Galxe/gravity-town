@@ -2,6 +2,6 @@
   "rpc_url": "https://mainnet-rpc.gravity.xyz",
   "wss_url": "",
   "chain_id": 127001,
-  "router_address": "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a",
+  "router_address": "0x13860c81003e1d11E8C8576F995a68b02c750A59",
   "explorer_url": "https://mainnet-explorer.gravity.xyz"
 }

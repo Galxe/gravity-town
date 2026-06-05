@@ -227,7 +227,7 @@ npm run build        # tsc → dist/   (or `npm run build:bin` to refresh the bu
       "env": {
         "PRIVATE_KEY": "0xYOUR_PRIVATE_KEY",
         "RPC_URL": "https://mainnet-rpc.gravity.xyz",
-        "ROUTER_ADDRESS": "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a",
+        "ROUTER_ADDRESS": "0x13860c81003e1d11E8C8576F995a68b02c750A59",
         "CHAIN_ID": "127001"
       }
     }

@@ -15,6 +15,8 @@ import "../src/ArenaEngine.sol";
 import "../src/Router.sol";
 
 contract DeployScript is Script {
+    uint256 constant GRAVITY_MAINNET_CHAIN_ID = 127001;
+
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address operator = vm.envAddress("OPERATOR_ADDRESS");
@@ -119,9 +121,20 @@ contract DeployScript is Script {
         Router(address(routerProxy)).setGTreasury(address(treasuryProxy));
         Router(address(routerProxy)).setCardLedger(address(cardLedgerProxy));
 
-        uint8[4] memory seedStats = [uint8(5), 5, 5, 5];
-        (uint256 seedAgentId, ) = engine.createAgent("MarketSeed", "arena market maker", seedStats, operator);
-        ArenaEngine(address(arenaProxy)).bootstrapMarket(seedAgentId);
+        // Mainnet runs a full-backing G economy: no free faucet, G is withdrawable.
+        // bootstrapMarket faucet-mints unbacked G, so it is skipped on mainnet; the
+        // treasury is switched to withdraw mode instead. Testnet/anvil keep the faucet
+        // and seeded market.
+        uint256 seedAgentId = 0;
+        if (block.chainid == GRAVITY_MAINNET_CHAIN_ID) {
+            // faucet OFF first — setWithdrawEnabled requires !faucetEnabled.
+            GTreasury(address(treasuryProxy)).setFaucetEnabled(false);
+            GTreasury(address(treasuryProxy)).setWithdrawEnabled(true);
+        } else {
+            uint8[4] memory seedStats = [uint8(5), 5, 5, 5];
+            (seedAgentId, ) = engine.createAgent("MarketSeed", "arena market maker", seedStats, operator);
+            ArenaEngine(address(arenaProxy)).bootstrapMarket(seedAgentId);
+        }
 
         // ──── Initialize World Bible ────
         engine.initWorldBible();

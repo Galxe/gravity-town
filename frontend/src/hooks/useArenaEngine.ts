@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { JsonRpcProvider, Contract, EventLog } from 'ethers';
+import { JsonRpcProvider, Contract, EventLog, formatUnits } from 'ethers';
 import { useGameStore } from '../store/useGameStore';
 import { useArenaStore, ArenaGhost, ArenaMatch, ArenaSimulation } from '../store/useArenaStore';
 import { getActiveNetwork } from '../lib/networks';
@@ -340,7 +340,8 @@ export function useArenaEngine() {
           agentIds.forEach((aId, i) => {
             const id = Number(aId);
             tierOf[id] = Number(tiers[i]) as 0 | 1 | 2;
-            if (hasGTreasury) gOf[id] = Number(gBalances[i]);
+            // gBalance is wei-denominated on-chain (1 G = 1e18); show whole-G.
+            if (hasGTreasury) gOf[id] = Number(formatUnits(gBalances[i], 18));
           });
         } catch { /* pre-#33 arena — leave tier/G unset */ }
 
