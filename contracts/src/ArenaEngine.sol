@@ -11,7 +11,6 @@ import "./GTreasury.sol";
 import "./CardLedger.sol";
 import "./AbilityLib.sol";
 import "./UnitCatalog.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
 
 /// @title ArenaEngine — async ghost autobattler (SAP-style) layered on the main world.
 /// @notice Players submit a 5-slot bench (a "ghost") that other agents fight against
@@ -796,26 +795,13 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         _setElo(winnerId, newWinElo);
         _setElo(loserId, newLoseElo);
 
+        // Write evaluation entry on the loser's evaluation ledger — "you got beaten
+        // by X". Rating 4 (slightly below mid) signals a defeat.
         if (address(evaluationLedger) != address(0)) {
+            string memory content = "arena defeat";
             uint256[] memory related = new uint256[](1);
-
-            string memory winEloStr = Strings.toString(newWinElo);
-            string memory loseEloStr = Strings.toString(newLoseElo);
-            string memory matchStr = Strings.toString(matchId);
-
             related[0] = winnerId;
-            evaluationLedger.write(
-                loserId, winnerId, 4, "arena",
-                string.concat("arena defeat in match #", matchStr, ". new elo: ", loseEloStr),
-                related
-            );
-
-            related[0] = loserId;
-            evaluationLedger.write(
-                winnerId, loserId, 6, "arena",
-                string.concat("arena victory in match #", matchStr, ". new elo: ", winEloStr),
-                related
-            );
+            evaluationLedger.write(loserId, winnerId, 4, "arena", content, related);
         }
 
         emit MatchSettled(matchId, winnerId, newWinElo, newLoseElo);
