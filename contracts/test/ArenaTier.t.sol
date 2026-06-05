@@ -27,6 +27,7 @@ contract ArenaTierTest is Test {
 
     uint8[4] defaultStats = [uint8(5), 5, 5, 5];
     uint8 constant MINEWORKER = 1; // type 1 — cheapest unit, gives a non-empty bench
+    uint256 constant G = 1e18;     // gBalance/thresholds are wei-denominated (WEI_PER_G)
 
     function setUp() public {
         AgentRegistry registryImpl = new AgentRegistry();
@@ -97,6 +98,17 @@ contract ArenaTierTest is Test {
     function _submit(uint256 id) internal { vm.prank(registry.agentOwner(id)); arena.submit(id); }
     function _withdraw(uint256 id) internal { vm.prank(registry.agentOwner(id)); arena.withdrawSubmission(id); }
 
+    /// Same as _readyAndSubmit but opts into auto-requeue (submit(id, true)).
+    function _readyAndSubmitAuto(uint256 g) internal returns (uint256 id) {
+        id = _agent();
+        treasury.fundAgentG(id, g);
+        vm.startPrank(registry.agentOwner(id));
+        uint256 cardId = arena.buy(id, MINEWORKER);
+        arena.placeCard(id, cardId, 0);
+        arena.submit(id, true);
+        vm.stopPrank();
+    }
+
     // ══════════════════════════════════════════════════════════
     //                _tierFor threshold boundaries
     // ══════════════════════════════════════════════════════════
@@ -105,20 +117,20 @@ contract ArenaTierTest is Test {
         uint256 a = _agent();
         assertEq(uint8(arena._tierFor(a)), uint8(ArenaEngine.Tier.Bronze), "0 G -> Bronze");
 
-        treasury.fundAgentG(a, 99);
+        treasury.fundAgentG(a, 99 * G);
         assertEq(uint8(arena._tierFor(a)), uint8(ArenaEngine.Tier.Bronze), "99 -> Bronze");
-        treasury.fundAgentG(a, 1); // 100
+        treasury.fundAgentG(a, 1 * G); // 100
         assertEq(uint8(arena._tierFor(a)), uint8(ArenaEngine.Tier.Silver), "100 -> Silver");
-        treasury.fundAgentG(a, 899); // 999
+        treasury.fundAgentG(a, 899 * G); // 999
         assertEq(uint8(arena._tierFor(a)), uint8(ArenaEngine.Tier.Silver), "999 -> Silver");
-        treasury.fundAgentG(a, 1); // 1000
+        treasury.fundAgentG(a, 1 * G); // 1000
         assertEq(uint8(arena._tierFor(a)), uint8(ArenaEngine.Tier.Gold), "1000 -> Gold");
     }
 
     function test_tierStates_batches_tier_and_balance() public {
-        uint256 b = _agent(); treasury.fundAgentG(b, 50);
-        uint256 s = _agent(); treasury.fundAgentG(s, 500);
-        uint256 g = _agent(); treasury.fundAgentG(g, 5000);
+        uint256 b = _agent(); treasury.fundAgentG(b, 50 * G);
+        uint256 s = _agent(); treasury.fundAgentG(s, 500 * G);
+        uint256 g = _agent(); treasury.fundAgentG(g, 5000 * G);
 
         uint256[] memory ids = new uint256[](3);
         ids[0] = b; ids[1] = s; ids[2] = g;
@@ -127,9 +139,9 @@ contract ArenaTierTest is Test {
         assertEq(tiers[0], uint8(ArenaEngine.Tier.Bronze));
         assertEq(tiers[1], uint8(ArenaEngine.Tier.Silver));
         assertEq(tiers[2], uint8(ArenaEngine.Tier.Gold));
-        assertEq(bals[0], 50);
-        assertEq(bals[1], 500);
-        assertEq(bals[2], 5000);
+        assertEq(bals[0], 50 * G);
+        assertEq(bals[1], 500 * G);
+        assertEq(bals[2], 5000 * G);
     }
 
     function test_tierStates_zero_balance_when_gTreasury_unset() public {
@@ -137,7 +149,7 @@ contract ArenaTierTest is Test {
             address(new ArenaEngine()),
             abi.encodeCall(ArenaEngine.initialize, (address(registry), address(engine), address(evalLedger), address(0), address(0)))
         )));
-        uint256 a = _agent(); treasury.fundAgentG(a, 5000);
+        uint256 a = _agent(); treasury.fundAgentG(a, 5000 * G);
         uint256[] memory ids = new uint256[](1);
         ids[0] = a;
         (uint8[] memory tiers, uint256[] memory bals) = bare.tierStates(ids);
@@ -152,7 +164,7 @@ contract ArenaTierTest is Test {
             abi.encodeCall(ArenaEngine.initialize, (address(registry), address(engine), address(evalLedger), address(0), address(0)))
         )));
         uint256 a = _agent();
-        treasury.fundAgentG(a, 5000);
+        treasury.fundAgentG(a, 5000 * G);
         assertEq(uint8(bare._tierFor(a)), uint8(ArenaEngine.Tier.Bronze));
     }
 
@@ -161,9 +173,9 @@ contract ArenaTierTest is Test {
     // ══════════════════════════════════════════════════════════
 
     function test_submit_routes_to_tier_pools() public {
-        uint256 bronze = _readyAndSubmit(50);
-        uint256 silver = _readyAndSubmit(500);
-        uint256 gold   = _readyAndSubmit(5000);
+        uint256 bronze = _readyAndSubmit(50 * G);
+        uint256 silver = _readyAndSubmit(500 * G);
+        uint256 gold   = _readyAndSubmit(5000 * G);
 
         assertEq(arena.tierPopulation(ArenaEngine.Tier.Bronze), 1, "bronze pop");
         assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 1, "silver pop");
@@ -181,9 +193,9 @@ contract ArenaTierTest is Test {
 
     function test_runMatchmaking_only_pairs_within_tier() public {
         // Two Silver, one Bronze. Running Silver pairs the two; Bronze untouched.
-        uint256 s1 = _readyAndSubmit(500);
-        uint256 s2 = _readyAndSubmit(500);
-        uint256 b1 = _readyAndSubmit(50);
+        uint256 s1 = _readyAndSubmit(500 * G);
+        uint256 s2 = _readyAndSubmit(500 * G);
+        uint256 b1 = _readyAndSubmit(50 * G);
 
         uint256 made = arena.runMatchmaking(ArenaEngine.Tier.Silver);
         assertEq(made, 1, "one silver match");
@@ -196,7 +208,7 @@ contract ArenaTierTest is Test {
     }
 
     function test_runMatchmaking_single_agent_no_match() public {
-        uint256 s1 = _readyAndSubmit(500);
+        uint256 s1 = _readyAndSubmit(500 * G);
         uint256 made = arena.runMatchmaking(ArenaEngine.Tier.Silver);
         assertEq(made, 0, "n<2 -> no match");
         assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 1, "stays pooled");
@@ -210,8 +222,8 @@ contract ArenaTierTest is Test {
     // A matched ghost is removed from its tier pool and locked via activeMatchOf,
     // so a later matchmaking run can't pair it into a second concurrent match.
     function test_matched_ghosts_are_not_rematched() public {
-        uint256 a = _readyAndSubmit(500);
-        uint256 b = _readyAndSubmit(500);
+        uint256 a = _readyAndSubmit(500 * G);
+        uint256 b = _readyAndSubmit(500 * G);
         assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 2);
 
         uint256 first = arena.nextMatchId();
@@ -233,8 +245,8 @@ contract ArenaTierTest is Test {
     // ══════════════════════════════════════════════════════════
 
     function test_withdraw_before_match_swap_pops() public {
-        uint256 a = _readyAndSubmit(50);
-        uint256 b = _readyAndSubmit(50);
+        uint256 a = _readyAndSubmit(50 * G);
+        uint256 b = _readyAndSubmit(50 * G);
         assertEq(arena.tierPopulation(ArenaEngine.Tier.Bronze), 2);
 
         _withdraw(a);
@@ -247,8 +259,8 @@ contract ArenaTierTest is Test {
     }
 
     function test_withdraw_reverts_when_in_active_match() public {
-        uint256 a = _readyAndSubmit(50);
-        uint256 b = _readyAndSubmit(50);
+        uint256 a = _readyAndSubmit(50 * G);
+        uint256 b = _readyAndSubmit(50 * G);
         arena.runMatchmaking(ArenaEngine.Tier.Bronze); // both now matched
 
         vm.prank(registry.agentOwner(a));
@@ -273,12 +285,12 @@ contract ArenaTierTest is Test {
     // ══════════════════════════════════════════════════════════
 
     function test_tier_locked_until_settle_then_recomputes() public {
-        uint256 a = _readyAndSubmit(500);  // Silver
-        uint256 b = _readyAndSubmit(500);  // Silver opponent (so we can settle)
+        uint256 a = _readyAndSubmit(500 * G);  // Silver
+        uint256 b = _readyAndSubmit(500 * G);  // Silver opponent (so we can settle)
         assertEq(uint8(arena.submittedTier(a)), uint8(ArenaEngine.Tier.Silver));
 
         // Fund a up to Gold territory mid-flight — tier must NOT change.
-        treasury.fundAgentG(a, 10_000); // now 10_500
+        treasury.fundAgentG(a, 10_000 * G); // now 10_500
         assertEq(uint8(arena.submittedTier(a)), uint8(ArenaEngine.Tier.Silver), "locked at Silver");
 
         // A re-submit while pooled is idempotent — still Silver, no pool growth.
@@ -301,12 +313,92 @@ contract ArenaTierTest is Test {
     }
 
     // ══════════════════════════════════════════════════════════
+    //                auto-requeue (opt-in, option B)
+    // ══════════════════════════════════════════════════════════
+
+    function test_oneshot_submit_falls_out_after_settle() public {
+        // Default submit() = one-shot: both leave the pool on settle.
+        uint256 a = _readyAndSubmit(500 * G);
+        uint256 b = _readyAndSubmit(500 * G);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
+        arena.settleMatch(arena.activeMatchOf(a));
+
+        assertFalse(arena.isSubmitted(a), "one-shot: a falls out");
+        assertFalse(arena.isSubmitted(b), "one-shot: b falls out");
+        assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 0, "pool empty");
+        assertFalse(arena.autoRequeue(a));
+    }
+
+    function test_autoRequeue_keeps_both_in_pool_after_settle() public {
+        uint256 a = _readyAndSubmitAuto(500 * G);
+        uint256 b = _readyAndSubmitAuto(500 * G);
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
+        assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 0, "both matched, pool drained");
+
+        arena.settleMatch(arena.activeMatchOf(a));
+
+        // Both auto-re-queued: back in the Silver pool, lock released.
+        assertTrue(arena.isSubmitted(a) && arena.isSubmitted(b), "both requeued");
+        assertEq(arena.activeMatchOf(a), 0, "lock released");
+        assertEq(arena.activeMatchOf(b), 0);
+        assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 2, "pool refilled");
+        assertTrue(arena.autoRequeue(a) && arena.autoRequeue(b), "flag persists");
+    }
+
+    function test_autoRequeue_resnapshots_tier_from_current_g() public {
+        uint256 a = _readyAndSubmitAuto(500 * G);  // Silver
+        uint256 b = _readyAndSubmitAuto(500 * G);  // Silver opponent
+        arena.runMatchmaking(ArenaEngine.Tier.Silver);
+
+        // Fund a into Gold territory while the match is in flight (locked Silver).
+        treasury.fundAgentG(a, 10_000 * G); // now 10_500
+        assertEq(uint8(arena.submittedTier(a)), uint8(ArenaEngine.Tier.Silver), "locked mid-match");
+
+        arena.settleMatch(arena.activeMatchOf(a));
+
+        // Auto-requeue recomputes tier from current G: a → Gold, b stays Silver.
+        assertEq(uint8(arena.submittedTier(a)), uint8(ArenaEngine.Tier.Gold), "requeued into Gold");
+        assertEq(arena.tierPopulation(ArenaEngine.Tier.Gold), 1, "a in Gold pool");
+        assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 1, "b back in Silver");
+    }
+
+    function test_withdraw_opts_out_after_autoRequeue() public {
+        uint256 a = _readyAndSubmitAuto(50 * G);
+        uint256 b = _readyAndSubmitAuto(50 * G);
+        arena.runMatchmaking(ArenaEngine.Tier.Bronze);
+        arena.settleMatch(arena.activeMatchOf(a));
+        assertTrue(arena.isSubmitted(a), "requeued");
+
+        // Withdraw works post-settle (activeMatchOf cleared) and clears the flag.
+        _withdraw(a);
+        assertFalse(arena.isSubmitted(a));
+        assertFalse(arena.autoRequeue(a), "flag cleared on withdraw");
+        assertEq(arena.tierPopulation(ArenaEngine.Tier.Bronze), 1, "only b left");
+    }
+
+    function test_submit_toggles_autoRequeue_flag() public {
+        uint256 a = _readyAndSubmit(500 * G); // one-shot
+        assertFalse(arena.autoRequeue(a));
+
+        // Re-submit with the flag while already pooled — toggles on, no dup pool entry.
+        vm.prank(registry.agentOwner(a));
+        arena.submit(a, true);
+        assertTrue(arena.autoRequeue(a));
+        assertEq(arena.tierPopulation(ArenaEngine.Tier.Silver), 1, "no duplicate submit");
+
+        // And back off.
+        vm.prank(registry.agentOwner(a));
+        arena.submit(a, false);
+        assertFalse(arena.autoRequeue(a));
+    }
+
+    // ══════════════════════════════════════════════════════════
     //                setMatchmakingPeriod
     // ══════════════════════════════════════════════════════════
 
     function test_setMatchmakingPeriod_gates_rerun() public {
         arena.setMatchmakingPeriod(ArenaEngine.Tier.Silver, 60);
-        _readyAndSubmit(500); // 1 agent -> run returns 0 but stamps lastRun
+        _readyAndSubmit(500 * G); // 1 agent -> run returns 0 but stamps lastRun
 
         arena.runMatchmaking(ArenaEngine.Tier.Silver);
         vm.expectRevert(bytes("rate limited"));
@@ -336,31 +428,31 @@ contract ArenaTierTest is Test {
 
     function test_tierThresholds_default_before_override() public {
         (uint256 silver, uint256 gold) = arena.tierThresholds();
-        assertEq(silver, 100);
-        assertEq(gold, 1000);
+        assertEq(silver, 100 * G);
+        assertEq(gold, 1000 * G);
     }
 
     function test_setTierThresholds_retunes_tiers() public {
         uint256 a = _agent();
-        treasury.fundAgentG(a, 150); // default → Silver
+        treasury.fundAgentG(a, 150 * G); // default → Silver
         assertEq(uint8(arena._tierFor(a)), uint8(ArenaEngine.Tier.Silver));
 
         // Raise the Silver floor above 150 → same agent now reads Bronze.
-        arena.setTierThresholds(200, 2000);
+        arena.setTierThresholds(200 * G, 2000 * G);
         (uint256 silver, uint256 gold) = arena.tierThresholds();
-        assertEq(silver, 200);
-        assertEq(gold, 2000);
+        assertEq(silver, 200 * G);
+        assertEq(gold, 2000 * G);
         assertEq(uint8(arena._tierFor(a)), uint8(ArenaEngine.Tier.Bronze));
 
         // Fund up to the new Gold floor → Gold.
-        treasury.fundAgentG(a, 1850); // now 2000
+        treasury.fundAgentG(a, 1850 * G); // now 2000
         assertEq(uint8(arena._tierFor(a)), uint8(ArenaEngine.Tier.Gold));
 
         // Restore defaults explicitly.
-        arena.setTierThresholds(100, 1000);
+        arena.setTierThresholds(100 * G, 1000 * G);
         (silver, gold) = arena.tierThresholds();
-        assertEq(silver, 100);
-        assertEq(gold, 1000);
+        assertEq(silver, 100 * G);
+        assertEq(gold, 1000 * G);
     }
 
     function test_setTierThresholds_rejects_invalid() public {

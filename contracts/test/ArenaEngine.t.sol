@@ -12,6 +12,7 @@ import "../src/GameEngine.sol";
 import "../src/GTreasury.sol";
 import "../src/CardLedger.sol";
 import "../src/ArenaEngine.sol";
+import "../src/ArenaCombat.sol";
 import "../src/AbilityLib.sol";
 import "../src/UnitCatalog.sol";
 import "../src/RingLedger.sol";
@@ -32,6 +33,7 @@ contract ArenaEngineTest is Test {
     address player4 = address(0x4);
 
     uint8[4] defaultStats = [uint8(5), 5, 5, 5];
+    uint256 constant G = 1e18; // gBalance is wei-denominated (WEI_PER_G); shop/roll costs ×G at spend
 
     function setUp() public {
         // Registry
@@ -105,7 +107,7 @@ contract ArenaEngineTest is Test {
         string memory name = string.concat("Hero", vm.toString(++_agentCounter));
         vm.prank(ownerAddr);
         (agentId, ) = engine.createAgent(name, "brave", defaultStats, ownerAddr);
-        treasury.fundAgentG(agentId, 500);
+        treasury.fundAgentG(agentId, 500 * G);
     }
 
     function _buyCard(uint256 agentId, address ownerAddr, uint8 unitType) internal returns (uint256 cardId) {
@@ -132,7 +134,7 @@ contract ArenaEngineTest is Test {
         // Mineworker: cost 3
         uint256 cardId = _buyCard(aid, player1, 1);
 
-        assertEq(treasury.gBalance(aid), gBefore - 3);
+        assertEq(treasury.gBalance(aid), gBefore - 3 * G);
         assertEq(engine.orePool(aid), oreBefore);
 
         (uint8[5] memory bench, , , , bool exists) = arena.getGhost(aid);
@@ -195,7 +197,7 @@ contract ArenaEngineTest is Test {
         // Arena is an operator → buy works
         uint256 before_ = treasury.gBalance(aid);
         _buy(aid, player1, 1, 0); // cost 3
-        assertEq(treasury.gBalance(aid), before_ - 3);
+        assertEq(treasury.gBalance(aid), before_ - 3 * G);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -263,8 +265,8 @@ contract ArenaEngineTest is Test {
         vm.prank(player2); arena.submit(a2);
         arena.runMatchmaking(ArenaEngine.Tier.Silver);
 
-        (ArenaEngine.Turn[] memory turns1, uint256 winner1) = arena.simulateMatch(1);
-        (ArenaEngine.Turn[] memory turns2, uint256 winner2) = arena.simulateMatch(1);
+        (ArenaCombat.Turn[] memory turns1, uint256 winner1) = arena.simulateMatch(1);
+        (ArenaCombat.Turn[] memory turns2, uint256 winner2) = arena.simulateMatch(1);
         assertEq(winner1, winner2);
         assertEq(turns1.length, turns2.length);
         for (uint256 i = 0; i < turns1.length; i++) {
@@ -528,7 +530,7 @@ contract ArenaEngineTest is Test {
         uint256 ore0 = engine.orePool(aid);
         vm.prank(player1); arena.roll(aid);
         uint256 g1 = treasury.gBalance(aid);
-        assertEq(g1, g0 - arena.ROLL_COST());
+        assertEq(g1, g0 - arena.ROLL_COST() * G);
         assertEq(engine.orePool(aid), ore0);
 
         // Second roll must move the seed forward again — assert lastUpdate changed.
@@ -540,7 +542,7 @@ contract ArenaEngineTest is Test {
         vm.roll(block.number + 1);
         uint256 gBeforeThird = treasury.gBalance(aid);
         vm.prank(player1); arena.roll(aid);
-        assertEq(treasury.gBalance(aid), gBeforeThird - arena.ROLL_COST());
+        assertEq(treasury.gBalance(aid), gBeforeThird - arena.ROLL_COST() * G);
     }
 
     // ──────────────────── Bench-persistence ability tests ────────────────────
@@ -555,7 +557,7 @@ contract ArenaEngineTest is Test {
         vm.prank(player2); arena.submit(a2);
         arena.runMatchmaking(ArenaEngine.Tier.Silver);
 
-        (ArenaEngine.Turn[] memory turns, ) = arena.simulateMatch(1);
+        (ArenaCombat.Turn[] memory turns, ) = arena.simulateMatch(1);
         // First turn: left attacks right. Damage equals attacker's ATK
         // (no ON_START on Mineworker, no neighbor buffs).
         assertGt(turns.length, 0, "should have at least 1 turn");
@@ -584,7 +586,7 @@ contract ArenaEngineTest is Test {
         // one Mineworker-side turn dealing 4 damage (base 2 + 1 + 1) — its
         // position in the trace depends on Fisher-Yates side assignment, which
         // we don't pin here.
-        (ArenaEngine.Turn[] memory turns, ) = arena.simulateMatch(1);
+        (ArenaCombat.Turn[] memory turns, ) = arena.simulateMatch(1);
         assertGt(turns.length, 0, "must have at least one turn");
 
         // Find a1's bench slot 0 unit (Mineworker) in the match. Combat builds
