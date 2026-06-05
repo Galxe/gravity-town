@@ -96,6 +96,19 @@ const ROUTER_ABI = [
   "function cardLedger() view returns (address)",
 ];
 
+// ──────────────────── G unit conversion ────────────────────
+// G is wei-denominated on-chain (1 G = 1e18 wei, matching ArenaEngine.WEI_PER_G).
+// MCP tools speak in whole G; convert at the chain boundary.
+const G_DECIMALS = 18;
+function gToWei(amountG: number): ethers.BigNumber {
+  return ethers.utils.parseUnits(String(amountG), G_DECIMALS);
+}
+function weiToG(wei: ethers.BigNumberish): number {
+  // The whole-G value is small (<< 2^53), so surfacing it as a number for display
+  // is safe — unlike Number(wei), which loses precision on wei-scale balances.
+  return Number(ethers.utils.formatUnits(wei, G_DECIMALS));
+}
+
 // ──────────────────── Arena ABI ────────────────────
 
 const ARENA_ENGINE_ABI = [
@@ -111,6 +124,8 @@ const ARENA_ENGINE_ABI = [
   "function placeCard(uint256 agentId, uint256 cardId, uint8 slot)",
   "function removeCard(uint256 agentId, uint8 slot)",
   "function submit(uint256 agentId)",
+  "function submit(uint256 agentId, bool requeueOnSettle)",
+  "function autoRequeue(uint256 agentId) view returns (bool)",
   "function withdrawSubmission(uint256 agentId)",
   "function runMatchmaking(uint8 tier) returns (uint256 matchesCreated)",
   "function settleMatch(uint256 matchId)",
@@ -132,9 +147,20 @@ const ARENA_ENGINE_ABI = [
 
 const G_TREASURY_ABI = [
   "function gBalance(uint256 agentId) view returns (uint256)",
+  "function totalOutstandingG() view returns (uint256)",
+  "function surplusG() view returns (uint256)",
+  "function faucetEnabled() view returns (bool)",
+  "function withdrawEnabled() view returns (bool)",
   "function creditG(uint256 agentId, uint256 amount, bytes32 reason)",
+  "function fundAgentG(uint256 agentId, uint256 amount)",
   "function depositG(uint256 agentId) payable",
+  "function withdraw(uint256 agentId, uint256 amount)",
+  "function withdrawSurplus(address to, uint256 amount)",
+  "function setFaucetEnabled(bool v)",
+  "function setWithdrawEnabled(bool v)",
   "event GCredited(uint256 indexed agentId, uint256 amount, bytes32 reason)",
+  "event GWithdrawn(uint256 indexed agentId, uint256 amount, address to)",
+  "event SurplusWithdrawn(address indexed to, uint256 amount)",
 ];
 
 const CARD_LEDGER_ABI = [
@@ -784,7 +810,7 @@ export class ChainClient {
     return {
       cardId: Number(listing.cardId),
       sellerAgent: Number(listing.sellerAgent),
-      askPriceG: Number(listing.askPriceG),
+      askPriceG: weiToG(listing.askPriceG),
       listedAt: Number(listing.listedAt),
       active: Boolean(listing.active),
     };
@@ -814,11 +840,20 @@ export class ChainClient {
 
   async arenaDepositG(agentId: number, amountG: number) {
     const treasury = this.requireGTreasury();
-    const value = ethers.BigNumber.from(amountG);
+    const value = gToWei(amountG); // whole G → wei native value
     const tx = await treasury.depositG(agentId, { value });
     const receipt = await tx.wait();
-    const gBalance = Number(await treasury.gBalance(agentId));
+    const gBalance = weiToG(await treasury.gBalance(agentId));
     return { agentId, depositedG: amountG, g: gBalance, txHash: receipt.transactionHash };
+  }
+
+  /// Withdraw an agent's own backed G back to the caller wallet (mainnet/withdraw mode).
+  async arenaWithdrawG(agentId: number, amountG: number) {
+    const treasury = this.requireGTreasury();
+    const tx = await treasury.withdraw(agentId, gToWei(amountG));
+    const receipt = await tx.wait();
+    const g = weiToG(await treasury.gBalance(agentId));
+    return { agentId, withdrawnG: amountG, g, txHash: receipt.transactionHash };
   }
 
   async arenaPlaceCard(agentId: number, cardId: number, slot: number) {
@@ -835,9 +870,10 @@ export class ChainClient {
     return { agentId, slot, txHash: receipt.transactionHash };
   }
 
-  async arenaSubmit(agentId: number) {
+  async arenaSubmit(agentId: number, autoRequeue: boolean = false) {
     const arena = this.requireArena();
-    const tx = await arena.submit(agentId);
+    // Explicit overload selection (submit is overloaded: 1-arg one-shot / 2-arg opt-in).
+    const tx = await arena["submit(uint256,bool)"](agentId, autoRequeue);
     const receipt = await tx.wait();
     let tier = 0, elo = 0, gAtSubmit = 0;
     const iface = arena.interface;
@@ -847,13 +883,13 @@ export class ChainClient {
         if (parsed.name === "GhostSubmitted") {
           tier = Number(parsed.args.tier);
           elo = Number(parsed.args.elo);
-          gAtSubmit = Number(parsed.args.gAtSubmit);
+          gAtSubmit = weiToG(parsed.args.gAtSubmit);
           break;
         }
       } catch {}
     }
     const labels = ["Bronze", "Silver", "Gold"];
-    return { tier, tierLabel: labels[tier] || "?", elo, gAtSubmit, txHash: receipt.transactionHash };
+    return { tier, tierLabel: labels[tier] || "?", elo, gAtSubmit, autoRequeue, txHash: receipt.transactionHash };
   }
 
   async arenaGetGhost(agentId: number) {
@@ -869,7 +905,7 @@ export class ChainClient {
       return { slot, cardId, unitType, name: u?.name || "?", atk: u?.atk, hp: u?.hp, ability: u?.ability };
     });
     const orePool = Number(await this.gameEngine.orePool(agentId));
-    const gBalance = treasury ? Number(await treasury.gBalance(agentId)) : null;
+    const gBalance = treasury ? weiToG(await treasury.gBalance(agentId)) : null;
     return {
       bench: benchNamed,
       elo: Number(elo),
@@ -912,7 +948,7 @@ export class ChainClient {
 
   async arenaPlaceListing(agentId: number, cardId: number, askPriceG: number) {
     const cards = this.requireCardLedger();
-    const tx = await cards.listCard(agentId, cardId, askPriceG);
+    const tx = await cards.listCard(agentId, cardId, gToWei(askPriceG));
     const receipt = await tx.wait();
     return { cardId, askPriceG, txHash: receipt.transactionHash };
   }
@@ -926,7 +962,7 @@ export class ChainClient {
 
   async arenaBuyListing(buyerAgent: number, cardId: number, maxPriceG: number) {
     const cards = this.requireCardLedger();
-    const tx = await cards.buyListed(buyerAgent, cardId, maxPriceG);
+    const tx = await cards.buyListed(buyerAgent, cardId, gToWei(maxPriceG));
     const receipt = await tx.wait();
     return { cardId, maxPriceG, txHash: receipt.transactionHash };
   }
@@ -1044,11 +1080,52 @@ export class ChainClient {
 
   async creditAgentG(agentId: number, amount: number) {
     const treasury = this.requireGTreasury();
-    const reason = ethers.utils.formatBytes32String("fund");
-    const tx = await treasury.creditG(agentId, amount, reason);
+    // Use the faucet-gated fundAgentG (owner-only, disabled in withdraw mode) rather
+    // than the ungated creditG, so free minting can never happen on a backed mainnet.
+    const tx = await treasury.fundAgentG(agentId, gToWei(amount));
     const receipt = await tx.wait();
-    const newBalance = Number(await treasury.gBalance(agentId));
+    const newBalance = weiToG(await treasury.gBalance(agentId));
     return { agentId, amount, newBalance, txHash: receipt.transactionHash };
+  }
+
+  /// Owner pulls protocol surplus (buy/roll rake) — never touches user backing.
+  async arenaWithdrawSurplus(to: string, amountG: number) {
+    const treasury = this.requireGTreasury();
+    const tx = await treasury.withdrawSurplus(to, gToWei(amountG));
+    const receipt = await tx.wait();
+    return { to, amountG, surplusRemaining: weiToG(await treasury.surplusG()), txHash: receipt.transactionHash };
+  }
+
+  /// Treasury accounting + mode snapshot (surplus, backing, faucet/withdraw mode).
+  async arenaGetTreasuryState() {
+    const treasury = this.requireGTreasury();
+    const [surplus, outstanding, faucet, withdraw] = await Promise.all([
+      treasury.surplusG(),
+      treasury.totalOutstandingG(),
+      treasury.faucetEnabled(),
+      treasury.withdrawEnabled(),
+    ]);
+    return {
+      surplusG: weiToG(surplus),
+      totalOutstandingG: weiToG(outstanding),
+      faucetEnabled: Boolean(faucet),
+      withdrawEnabled: Boolean(withdraw),
+      mode: Boolean(withdraw) ? "withdraw" : Boolean(faucet) ? "faucet" : "off",
+    };
+  }
+
+  async arenaSetFaucetEnabled(enabled: boolean) {
+    const treasury = this.requireGTreasury();
+    const tx = await treasury.setFaucetEnabled(enabled);
+    const receipt = await tx.wait();
+    return { faucetEnabled: enabled, txHash: receipt.transactionHash };
+  }
+
+  async arenaSetWithdrawEnabled(enabled: boolean) {
+    const treasury = this.requireGTreasury();
+    const tx = await treasury.setWithdrawEnabled(enabled);
+    const receipt = await tx.wait();
+    return { withdrawEnabled: enabled, txHash: receipt.transactionHash };
   }
 
   async arenaTierPopulation(tier: number): Promise<number> {
@@ -1060,7 +1137,7 @@ export class ChainClient {
     const arena = this.requireArena();
     const [tiers, gBalances] = await arena.tierStates([agentId]);
     const tier = Number(tiers[0]);
-    const gBalance = Number(gBalances[0]);
+    const gBalance = weiToG(gBalances[0]);
     const labels = ["Bronze", "Silver", "Gold"];
     const population = Number(await arena.tierPopulation(tier));
     return { tier, label: labels[tier] || "?", gBalance, agentsInTier: population };

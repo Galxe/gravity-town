@@ -642,14 +642,27 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_deposit_g",
-    "Deposit native testnet G from this operator wallet into an agent's Arena G balance. The caller wallet must own the agent. amount_g is sent as tx value; current conversion is 1 wei = 1 Arena G balance unit. Use this when Arena G is too low to buy cards or market listings.",
+    "Deposit native G from this wallet into an agent's Arena G balance (1 G = 1e18 wei; the amount is scaled and sent as tx value). The caller wallet must own the agent. In withdraw mode this G is fully backed and withdrawable via arena_withdraw_g. Use when Arena G is too low to buy cards or market listings.",
     {
-      agent_id: z.number().describe("Agent ID owned by this operator wallet"),
-      amount_g: z.number().int().min(1).describe("Raw Arena G units to deposit; sends the same amount as native tx value"),
+      agent_id: z.number().describe("Agent ID owned by this wallet"),
+      amount_g: z.number().int().min(1).describe("Whole G to deposit (scaled ×1e18 to native wei automatically)"),
     },
     async ({ agent_id, amount_g }: any) => {
       const r = await chain.arenaDepositG(agent_id, amount_g);
-      return { content: [{ type: "text", text: `Deposited ${r.depositedG} Arena G to agent ${agent_id}. New balance: ${r.g}. tx: ${r.txHash}` }] };
+      return { content: [{ type: "text", text: `Deposited ${r.depositedG} Arena G to agent ${agent_id}. New balance: ${r.g} G. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_withdraw_g",
+    "Withdraw your agent's own backed G back to your wallet (mainnet/withdraw mode only — reverts with 'withdraw disabled' in faucet/testnet mode). The caller wallet must own the agent; funds go to the caller. Only the agent's own backed balance can be withdrawn (never another agent's, never protocol surplus).",
+    {
+      agent_id: z.number().describe("Agent ID owned by this wallet"),
+      amount_g: z.number().int().min(1).describe("Whole G to withdraw (scaled ×1e18 automatically)"),
+    },
+    async ({ agent_id, amount_g }: any) => {
+      const r = await chain.arenaWithdrawG(agent_id, amount_g);
+      return { content: [{ type: "text", text: `Withdrew ${r.withdrawnG} G from agent ${agent_id} to your wallet. Remaining balance: ${r.g} G. tx: ${r.txHash}` }] };
     }
   );
 
@@ -710,7 +723,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
     {
       agent_id: z.number().describe("Seller agent ID"),
       card_id: z.number().describe("Owned card ID"),
-      ask_price_g: z.number().min(1).describe("Listing price in G"),
+      ask_price_g: z.number().int().min(1).describe("Listing price in G"),
     },
     async ({ agent_id, card_id, ask_price_g }: any) => {
       const r = await chain.arenaPlaceListing(agent_id, card_id, ask_price_g);
@@ -737,7 +750,7 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
     {
       buyer_agent_id: z.number().describe("Buyer agent ID"),
       card_id: z.number().describe("Listed card ID"),
-      max_price_g: z.number().min(1).describe("Maximum G price you accept"),
+      max_price_g: z.number().int().min(1).describe("Maximum G price you accept"),
     },
     async ({ buyer_agent_id, card_id, max_price_g }: any) => {
       const r = await chain.arenaBuyListing(buyer_agent_id, card_id, max_price_g);
@@ -747,11 +760,15 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "arena_submit",
-    "Submit your bench to the matchmaking pool. Your ghost enters a tier (Bronze/Silver/Gold) based on G balance. Wins earn ELO + G, losses drop ELO. Bench must have at least 1 card.",
-    { agent_id: z.number().describe("Agent ID") },
-    async ({ agent_id }: any) => {
-      const r = await chain.arenaSubmit(agent_id);
-      return { content: [{ type: "text", text: `Ghost submitted! Tier: ${r.tierLabel}, ELO ${r.elo}, G at submit: ${r.gAtSubmit}. tx: ${r.txHash}` }] };
+    "Submit your bench to the matchmaking pool. Your ghost enters a tier (Bronze/Silver/Gold) based on G balance. Bench must have at least 1 card. By default this is ONE-SHOT: after your next match settles you leave the pool and must submit again. Set auto_requeue=true to keep laddering automatically (tier re-snapshotted from current G each round) until you call arena_withdraw_submission.",
+    {
+      agent_id: z.number().describe("Agent ID"),
+      auto_requeue: z.boolean().optional().default(false).describe("If true, auto re-queue after each match settles (ladder continuously). Default false = one-shot."),
+    },
+    async ({ agent_id, auto_requeue }: any) => {
+      const r = await chain.arenaSubmit(agent_id, auto_requeue);
+      const mode = r.autoRequeue ? "auto-requeue ON (laddering until you withdraw)" : "one-shot (re-submit after each match)";
+      return { content: [{ type: "text", text: `Ghost submitted! Tier: ${r.tierLabel}, ELO ${r.elo}, G at submit: ${r.gAtSubmit}. Mode: ${mode}. tx: ${r.txHash}` }] };
     }
   );
 
@@ -788,17 +805,66 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
 
   server.tool(
     "fund_agent_g",
-    "[ADMIN] Credit G to an agent's Arena balance for free (no native token cost). Typical amounts: 20-50 G for a starter bench.",
+    "[ADMIN] Faucet: mint free G to an agent's Arena balance (testnet only — reverts with 'faucet disabled' in withdraw mode, so it can never mint unbacked G on a backed mainnet). Typical amounts: 20-50 G for a starter bench.",
     {
       agent_id: z.number().describe("Agent ID"),
-      amount: z.number().min(1).describe("Amount of G to credit"),
+      amount: z.number().int().min(1).describe("Whole G to mint (scaled ×1e18 automatically)"),
     },
     async ({ agent_id, amount }: any) => {
       if (!isOwnerCall()) {
         return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
       }
       const r = await chain.creditAgentG(agent_id, amount);
-      return { content: [{ type: "text", text: `Credited ${amount} G to agent ${agent_id}. New balance: ${r.newBalance} G. tx: ${r.txHash}` }] };
+      return { content: [{ type: "text", text: `Minted ${amount} G to agent ${agent_id}. New balance: ${r.newBalance} G. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_get_treasury",
+    "View Arena treasury accounting: protocol surplus G (buy/roll rake, owner-withdrawable), total backed G owed to agents, and the current mode (faucet=testnet free G, withdraw=mainnet backed/withdrawable). Read-only.",
+    {},
+    async () => {
+      const r = await chain.arenaGetTreasuryState();
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    "arena_withdraw_surplus",
+    "[ADMIN] Withdraw protocol surplus G (accumulated buy/roll rake) to an address. Can NEVER touch agents' backed balances — capped at surplusG. Withdraw mode only.",
+    {
+      to: z.string().describe("Recipient address (0x...)"),
+      amount_g: z.number().int().min(1).describe("Whole G of surplus to withdraw (scaled ×1e18)"),
+    },
+    async ({ to, amount_g }: any) => {
+      if (!isOwnerCall()) {
+        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
+      }
+      const r = await chain.arenaWithdrawSurplus(to, amount_g);
+      return { content: [{ type: "text", text: `Withdrew ${r.amountG} G surplus to ${to}. Surplus remaining: ${r.surplusRemaining} G. tx: ${r.txHash}` }] };
+    }
+  );
+
+  server.tool(
+    "arena_set_mode",
+    "[ADMIN] Switch the treasury mode. mode='faucet' → testnet free G, withdraw OFF. mode='withdraw' → mainnet backed/withdrawable G, faucet OFF. The two are mutually exclusive (the contract enforces it): switching to withdraw first turns the faucet off, and vice versa.",
+    {
+      mode: z.enum(["faucet", "withdraw"]).describe("'faucet' (testnet) or 'withdraw' (mainnet)"),
+    },
+    async ({ mode }: any) => {
+      if (!isOwnerCall()) {
+        return { content: [{ type: "text", text: "Error: not authorized — signer not in OWNER_KEYS" }], isError: true };
+      }
+      // Order matters: enable the target only after disabling its exclusive partner.
+      if (mode === "withdraw") {
+        await chain.arenaSetFaucetEnabled(false);
+        await chain.arenaSetWithdrawEnabled(true);
+      } else {
+        await chain.arenaSetWithdrawEnabled(false);
+        await chain.arenaSetFaucetEnabled(true);
+      }
+      const state = await chain.arenaGetTreasuryState();
+      return { content: [{ type: "text", text: `Treasury mode set to '${mode}'. ${JSON.stringify(state)}` }] };
     }
   );
 
