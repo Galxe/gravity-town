@@ -1,1 +1,23 @@
-{}
+{
+  "name": "gravity-town",
+  "version": "0.2.0",
+  "private": false,
+  "description": "Play Gravity Town from any MCP-capable agent: `npx -y github:Galxe/gravity-town gravity-town-mcp` runs the on-chain game's MCP server with no clone and no build.",
+  "type": "module",
+  "bin": {
+    "gravity-town-mcp": "mcp-server/bin/gravity-town-mcp.mjs"
+  },
+  "files": [
+    "mcp-server/bin/gravity-town-mcp.mjs",
+    "skills/",
+    "skill.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Galxe/gravity-town.git"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build:mcp-bin": "cd mcp-server && npm run build:bin"
+  }
+}
