@@ -839,7 +839,7 @@ export class ChainClient {
     const arena = this.requireArena();
     const tx = await arena.submit(agentId);
     const receipt = await tx.wait();
-    let tier = 0, elo = 0, gAtSubmit = 0;
+    let tier = 0, elo = 0, gAtSubmit = 0, emitted = false;
     const iface = arena.interface;
     for (const log of receipt.logs) {
       try {
@@ -848,12 +848,24 @@ export class ChainClient {
           tier = Number(parsed.args.tier);
           elo = Number(parsed.args.elo);
           gAtSubmit = Number(parsed.args.gAtSubmit);
+          emitted = true;
           break;
         }
       } catch {}
     }
+    // `submit()` is idempotent: a re-submit of an already-pooled ghost is a no-op
+    // that emits no GhostSubmitted event (ArenaEngine.sol: `if (!isSubmitted[...])`).
+    // Without this fallback we would report a misleading Bronze/0/0 even though the
+    // ghost is correctly sitting in its real tier pool. Read live state instead.
+    if (!emitted) {
+      const [tiers, gBalances] = await arena.tierStates([agentId]);
+      tier = Number(tiers[0]);
+      gAtSubmit = Number(gBalances[0]);
+      const ghost = await arena.getGhost(agentId);
+      elo = Number(ghost[1]);
+    }
     const labels = ["Bronze", "Silver", "Gold"];
-    return { tier, tierLabel: labels[tier] || "?", elo, gAtSubmit, txHash: receipt.transactionHash };
+    return { tier, tierLabel: labels[tier] || "?", elo, gAtSubmit, alreadyPooled: !emitted, txHash: receipt.transactionHash };
   }
 
   async arenaGetGhost(agentId: number) {
