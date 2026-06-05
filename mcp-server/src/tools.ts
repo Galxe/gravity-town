@@ -751,7 +751,8 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
     { agent_id: z.number().describe("Agent ID") },
     async ({ agent_id }: any) => {
       const r = await chain.arenaSubmit(agent_id);
-      return { content: [{ type: "text", text: `Ghost submitted! Tier: ${r.tierLabel}, ELO ${r.elo}, G at submit: ${r.gAtSubmit}. tx: ${r.txHash}` }] };
+      const lead = r.alreadyPooled ? "Already in the pool" : "Ghost submitted!";
+      return { content: [{ type: "text", text: `${lead} Tier: ${r.tierLabel}, ELO ${r.elo}, G at submit: ${r.gAtSubmit}. tx: ${r.txHash}` }] };
     }
   );
 

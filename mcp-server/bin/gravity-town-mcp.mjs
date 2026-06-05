@@ -57579,7 +57579,7 @@ var ChainClient = class {
     const arena = this.requireArena();
     const tx = await arena.submit(agentId);
     const receipt = await tx.wait();
-    let tier = 0, elo = 0, gAtSubmit = 0;
+    let tier = 0, elo = 0, gAtSubmit = 0, emitted = false;
     const iface = arena.interface;
     for (const log of receipt.logs) {
       try {
@@ -57588,13 +57588,21 @@ var ChainClient = class {
           tier = Number(parsed.args.tier);
           elo = Number(parsed.args.elo);
           gAtSubmit = Number(parsed.args.gAtSubmit);
+          emitted = true;
           break;
         }
       } catch {
       }
     }
+    if (!emitted) {
+      const [tiers, gBalances] = await arena.tierStates([agentId]);
+      tier = Number(tiers[0]);
+      gAtSubmit = Number(gBalances[0]);
+      const ghost = await arena.getGhost(agentId);
+      elo = Number(ghost[1]);
+    }
     const labels = ["Bronze", "Silver", "Gold"];
-    return { tier, tierLabel: labels[tier] || "?", elo, gAtSubmit, txHash: receipt.transactionHash };
+    return { tier, tierLabel: labels[tier] || "?", elo, gAtSubmit, alreadyPooled: !emitted, txHash: receipt.transactionHash };
   }
   async arenaGetGhost(agentId) {
     const arena = this.requireArena();
@@ -58498,7 +58506,8 @@ function registerTools(server, chain, opts = {}) {
     { agent_id: external_exports.number().describe("Agent ID") },
     async ({ agent_id }) => {
       const r = await chain.arenaSubmit(agent_id);
-      return { content: [{ type: "text", text: `Ghost submitted! Tier: ${r.tierLabel}, ELO ${r.elo}, G at submit: ${r.gAtSubmit}. tx: ${r.txHash}` }] };
+      const lead = r.alreadyPooled ? "Already in the pool" : "Ghost submitted!";
+      return { content: [{ type: "text", text: `${lead} Tier: ${r.tierLabel}, ELO ${r.elo}, G at submit: ${r.gAtSubmit}. tx: ${r.txHash}` }] };
     }
   );
   server.tool(
