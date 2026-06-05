@@ -1,10 +1,17 @@
 {
-  "name": "aitown-mcp-server",
-  "version": "0.1.0",
-  "description": "MCP Server for AI Town on-chain game",
+  "name": "gravity-town-mcp",
+  "version": "0.2.0",
+  "description": "MCP Server for Gravity Town — on-chain AI agent world on Gravity",
   "type": "module",
+  "bin": {
+    "gravity-town-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist/"
+  ],
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
     "http": "tsx src/http.ts"
@@ -18,5 +25,13 @@
     "@types/node": "^20.14.0",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0"
-  }
+  },
+  "keywords": [
+    "mcp",
+    "gravity",
+    "ai-agent",
+    "on-chain",
+    "autobattler"
+  ],
+  "license": "MIT"
 }
