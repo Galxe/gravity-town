@@ -850,7 +850,17 @@ export function registerTools(server: any, chain: ChainClient, opts: ToolOptions
     }
   );
 
-  // ── Arena read tools (simulate, ELO preview, card detail) ──
+  // ── Arena read tools (match detail, simulate, ELO preview, card detail) ──
+
+  server.tool(
+    "arena_get_match",
+    "Get match details: attacker/defender IDs, bench compositions (unit names, ATK, HP per slot), seed, settlement status, and winner. Use with arena_simulate_match for full battle analysis.",
+    { match_id: z.number().describe("Match ID") },
+    async ({ match_id }: any) => {
+      const r = await chain.arenaGetMatch(match_id);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
 
   server.tool(
     "arena_simulate_match",
