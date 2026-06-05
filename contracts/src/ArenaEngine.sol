@@ -518,10 +518,15 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     //                  TIER MATCHMAKING
     // ══════════════════════════════════════════════════════════
 
-    /// @notice Pair up ghosts within a single G-tier pool. Permissionless (the
-    ///         "owner-only" keeper label lives in the MCP layer), but rate-limited
-    ///         to once per {effectiveTierPeriod} per tier. Matched ghosts leave the
-    ///         pool and are locked via `activeMatchOf` until settle.
+    /// @notice Pair up ghosts within a single G-tier pool.
+    /// @dev PERMISSIONLESS at the contract level: anyone may call it, gated only by
+    ///      a per-tier rate limit ({effectiveTierPeriod}) — there is intentionally
+    ///      no onlyOwner. This preserves liveness if the keeper goes down (anyone
+    ///      can advance matchmaking). The MCP `arena_run_matchmaking` tool adds a
+    ///      soft OWNER_KEYS/keeper check, but that is an OFF-CHAIN convention, NOT a
+    ///      contract restriction — a direct on-chain call bypasses it. `settleMatch`
+    ///      is permissionless for the same reason. Matched ghosts leave the pool and
+    ///      are locked via `activeMatchOf` until settle.
     function runMatchmaking(Tier tier) external returns (uint256 matchesCreated) {
         uint64 last = lastTierMatchmakingAt[tier];
         require(last == 0 || block.timestamp >= last + effectiveTierPeriod(tier), "rate limited");
