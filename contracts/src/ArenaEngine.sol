@@ -33,15 +33,21 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     uint8   public constant SLOTS              = 5;
     uint8   public constant SHOP_SIZE          = 5;     // shop draws 5 candidates
-    uint256 public constant ROLL_COST          = 1;     // G to refresh shop
+    uint256 public constant ROLL_COST          = 1;     // G to refresh shop (in whole-G units)
+
+    /// @notice wei of native G per 1 whole-G price unit. UnitCatalog costs and
+    ///         ROLL_COST are small whole-G integers; gTreasury accounts in wei.
+    ///         Multiply at the spend boundary so the catalog stays readable and
+    ///         `uint16 unitCost` never overflows (3..6 whole-G, not 3e18..6e18).
+    uint256 public constant WEI_PER_G          = 1e18;
     uint16  public constant DEFAULT_ELO        = 1000;  // new ghost start
     uint16  public constant ELO_BUCKET_SIZE    = 200;   // ELO band shown by getGhost (1000..1199 → 5)
     uint16  public constant ELO_K              = 32;    // standard K-factor
 
     // Default tier thresholds in G. Used when the runtime overrides
     // (tierSilverMinG / tierGoldMinG) are unset. Tunable via setTierThresholds.
-    uint256 public constant DEFAULT_TIER_SILVER_MIN_G = 100;   // gBalance ≥ 100 → Silver
-    uint256 public constant DEFAULT_TIER_GOLD_MIN_G   = 1000;  // gBalance ≥ 1000 → Gold
+    uint256 public constant DEFAULT_TIER_SILVER_MIN_G = 100 * WEI_PER_G;   // gBalance ≥ 100 G → Silver
+    uint256 public constant DEFAULT_TIER_GOLD_MIN_G   = 1000 * WEI_PER_G;  // gBalance ≥ 1000 G → Gold
     uint32  public constant DEFAULT_TIER_PERIOD = 1800; // default tier matchmaking cooldown (overridable per tier)
     uint16  public constant MAX_TIER_POOL_SIZE = 256;   // submit cap per tier pool — bounds Fisher-Yates gas
 
@@ -126,6 +132,13 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     ///         effective values; {_tierFor} reads through it.
     uint256 public tierSilverMinG;
     uint256 public tierGoldMinG;
+
+    /// @notice Opt-in: when true, settle auto-re-queues the ghost (re-snapshotting
+    ///         tier from current G) instead of clearing it, so an agent keeps
+    ///         laddering without a manual re-submit each round. Set per submit
+    ///         (default false = one-shot). Cleared on withdraw / on full release.
+    ///         (appended last for UUPS storage-layout safety.)
+    mapping(uint256 => bool) public autoRequeue;
 
     // ──────────────────── Events ────────────────────
 
@@ -266,7 +279,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(address(cardLedger) != address(0), "card ledger not set");
 
         ( , , , uint16 unitCost, ) = UnitCatalog.getUnit(unitType);
-        gTreasury.spendG(agentId, unitCost, bytes32("arena_buy"));
+        gTreasury.spendG(agentId, uint256(unitCost) * WEI_PER_G, bytes32("arena_buy"));
         cardId = cardLedger.mintCard(agentId, unitType);
         g.lastUpdate = uint64(block.timestamp);
         _assertGhostInvariant(agentId, g);
@@ -379,7 +392,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     {
         Ghost storage g = _getOrInitGhost(agentId);
         require(address(gTreasury) != address(0), "G treasury not set");
-        gTreasury.spendG(agentId, ROLL_COST, bytes32("arena_roll"));
+        gTreasury.spendG(agentId, ROLL_COST * WEI_PER_G, bytes32("arena_roll"));
 
         uint64 newSeed = uint64(uint256(keccak256(abi.encode(
             block.prevrandao, agentId, block.timestamp, g.shopSeed
@@ -393,17 +406,32 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     //                     SUBMIT / BUCKETING
     // ══════════════════════════════════════════════════════════
 
-    /// @notice Submit the ghost to the matchmaking pool. Idempotent — re-submitting
-    ///         simply confirms current state and ensures bucket membership.
+    /// @notice Submit the ghost to the matchmaking pool (one-shot — falls out of the
+    ///         pool after its next match settles). Idempotent while already pooled.
     function submit(uint256 agentId) external canControlAgent(agentId) {
+        _submit(agentId, false);
+    }
+
+    /// @notice Submit with an explicit auto-requeue choice. `requeueOnSettle = true`
+    ///         keeps the ghost laddering: after each match settles it is re-added to
+    ///         the pool (tier re-snapshotted from current G) until you withdraw.
+    ///         Toggleable — calling again updates the flag even while pooled.
+    function submit(uint256 agentId, bool requeueOnSettle) external canControlAgent(agentId) {
+        _submit(agentId, requeueOnSettle);
+    }
+
+    function _submit(uint256 agentId, bool requeueOnSettle) internal {
         Ghost storage g = _getOrInitGhost(agentId);
         _assertGhostInvariant(agentId, g);
         require(_hasAnyUnit(g), "empty bench");
 
+        // The auto-requeue choice is honored even on an idempotent re-submit, so a
+        // pooled player can flip it without leaving the pool.
+        autoRequeue[agentId] = requeueOnSettle;
+
         // Snapshot G→tier and lock until settle. Idempotent while already pooled,
         // so a re-submit or a mid-cycle fundAgentG never moves an in-flight ghost
-        // between tiers. settleMatch clears the flag → next submit recomputes the
-        // tier from the new G balance.
+        // between tiers.
         if (!isSubmitted[agentId]) {
             Tier t = _tierFor(agentId);
             _addToTierPool(agentId, t);
@@ -424,6 +452,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         _removeFromTierPool(agentId);
         isSubmitted[agentId] = false;
         delete submittedTier[agentId];
+        delete autoRequeue[agentId];
         emit SubmissionWithdrawn(agentId, t);
     }
 
@@ -548,6 +577,28 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         isSubmitted[agentId] = false;
         delete submittedTier[agentId];
         delete tierPoolIndexPlusOne[agentId];
+        delete autoRequeue[agentId];
+    }
+
+    /// @dev Post-settle release with opt-in auto-requeue (option B). Drops the match
+    ///      lock, then — only if the agent opted in via {submit}(id, true) — re-snapshots
+    ///      the tier from current G and re-adds the ghost to its pool so it keeps
+    ///      laddering. Otherwise (or when the bench emptied / the pool is full) it
+    ///      fully clears, so a one-shot submitter behaves exactly as before and
+    ///      settlement can never revert.
+    function _releaseAndRequeue(uint256 agentId) internal {
+        activeMatchOf[agentId] = 0;
+        Ghost storage g = _ghosts[agentId];
+        Tier t = _tierFor(agentId);
+        if (autoRequeue[agentId] && _hasAnyUnit(g) && tierPool[t].length < MAX_TIER_POOL_SIZE) {
+            submittedTier[agentId] = t;
+            isSubmitted[agentId] = true;
+            _addToTierPool(agentId, t);
+            uint256 gNow = address(gTreasury) == address(0) ? 0 : gTreasury.gBalance(agentId);
+            emit GhostSubmitted(agentId, t, g.elo, gNow);
+        } else {
+            _clearTierSubmission(agentId);
+        }
     }
 
     // ══════════════════════════════════════════════════════════
@@ -782,10 +833,12 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         m.settled = true;
         m.winnerId = winnerId;
 
-        // Release both sides' tier submission lock. After settle they must
-        // re-submit, which recomputes the tier from their current G balance.
-        _clearTierSubmission(m.attackerId);
-        _clearTierSubmission(m.defenderId);
+        // Release both sides. Agents that opted into auto-requeue (submit(id, true))
+        // are re-added to the pool with their tier re-snapshotted from current G, so
+        // the pool doesn't drain between rounds; one-shot submitters fall out and
+        // must re-submit. Players opt out anytime via withdrawSubmission.
+        _releaseAndRequeue(m.attackerId);
+        _releaseAndRequeue(m.defenderId);
 
         // ELO update — Elo-style with K = 32, simplified expected score lookup
         // via a linear approx (good enough for spike — pure on-chain Elo with
@@ -900,16 +953,20 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(!marketSeeded, "already seeded");
         require(address(gTreasury) != address(0), "G treasury not set");
         require(address(cardLedger) != address(0), "card ledger not set");
+        // Faucet-gated: this is an unbacked free mint (credits G + lists cards),
+        // so it can only run in faucet mode (testnet). In withdraw mode (mainnet)
+        // it would break the full-backing invariant.
+        require(gTreasury.faucetEnabled(), "faucet disabled");
         marketSeeded = true;
 
-        gTreasury.creditG(seedAgentId, 500, bytes32("market_seed"));
+        gTreasury.creditG(seedAgentId, 500 * WEI_PER_G, bytes32("market_seed"));
 
         uint8[7] memory unitTypes = [uint8(1), 2, 4, 5, 8, 10, 11];
         for (uint8 i = 0; i < unitTypes.length; i++) {
             uint8 unitType = unitTypes[i];
             uint256 cardId = cardLedger.mintCard(seedAgentId, unitType);
             uint16 cost = UnitCatalog.cost(unitType);
-            uint256 askPriceG = cost > 1 ? uint256(cost) - 1 : uint256(cost);
+            uint256 askPriceG = (cost > 1 ? uint256(cost) - 1 : uint256(cost)) * WEI_PER_G;
             cardLedger.listCard(seedAgentId, cardId, askPriceG);
         }
     }

@@ -24,6 +24,7 @@ contract BenchInvariantTest is Test {
     address player1 = address(0x1);
     address player2 = address(0x2);
     uint8[4] defaultStats = [uint8(5), 5, 5, 5];
+    uint256 constant G = 1e18; // gBalance is wei-denominated (WEI_PER_G); shop costs ×G at spend
 
     function setUp() public {
         AgentRegistry registryImpl = new AgentRegistry();
@@ -85,7 +86,7 @@ contract BenchInvariantTest is Test {
     function _createAgent(address ownerAddr) internal returns (uint256 agentId) {
         vm.prank(ownerAddr);
         (agentId, ) = engine.createAgent("Hero", "brave", defaultStats, ownerAddr);
-        treasury.fundAgentG(agentId, 500);
+        treasury.fundAgentG(agentId, 500 * G);
     }
 
     function test_buy_spends_g_mints_card_into_inventory_without_touching_bench_or_ore() public {
@@ -95,7 +96,7 @@ contract BenchInvariantTest is Test {
         vm.prank(player1);
         uint256 cardId = arena.buy(aid, 1);
 
-        assertEq(treasury.gBalance(aid), 497);
+        assertEq(treasury.gBalance(aid), 497 * G);
         assertEq(engine.orePool(aid), oreBefore);
 
         (uint8[5] memory bench, , , , bool exists) = arena.getGhost(aid);
@@ -264,7 +265,7 @@ contract BenchInvariantTest is Test {
 
         arena.bootstrapMarket(seedAgentId);
 
-        assertEq(treasury.gBalance(seedAgentId), 500);
+        assertEq(treasury.gBalance(seedAgentId), 500 * G);
 
         uint256[] memory owned = cards.getOwnedCards(seedAgentId);
         assertEq(owned.length, 7);
@@ -275,7 +276,7 @@ contract BenchInvariantTest is Test {
             assertTrue(listings[i].active);
             CardLedger.Card memory card = cards.getCard(listings[i].cardId);
             assertEq(card.ownerAgent, seedAgentId);
-            assertTrue(listings[i].askPriceG < _unitCost(card.unitType));
+            assertTrue(listings[i].askPriceG < uint256(_unitCost(card.unitType)) * G);
         }
 
         vm.expectRevert("already seeded");
