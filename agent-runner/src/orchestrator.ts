@@ -14,7 +14,9 @@ export class Orchestrator {
   private rateLimiter: ApiRateLimiter;
   private bibleTimer: ReturnType<typeof setInterval> | null = null;
   private predictionTimer: ReturnType<typeof setInterval> | null = null;
+  private arenaReportTimer: ReturnType<typeof setInterval> | null = null;
   private lastOracleDebateId: number = 0;
+  private lastReportedMatchId: number = 0;
 
   constructor(globalConfig: GlobalConfig) {
     this.globalConfig = globalConfig;
@@ -124,6 +126,8 @@ export class Orchestrator {
     this.startBibleTimer();
     // Start Prediction Market timer (every 4 hours)
     this.startPredictionTimer();
+    // Start Arena battle report timer (every 2 minutes)
+    this.startArenaReportTimer();
   }
 
   /**
@@ -388,11 +392,135 @@ export class Orchestrator {
     }
   }
 
+  // ──────────────────── Arena Battle Reports ────────────────────
+
+  private startArenaReportTimer(): void {
+    const initialDelay = 2 * 60 * 1000;
+    const interval = 2 * 60 * 1000;
+
+    const start = async () => {
+      await this.initArenaReportCursor();
+      this.tickArenaReports();
+      this.arenaReportTimer = setInterval(() => this.tickArenaReports(), interval);
+    };
+    setTimeout(start, initialDelay);
+
+    this.log(`Arena report timer: first in 2min, then every 2min`);
+  }
+
+  private async initArenaReportCursor(): Promise<void> {
+    try {
+      const raw = await callMcpTool(this.client, "arena_get_state", { agent_id: 1 });
+      const state = parseToolJson(raw) as any;
+      this.lastReportedMatchId = state?.nextMatchId ? state.nextMatchId - 1 : 0;
+      this.log(`[arena-report] cursor initialized at match #${this.lastReportedMatchId}`);
+    } catch {
+      this.lastReportedMatchId = 0;
+    }
+  }
+
+  private async tickArenaReports(): Promise<void> {
+    try {
+      const stateRaw = await callMcpTool(this.client, "arena_get_state", { agent_id: 1 });
+      const state = parseToolJson(stateRaw) as any;
+      const nextMatchId: number = state?.nextMatchId ?? 0;
+
+      for (let mid = this.lastReportedMatchId + 1; mid < nextMatchId; mid++) {
+        try {
+          const match = parseToolJson(
+            await callMcpTool(this.client, "arena_get_match", { match_id: mid })
+          ) as any;
+          if (!match?.settled) continue;
+          await this.writeArenaReport(mid, match);
+          this.lastReportedMatchId = mid;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          this.log(`[arena-report] match #${mid} skipped: ${msg}`, true);
+          this.lastReportedMatchId = mid;
+        }
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      this.log(`[arena-report] tick failed: ${msg}`, true);
+    }
+  }
+
+  private async writeArenaReport(matchId: number, match: any): Promise<void> {
+    const replay = parseToolJson(
+      await callMcpTool(this.client, "arena_simulate_match", { match_id: matchId })
+    ) as any;
+
+    const [attackerInfo, defenderInfo] = await Promise.all([
+      callMcpTool(this.client, "get_agent", { agent_id: match.attackerId }).then(parseToolJson),
+      callMcpTool(this.client, "get_agent", { agent_id: match.defenderId }).then(parseToolJson),
+    ]) as [any, any];
+
+    const winnerId = match.winnerId;
+    const loserId = winnerId === match.attackerId ? match.defenderId : match.attackerId;
+    const winnerName = winnerId === match.attackerId ? attackerInfo?.name : defenderInfo?.name;
+    const loserName = loserId === match.attackerId ? attackerInfo?.name : defenderInfo?.name;
+
+    const formatBench = (bench: any[]) =>
+      bench.filter((u: any) => !u.empty).map((u: any) => `${u.name}(${u.atk}/${u.hp})`).join(", ");
+
+    const prompt = [
+      "You are a combat commentator in Gravity Town's Arena. Write a SHORT battle report (3-5 sentences) for this match.",
+      "Be vivid and dramatic but concise. Name the agents and key moments.",
+      "",
+      `Match #${matchId}`,
+      `Attacker: ${attackerInfo?.name} (agent #${match.attackerId})`,
+      `  Bench: ${formatBench(match.attackerBench)}`,
+      `Defender: ${defenderInfo?.name} (agent #${match.defenderId})`,
+      `  Bench: ${formatBench(match.defenderBench)}`,
+      `Winner: ${winnerName}`,
+      `Total turns: ${replay?.turns?.length ?? "?"}`,
+      "",
+      "Key combat events:",
+      ...(replay?.turns ?? []).filter((t: any) => t.defenderDied).map(
+        (t: any) => `  Turn ${t.idx}: ${t.attackerSide} slot ${t.attackerSlot} killed ${t.attackerSide === "attacker" ? "defender" : "attacker"} slot ${t.defenderSlot} (${t.damage} dmg)`
+      ),
+      "",
+      "Output ONLY the battle report text. No headers or labels.",
+    ].join("\n");
+
+    const completion = await createChatCompletion(
+      this.globalConfig.llmApiKey,
+      this.globalConfig.llmBaseUrl,
+      this.globalConfig.llmModel,
+      [{ role: "user", content: prompt }],
+      [],
+      this.globalConfig.llmApiType
+    );
+
+    const report = extractTextContent(completion.choices?.[0]?.message?.content).trim();
+    if (!report) {
+      this.log(`[arena-report] LLM returned empty for match #${matchId}`, true);
+      return;
+    }
+
+    await callMcpTool(this.client, "write_chronicle", {
+      author_id: loserId,
+      target_agent_id: winnerId,
+      rating: 7,
+      content: report,
+    });
+
+    await callMcpTool(this.client, "write_chronicle", {
+      author_id: winnerId,
+      target_agent_id: loserId,
+      rating: 4,
+      content: report,
+    });
+
+    this.log(`[arena-report] match #${matchId}: ${winnerName} beat ${loserName} — "${report.slice(0, 80)}..."`);
+  }
+
   /** Stop all roles and disconnect */
   async shutdown(): Promise<void> {
     this.log("shutting down...");
     if (this.bibleTimer) clearInterval(this.bibleTimer);
     if (this.predictionTimer) clearInterval(this.predictionTimer);
+    if (this.arenaReportTimer) clearInterval(this.arenaReportTimer);
     for (const [id, runner] of this.runners) {
       runner.stop();
     }
