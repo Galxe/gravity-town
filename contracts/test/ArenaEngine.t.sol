@@ -12,6 +12,7 @@ import "../src/GameEngine.sol";
 import "../src/GTreasury.sol";
 import "../src/CardLedger.sol";
 import "../src/ArenaEngine.sol";
+import "../src/ArenaCombat.sol";
 import "../src/AbilityLib.sol";
 import "../src/UnitCatalog.sol";
 import "../src/RingLedger.sol";
@@ -264,8 +265,8 @@ contract ArenaEngineTest is Test {
         vm.prank(player2); arena.submit(a2);
         arena.runMatchmaking(ArenaEngine.Tier.Silver);
 
-        (ArenaEngine.Turn[] memory turns1, uint256 winner1) = arena.simulateMatch(1);
-        (ArenaEngine.Turn[] memory turns2, uint256 winner2) = arena.simulateMatch(1);
+        (ArenaCombat.Turn[] memory turns1, uint256 winner1) = arena.simulateMatch(1);
+        (ArenaCombat.Turn[] memory turns2, uint256 winner2) = arena.simulateMatch(1);
         assertEq(winner1, winner2);
         assertEq(turns1.length, turns2.length);
         for (uint256 i = 0; i < turns1.length; i++) {
@@ -556,7 +557,7 @@ contract ArenaEngineTest is Test {
         vm.prank(player2); arena.submit(a2);
         arena.runMatchmaking(ArenaEngine.Tier.Silver);
 
-        (ArenaEngine.Turn[] memory turns, ) = arena.simulateMatch(1);
+        (ArenaCombat.Turn[] memory turns, ) = arena.simulateMatch(1);
         // First turn: left attacks right. Damage equals attacker's ATK
         // (no ON_START on Mineworker, no neighbor buffs).
         assertGt(turns.length, 0, "should have at least 1 turn");
@@ -585,7 +586,7 @@ contract ArenaEngineTest is Test {
         // one Mineworker-side turn dealing 4 damage (base 2 + 1 + 1) — its
         // position in the trace depends on Fisher-Yates side assignment, which
         // we don't pin here.
-        (ArenaEngine.Turn[] memory turns, ) = arena.simulateMatch(1);
+        (ArenaCombat.Turn[] memory turns, ) = arena.simulateMatch(1);
         assertGt(turns.length, 0, "must have at least one turn");
 
         // Find a1's bench slot 0 unit (Mineworker) in the match. Combat builds

@@ -11,6 +11,7 @@ import "./GTreasury.sol";
 import "./CardLedger.sol";
 import "./AbilityLib.sol";
 import "./UnitCatalog.sol";
+import "./ArenaCombat.sol";
 
 /// @title ArenaEngine — async ghost autobattler (SAP-style) layered on the main world.
 /// @notice Players submit a 5-slot bench (a "ghost") that other agents fight against
@@ -605,42 +606,21 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     //                     COMBAT SIMULATION
     // ══════════════════════════════════════════════════════════
 
-    /// @dev A single attack action in the deterministic trace.
-    struct Turn {
-        uint8  attackerSide;   // 0 = match's attacker side, 1 = defender side
-        uint8  attackerSlot;
-        uint8  defenderSlot;
-        uint16 damage;
-        bool   defenderDied;
-    }
-
-    /// @notice Deterministic combat replay for a settled or unsettled match.
-    ///         View-only — does not touch storage. Returns the full turn-by-turn
-    ///         trace alongside the winner. Use this for frontends and replays;
-    ///         settlement uses `_simulateInternal` directly to skip trace alloc.
-    function simulateMatch(uint256 matchId) public view returns (Turn[] memory turns, uint256 winnerAgentId) {
+    /// @notice Deterministic combat replay (view): full turn-by-turn trace + winner.
+    ///         Combat logic lives in the {ArenaCombat} library (deployed separately
+    ///         and linked) so ArenaEngine stays under the 24KB code-size limit.
+    function simulateMatch(uint256 matchId)
+        public view returns (ArenaCombat.Turn[] memory turns, uint256 winnerAgentId)
+    {
         Match storage m = _matches[matchId];
         require(m.attackerId != 0, "no match");
-
-        AbilityLib.BattleState memory state = _buildBattleState(
-            m.attackerBench, m.attackerAtkOverride, m.attackerHpOverride,
-            m.defenderBench, m.defenderAtkOverride, m.defenderHpOverride,
-            uint256(m.seed)
+        (turns, winnerAgentId) = ArenaCombat.simulateWithTrace(
+            _sideOf(m, true), _sideOf(m, false), uint256(m.seed), m.attackerId, m.defenderId
         );
-
-        Turn[] memory buf = new Turn[](128);
-        uint256 turnCount;
-        (winnerAgentId, turnCount) = _runCombat(state, m.attackerId, m.defenderId, uint256(m.seed), buf);
-
-        // Copy trimmed buffer
-        turns = new Turn[](turnCount);
-        for (uint256 i = 0; i < turnCount; i++) turns[i] = buf[i];
     }
 
     /// @notice Per-slot ATK/HP after buy/sell overlays AND all ON_START abilities
-    ///         resolve — i.e. the true starting stats the combat trace runs on.
-    ///         The UI uses these so card HP bars, KO timing and the damage log
-    ///         all agree (catalog base stats alone miss ON_START buffs).
+    ///         resolve — the true starting stats the combat trace runs on.
     function getInitialStats(uint256 matchId) external view returns (
         uint16[SLOTS] memory leftAtk,
         uint16[SLOTS] memory leftHp,
@@ -649,166 +629,24 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     ) {
         Match storage m = _matches[matchId];
         require(m.attackerId != 0, "no match");
-
-        AbilityLib.BattleState memory state = _buildBattleState(
-            m.attackerBench, m.attackerAtkOverride, m.attackerHpOverride,
-            m.defenderBench, m.defenderAtkOverride, m.defenderHpOverride,
-            uint256(m.seed)
+        (leftAtk, leftHp, rightAtk, rightHp) = ArenaCombat.initialStats(
+            _sideOf(m, true), _sideOf(m, false), uint256(m.seed)
         );
-        state = AbilityLib.triggerAllOnStart(state);
-
-        for (uint8 i = 0; i < SLOTS; i++) {
-            leftAtk[i]  = state.left[i].atk;
-            leftHp[i]   = state.left[i].hp;
-            rightAtk[i] = state.right[i].atk;
-            rightHp[i]  = state.right[i].hp;
-        }
     }
 
-    /// @dev Trace-less winner-only simulator used by settleMatch. Same combat
-    ///      loop as simulateMatch but skips the 128-slot turn buffer alloc and
-    ///      per-turn writes. Saves ~5-10k gas on settlement.
-    function _simulateInternal(
-        uint8[SLOTS] memory leftBench,
-        int16[SLOTS] memory leftAtkOverride,
-        int16[SLOTS] memory leftHpOverride,
-        uint8[SLOTS] memory rightBench,
-        int16[SLOTS] memory rightAtkOverride,
-        int16[SLOTS] memory rightHpOverride,
-        uint256 seed,
-        uint256 leftAgentId,
-        uint256 rightAgentId
-    ) internal pure returns (uint256 winnerAgentId) {
-        AbilityLib.BattleState memory state = _buildBattleState(
-            leftBench, leftAtkOverride, leftHpOverride,
-            rightBench, rightAtkOverride, rightHpOverride,
-            seed
-        );
-        Turn[] memory nullBuf; // length 0 — _runCombat skips writes
-        (winnerAgentId, ) = _runCombat(state, leftAgentId, rightAgentId, seed, nullBuf);
-    }
-
-    /// @dev Shared combat loop. If `buf` is empty the trace step is skipped,
-    ///      otherwise turns are written until `buf` fills.
-    function _runCombat(
-        AbilityLib.BattleState memory state,
-        uint256 attackerAgentId,
-        uint256 defenderAgentId,
-        uint256 seed,
-        Turn[] memory buf
-    ) internal pure returns (uint256 winnerAgentId, uint256 turnCount) {
-        // ON_START for everyone (left then right)
-        state = AbilityLib.triggerAllOnStart(state);
-
-        // Combat loop: alternate hits between sides. Pick highest-ATK alive on
-        // each side; defender always picks slot[0]-most-alive (front line).
-        // Tiebreak: lowest slot. This matches the spike spec: "attack 大的先动,
-        // 左→右对位".
-        uint8 active = AbilityLib.SIDE_LEFT;
-        uint256 safety = 0;
-        while (
-            AbilityLib.sideHasLiving(state, AbilityLib.SIDE_LEFT) &&
-            AbilityLib.sideHasLiving(state, AbilityLib.SIDE_RIGHT) &&
-            safety < 200
-        ) {
-            safety++;
-            (uint8 atkSlot, bool foundA) = _pickHighestAtk(state, active);
-            uint8 enemy = active == AbilityLib.SIDE_LEFT ? AbilityLib.SIDE_RIGHT : AbilityLib.SIDE_LEFT;
-            (uint8 defSlot, bool foundD) = _pickFrontline(state, enemy);
-            if (!foundA || !foundD) break;
-
-            AbilityLib.Unit memory aUnit = AbilityLib._unitAt(state, active, atkSlot);
-            uint16 dmg = aUnit.atk;
-            bool died = AbilityLib.dealCombatDamage(state, enemy, defSlot, dmg);
-
-            if (turnCount < buf.length) {
-                buf[turnCount++] = Turn({
-                    attackerSide: active,
-                    attackerSlot: atkSlot,
-                    defenderSlot: defSlot,
-                    damage: dmg,
-                    defenderDied: died
-                });
-            }
-
-            active = enemy;
-        }
-
-        bool leftAlive = AbilityLib.sideHasLiving(state, AbilityLib.SIDE_LEFT);
-        bool rightAlive = AbilityLib.sideHasLiving(state, AbilityLib.SIDE_RIGHT);
-        if (leftAlive && !rightAlive) {
-            winnerAgentId = attackerAgentId;
-        } else if (!leftAlive && rightAlive) {
-            winnerAgentId = defenderAgentId;
+    /// @dev Snapshot one side of a stored match into a combat Side (storage → memory).
+    function _sideOf(Match storage m, bool attacker)
+        internal view returns (ArenaCombat.Side memory s)
+    {
+        if (attacker) {
+            s.bench = m.attackerBench;
+            s.atkOverride = m.attackerAtkOverride;
+            s.hpOverride = m.attackerHpOverride;
         } else {
-            // Draw — pick a winner from keccak(seed, "draw") so there's no
-            // systematic attacker-vs-defender bias. Deterministic for the seed.
-            uint256 coin = uint256(keccak256(abi.encode(seed, "draw"))) & 1;
-            winnerAgentId = coin == 0 ? attackerAgentId : defenderAgentId;
+            s.bench = m.defenderBench;
+            s.atkOverride = m.defenderAtkOverride;
+            s.hpOverride = m.defenderHpOverride;
         }
-    }
-
-    function _buildBattleState(
-        uint8[SLOTS] memory leftBench,
-        int16[SLOTS] memory leftAtkOverride,
-        int16[SLOTS] memory leftHpOverride,
-        uint8[SLOTS] memory rightBench,
-        int16[SLOTS] memory rightAtkOverride,
-        int16[SLOTS] memory rightHpOverride,
-        uint256 seed
-    ) internal pure returns (AbilityLib.BattleState memory state) {
-        for (uint8 i = 0; i < SLOTS; i++) {
-            state.left[i] = _materialize(leftBench[i], leftAtkOverride[i], leftHpOverride[i]);
-            state.right[i] = _materialize(rightBench[i], rightAtkOverride[i], rightHpOverride[i]);
-        }
-        state.seed = seed;
-    }
-
-    function _materialize(uint8 unitType, int16 atkOverride, int16 hpOverride)
-        internal pure returns (AbilityLib.Unit memory u)
-    {
-        if (unitType == 0) return u; // empty
-        ( , uint16 atk, uint16 hp, , AbilityLib.Ability memory ab) = UnitCatalog.getUnit(unitType);
-        // Apply persistent buy/sell overlay. Floor at 0 so a negative buff
-        // (none exist today but future debuffs might) can't underflow uint16.
-        int32 finalAtk = int32(uint32(atk)) + int32(atkOverride);
-        int32 finalHp = int32(uint32(hp)) + int32(hpOverride);
-        if (finalAtk < 0) finalAtk = 0;
-        if (finalHp < 1) finalHp = 1; // a live unit must have at least 1 HP
-        u.unitType = unitType;
-        u.atk = uint16(uint32(finalAtk));
-        u.hp = uint16(uint32(finalHp));
-        u.alive = true;
-        u.spawned = false;
-        u.ability = ab;
-    }
-
-    function _pickHighestAtk(AbilityLib.BattleState memory state, uint8 side)
-        internal pure returns (uint8 slot, bool found)
-    {
-        uint16 bestAtk;
-        for (uint8 i = 0; i < SLOTS; i++) {
-            if (AbilityLib._aliveAt(state, side, i)) {
-                AbilityLib.Unit memory u = AbilityLib._unitAt(state, side, i);
-                // strictly greater, so leftmost wins ties (matches "左→右对位")
-                if (!found || u.atk > bestAtk) {
-                    bestAtk = u.atk;
-                    slot = i;
-                    found = true;
-                }
-            }
-        }
-    }
-
-    function _pickFrontline(AbilityLib.BattleState memory state, uint8 side)
-        internal pure returns (uint8 slot, bool found)
-    {
-        for (uint8 i = 0; i < SLOTS; i++) {
-            if (AbilityLib._aliveAt(state, side, i)) {
-                return (i, true);
-            }
-        }
-        return (0, false);
     }
 
     // ══════════════════════════════════════════════════════════
@@ -823,10 +661,8 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         require(!m.settled, "already settled");
 
         // Settle path skips the per-turn trace buffer — we only need the winner.
-        uint256 winnerId = _simulateInternal(
-            m.attackerBench, m.attackerAtkOverride, m.attackerHpOverride,
-            m.defenderBench, m.defenderAtkOverride, m.defenderHpOverride,
-            uint256(m.seed), m.attackerId, m.defenderId
+        uint256 winnerId = ArenaCombat.simulate(
+            _sideOf(m, true), _sideOf(m, false), uint256(m.seed), m.attackerId, m.defenderId
         );
         uint256 loserId = winnerId == m.attackerId ? m.defenderId : m.attackerId;
 
@@ -844,7 +680,7 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         // via a linear approx (good enough for spike — pure on-chain Elo with
         // real expected-score math needs fixed-point logistic which is
         // overkill here).
-        (uint16 newWinElo, uint16 newLoseElo) = _eloUpdate(_ghosts[winnerId].elo, _ghosts[loserId].elo);
+        (uint16 newWinElo, uint16 newLoseElo) = ArenaCombat.eloUpdate(_ghosts[winnerId].elo, _ghosts[loserId].elo);
         _setElo(winnerId, newWinElo);
         _setElo(loserId, newLoseElo);
 
@@ -858,43 +694,6 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         }
 
         emit MatchSettled(matchId, winnerId, newWinElo, newLoseElo);
-    }
-
-    /// @dev Symmetric ELO update: winner gains the same delta the loser drops.
-    ///      Intentional spike simplification — under K=32 and bucket-bounded
-    ///      matchmaking this is stable enough for the autobattler, and avoids
-    ///      the fixed-point logistic that "proper" Elo needs. The
-    ///      `test_elo_symmetric_*` tests pin this behavior as a contract so
-    ///      changes are explicit.
-    /// TODO PR #2: switch to asymmetric logistic expected-score (fixed-point
-    ///      Q16.16 sigmoid). Symmetric K=32 over-rewards upsets at high
-    ///      ELO gap.
-    function _eloUpdate(uint16 winnerElo, uint16 loserElo)
-        internal pure returns (uint16 newWinner, uint16 newLoser)
-    {
-        // Standard expected score with logistic-base-400-D-10 approximated by a
-        // bounded linear function: |diff| capped at 400 gives expected score
-        // in roughly [0.1, 0.9]. K=32. Good enough for spike.
-        int256 diff = int256(uint256(winnerElo)) - int256(uint256(loserElo));
-        if (diff > 400) diff = 400;
-        if (diff < -400) diff = -400;
-        // expectedWin ≈ 0.5 + diff/800. Surplus = 1 - expectedWin = 0.5 - diff/800.
-        // delta = K * surplus = 16 - K*diff/800 = 16 - diff/25.
-        int256 deltaW = 16 - diff / 25;
-        if (deltaW < 1) deltaW = 1;
-        if (deltaW > 31) deltaW = 31;
-
-        int256 deltaL = deltaW; // symmetric — see fn-level NatSpec.
-
-        int256 nw = int256(uint256(winnerElo)) + deltaW;
-        int256 nl = int256(uint256(loserElo)) - deltaL;
-        if (nw < 0) nw = 0;
-        if (nl < 0) nl = 0;
-        int256 maxU16 = int256(uint256(type(uint16).max));
-        if (nw > maxU16) nw = maxU16;
-        if (nl > maxU16) nl = maxU16;
-        newWinner = uint16(uint256(nw));
-        newLoser = uint16(uint256(nl));
     }
 
     function _setElo(uint256 agentId, uint16 newElo) internal {
@@ -1024,6 +823,6 @@ contract ArenaEngine is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     function previewEloUpdate(uint16 winnerElo, uint16 loserElo)
         external pure returns (uint16 newWinner, uint16 newLoser)
     {
-        return _eloUpdate(winnerElo, loserElo);
+        return ArenaCombat.eloUpdate(winnerElo, loserElo);
     }
 }
