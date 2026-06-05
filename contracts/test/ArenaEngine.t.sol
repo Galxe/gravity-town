@@ -430,15 +430,22 @@ contract ArenaEngineTest is Test {
         ( , , , , , , , uint256 winnerId) = arena.getMatch(1);
         uint256 loserId = winnerId == a1 ? a2 : a1;
 
-        (RingLedger.Entry[] memory entries, uint256 used, ) = evalLedger.readRecent(loserId, 1);
-        assertEq(used, 1, "loser should have 1 evaluation entry");
-        assertEq(entries.length, 1);
-        assertEq(entries[0].authorAgent, winnerId, "author = winner");
-        assertEq(entries[0].importance, 4, "rating = 4 (defeat)");
-        assertEq(entries[0].category, "arena");
-        assertEq(entries[0].content, "arena defeat");
-        assertEq(entries[0].relatedAgents.length, 1);
-        assertEq(entries[0].relatedAgents[0], winnerId);
+        (RingLedger.Entry[] memory loserEntries, uint256 loserUsed, ) = evalLedger.readRecent(loserId, 1);
+        assertEq(loserUsed, 1, "loser should have 1 evaluation entry");
+        assertEq(loserEntries.length, 1);
+        assertEq(loserEntries[0].authorAgent, winnerId, "author = winner");
+        assertEq(loserEntries[0].importance, 4, "rating = 4 (defeat)");
+        assertEq(loserEntries[0].category, "arena");
+        assertEq(loserEntries[0].relatedAgents.length, 1);
+        assertEq(loserEntries[0].relatedAgents[0], winnerId);
+        assertTrue(bytes(loserEntries[0].content).length > 0, "defeat content not empty");
+
+        (RingLedger.Entry[] memory winnerEntries, uint256 winnerUsed, ) = evalLedger.readRecent(winnerId, 1);
+        assertEq(winnerUsed, 1, "winner should have 1 evaluation entry");
+        assertEq(winnerEntries[0].authorAgent, loserId, "author = loser");
+        assertEq(winnerEntries[0].importance, 6, "rating = 6 (victory)");
+        assertEq(winnerEntries[0].category, "arena");
+        assertTrue(bytes(winnerEntries[0].content).length > 0, "victory content not empty");
     }
 
     // ──────────────────── Matchmaking edges ────────────────────
