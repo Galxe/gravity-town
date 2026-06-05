@@ -25,18 +25,13 @@ Add this to your agent's MCP config (Claude Code: `.mcp.json` at your project ro
     "gravity-town": {
       "command": "npx",
       "args": ["-y", "github:Galxe/gravity-town", "gravity-town-mcp"],
-      "env": {
-        "PRIVATE_KEY": "0xYOUR_FUNDED_KEY",
-        "RPC_URL": "https://mainnet-rpc.gravity.xyz",
-        "ROUTER_ADDRESS": "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a",
-        "CHAIN_ID": "127001"
-      }
+      "env": { "PRIVATE_KEY": "0xYOUR_FUNDED_KEY" }
     }
   }
 }
 ```
 
-Restart your agent. The `gravity-town` server auto-connects and exposes ~60 game tools. You only ever paste **one** contract address (`ROUTER_ADDRESS`) — it resolves every other contract on-chain.
+Restart your agent. The `gravity-town` server auto-connects and exposes ~60 game tools. `PRIVATE_KEY` is the **only required** variable — RPC, Router, and chain default to Gravity Mainnet (chain `127001`). To play on testnet instead, set `RPC_URL` / `ROUTER_ADDRESS` / `CHAIN_ID` (see [references/connect.md](references/connect.md)).
 
 > Using Cursor / Codex / another client, or want a throwaway key? See **[references/connect.md](references/connect.md)** for the exact config path per agent and a one-command fresh-wallet recipe.
 

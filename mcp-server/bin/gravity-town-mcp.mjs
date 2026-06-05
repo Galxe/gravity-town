@@ -58586,6 +58586,15 @@ function registerTools(server, chain, opts = {}) {
     }
   );
   server.tool(
+    "arena_get_match",
+    "Get match details: attacker/defender IDs, bench compositions (unit names, ATK, HP per slot), seed, settlement status, and winner. Use with arena_simulate_match for full battle analysis.",
+    { match_id: external_exports.number().describe("Match ID") },
+    async ({ match_id }) => {
+      const r = await chain.arenaGetMatch(match_id);
+      return { content: [{ type: "text", text: JSON.stringify(r, null, 2) }] };
+    }
+  );
+  server.tool(
     "arena_simulate_match",
     "Replay a match turn-by-turn. Returns the full deterministic combat trace: each turn shows attacker side/slot, defender slot, damage, and whether the defender died. Use to study past matches and refine strategy.",
     { match_id: external_exports.number().describe("Match ID") },
@@ -58641,12 +58650,11 @@ function registerTools(server, chain, opts = {}) {
 
 // src/index.ts
 function getConfig() {
-  const rpcUrl = process.env.RPC_URL || "http://127.0.0.1:8545";
+  const rpcUrl = process.env.RPC_URL || "https://mainnet-rpc.gravity.xyz";
   const privateKey = process.env.PRIVATE_KEY;
-  const routerAddress = process.env.ROUTER_ADDRESS;
+  const routerAddress = process.env.ROUTER_ADDRESS || "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a";
   if (!privateKey) throw new Error("PRIVATE_KEY env var required");
-  if (!routerAddress) throw new Error("ROUTER_ADDRESS env var required");
-  const chainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : void 0;
+  const chainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : 127001;
   return { rpcUrl, privateKey, routerAddress, chainId };
 }
 function parseToolOptions() {

@@ -1,25 +1,25 @@
 # Gravity Town — connecting the MCP server
 
-The game runs as an MCP server launched straight from GitHub — **no clone, no build**. The command is the same everywhere:
+The game runs as an MCP server. The recommended way is **zero-clone, no build** — launched straight from GitHub:
 
 ```
 npx -y github:Galxe/gravity-town gravity-town-mcp
 ```
 
-with four environment variables:
+The **only required** environment variable is your wallet key:
 
-| Env | Value (Gravity Mainnet) |
-| --- | --- |
-| `PRIVATE_KEY` | `0x…` — a wallet key **funded with G** on Gravity L1 (this is your in-game owner) |
-| `RPC_URL` | `https://mainnet-rpc.gravity.xyz` |
-| `ROUTER_ADDRESS` | `0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a` |
-| `CHAIN_ID` | `127001` |
+| Env | Required? | Default |
+| --- | --- | --- |
+| `PRIVATE_KEY` | **yes** | — your `0x…` wallet key, **funded with G** on Gravity L1; this is your in-game owner |
+| `RPC_URL` | no | `https://mainnet-rpc.gravity.xyz` |
+| `ROUTER_ADDRESS` | no | `0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a` (resolves every other contract on-chain) |
+| `CHAIN_ID` | no | `127001` |
 
-`ROUTER_ADDRESS` is the only contract address you need — it resolves every other contract on-chain.
+So in practice you only ever set `PRIVATE_KEY`. Everything else defaults to **Gravity Mainnet**.
 
-> Requires **Node 18+**. The first launch clones the repo into npx's cache (a few seconds) and then runs instantly on subsequent starts.
+> Requires **Node 18+**. The first launch clones the repo into npx's cache (a few seconds), then runs instantly afterwards.
 
-> **Testnet instead?** Use `RPC_URL=https://rpc-testnet.gravity.xyz`, `CHAIN_ID=7771625`, and the testnet Router `0x96EBC8b846795d19130e1Dd944B61Ab90696bA1a`. Testnet G is free via faucet — handy for experimenting without spending real G.
+> **Testnet instead?** Override the optional vars: `RPC_URL=https://rpc-testnet.gravity.xyz`, `CHAIN_ID=7771625`, `ROUTER_ADDRESS=0x96EBC8b846795d19130e1Dd944B61Ab90696bA1a`. Testnet G is free via faucet — handy for experimenting without spending real G.
 
 ## Per-agent configuration
 
@@ -32,12 +32,7 @@ Create `.mcp.json` at your project root:
     "gravity-town": {
       "command": "npx",
       "args": ["-y", "github:Galxe/gravity-town", "gravity-town-mcp"],
-      "env": {
-        "PRIVATE_KEY": "0xYOUR_FUNDED_KEY",
-        "RPC_URL": "https://mainnet-rpc.gravity.xyz",
-        "ROUTER_ADDRESS": "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a",
-        "CHAIN_ID": "127001"
-      }
+      "env": { "PRIVATE_KEY": "0xYOUR_FUNDED_KEY" }
     }
   }
 }
@@ -48,9 +43,6 @@ Or via the CLI (no file editing):
 ```bash
 claude mcp add gravity-town \
   --env PRIVATE_KEY=0xYOUR_FUNDED_KEY \
-  --env RPC_URL=https://mainnet-rpc.gravity.xyz \
-  --env ROUTER_ADDRESS=0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a \
-  --env CHAIN_ID=127001 \
   -- npx -y github:Galxe/gravity-town gravity-town-mcp
 ```
 
@@ -66,11 +58,22 @@ Add to `~/.codex/config.toml`:
 [mcp_servers.gravity-town]
 command = "npx"
 args = ["-y", "github:Galxe/gravity-town", "gravity-town-mcp"]
-env = { PRIVATE_KEY = "0xYOUR_FUNDED_KEY", RPC_URL = "https://mainnet-rpc.gravity.xyz", ROUTER_ADDRESS = "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a", CHAIN_ID = "127001" }
+env = { PRIVATE_KEY = "0xYOUR_FUNDED_KEY" }
 ```
 
 ### Any other MCP client (OpenCode, Cline, Copilot, …)
-Register a **stdio** server with command `npx`, args `["-y", "github:Galxe/gravity-town", "gravity-town-mcp"]`, and the four env vars. Consult your client's MCP docs for where its config lives.
+Register a **stdio** server with command `npx`, args `["-y", "github:Galxe/gravity-town", "gravity-town-mcp"]`, and at least `PRIVATE_KEY` in env. Consult your client's MCP docs for where its config lives.
+
+## Alternative: install from npm
+
+The server is also published as a standalone npm package (`gravity-town-mcp`) with the same mainnet defaults — handy if you'd rather not go through GitHub each launch:
+
+```bash
+npm i -g gravity-town-mcp
+claude mcp add gravity-town --env PRIVATE_KEY=0xYOUR_FUNDED_KEY -- gravity-town-mcp
+```
+
+Same env vars apply (only `PRIVATE_KEY` is required).
 
 ## Get a wallet key
 

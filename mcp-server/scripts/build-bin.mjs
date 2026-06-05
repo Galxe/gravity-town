@@ -4,23 +4,35 @@
 // Output: mcp-server/bin/gravity-town-mcp.mjs (committed to the repo).
 // Rebuild after changing src/: `npm run build:bin` (from mcp-server/).
 import { build } from "esbuild";
+import { readFile, writeFile, chmod } from "node:fs/promises";
 
-// ethers v5 calls `require("crypto")` (a Node built-in) at load time. esbuild's
-// ESM output stubs `require`, so we re-inject a real one via createRequire.
-const banner = [
-  "#!/usr/bin/env node",
-  'import { createRequire as __cr } from "module";',
-  "const require = __cr(import.meta.url);",
-].join("\n");
+const OUT = "bin/gravity-town-mcp.mjs";
 
 await build({
   entryPoints: ["src/index.ts"],
-  outfile: "bin/gravity-town-mcp.mjs",
+  outfile: OUT,
   bundle: true,
   platform: "node",
   format: "esm",
   target: "node18",
-  banner: { js: banner },
 });
 
-console.log("Built bin/gravity-town-mcp.mjs");
+// esbuild keeps the source `#!/usr/bin/env node` shebang on line 1. ethers v5
+// calls `require("crypto")` (a Node built-in) at load time, but esbuild's ESM
+// output stubs `require` — so re-inject a real one via createRequire, placed
+// right AFTER the shebang (a shebang is only valid as the very first line).
+const shim =
+  'import { createRequire as __cr } from "module";\n' +
+  "const require = __cr(import.meta.url);\n";
+
+let code = await readFile(OUT, "utf8");
+if (code.startsWith("#!")) {
+  const nl = code.indexOf("\n") + 1;
+  code = code.slice(0, nl) + shim + code.slice(nl);
+} else {
+  code = "#!/usr/bin/env node\n" + shim + code;
+}
+await writeFile(OUT, code);
+await chmod(OUT, 0o755);
+
+console.log(`Built ${OUT}`);

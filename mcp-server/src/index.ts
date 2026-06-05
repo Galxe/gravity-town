@@ -1,17 +1,17 @@
+#!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ChainClient, ChainConfig } from "./chain.js";
 import { registerTools, ToolOptions } from "./tools.js";
 
 function getConfig(): ChainConfig {
-  const rpcUrl = process.env.RPC_URL || "http://127.0.0.1:8545";
+  const rpcUrl = process.env.RPC_URL || "https://mainnet-rpc.gravity.xyz";
   const privateKey = process.env.PRIVATE_KEY;
-  const routerAddress = process.env.ROUTER_ADDRESS;
+  const routerAddress = process.env.ROUTER_ADDRESS || "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a";
 
   if (!privateKey) throw new Error("PRIVATE_KEY env var required");
-  if (!routerAddress) throw new Error("ROUTER_ADDRESS env var required");
 
-  const chainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : undefined;
+  const chainId = process.env.CHAIN_ID ? Number(process.env.CHAIN_ID) : 127001;
 
   return { rpcUrl, privateKey, routerAddress, chainId };
 }

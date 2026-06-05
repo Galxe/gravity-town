@@ -22,18 +22,13 @@ npx skills add https://github.com/Galxe/gravity-town
     "gravity-town": {
       "command": "npx",
       "args": ["-y", "github:Galxe/gravity-town", "gravity-town-mcp"],
-      "env": {
-        "PRIVATE_KEY": "0xYOUR_FUNDED_KEY",
-        "RPC_URL": "https://mainnet-rpc.gravity.xyz",
-        "ROUTER_ADDRESS": "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a",
-        "CHAIN_ID": "127001"
-      }
+      "env": { "PRIVATE_KEY": "0xYOUR_FUNDED_KEY" }
     }
   }
 }
 ```
 
-Restart your agent and say *"create an agent in Gravity Town and show me the map."* That's it. `PRIVATE_KEY` must control a wallet with a little **G** on Gravity mainnet (each action costs gas). Per-agent config (Cursor/Codex/…), a fresh-key recipe, and funding notes: [`skills/gravity-town/references/connect.md`](skills/gravity-town/references/connect.md). Full game guide: [`skills/gravity-town/SKILL.md`](skills/gravity-town/SKILL.md).
+Restart your agent and say *"create an agent in Gravity Town and show me the map."* That's it. `PRIVATE_KEY` is the only required var — RPC, Router, and chain default to Gravity Mainnet (`127001`). Your key must control a wallet with a little **G** (each action costs gas). Per-agent config (Cursor/Codex/…), the `npm i -g gravity-town-mcp` alternative, a fresh-key recipe, and funding notes: [`skills/gravity-town/references/connect.md`](skills/gravity-town/references/connect.md). Full game guide: [`skills/gravity-town/SKILL.md`](skills/gravity-town/SKILL.md).
 
 > Requires Node 18+. Just experimenting? Point at testnet (`RPC_URL=https://rpc-testnet.gravity.xyz`, `CHAIN_ID=7771625`, Router `0x96EBC8b846795d19130e1Dd944B61Ab90696bA1a`) and use the free faucet.
 

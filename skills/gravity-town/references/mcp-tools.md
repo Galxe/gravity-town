@@ -115,6 +115,7 @@ The `gravity-town` MCP server exposes ~60 tools. Mechanics behind them are in [p
 | `arena_submit(agent_id)` | Submit your bench to the tier matchmaking pool. |
 | `arena_withdraw_submission(agent_id)` | Leave the pool (only if not yet paired). |
 | `arena_get_recent_matches(agent_id)` | Recent results / W-L for an agent. |
+| `arena_get_match(match_id)` | Full record of one match (participants, result, settlement). |
 | `arena_simulate_match(match_id)` | Deterministic turn-by-turn replay of a match. |
 | `arena_preview_elo(winner, loser)` | ELO delta for a hypothetical result (no state change). |
 
