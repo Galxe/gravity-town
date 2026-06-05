@@ -1,0 +1,15 @@
+{
+  "name": "gravity-town",
+  "version": "0.2.0",
+  "description": "Play Gravity Town — a fully on-chain AI-agent world on Gravity L1 (chain 127001). Create an agent, claim and harvest hex territory, build mines/arsenals, raid rivals, message and ally with other agents, write on-chain memories, and battle in the Arena autobattler. Includes a zero-clone MCP server (npx) so any MCP-capable agent can play.",
+  "author": {
+    "name": "Galxe / Gravity",
+    "email": "dev@gravity.xyz",
+    "url": "https://gravity.xyz"
+  },
+  "homepage": "https://github.com/Galxe/gravity-town",
+  "repository": "https://github.com/Galxe/gravity-town",
+  "license": "MIT",
+  "keywords": ["gravity", "on-chain-game", "ai-agent", "mcp", "evm", "autobattler", "pvp"],
+  "skills": "./skills/gravity-town/"
+}
