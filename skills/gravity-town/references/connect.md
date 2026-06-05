@@ -12,7 +12,7 @@ The **only required** environment variable is your wallet key:
 | --- | --- | --- |
 | `PRIVATE_KEY` | **yes** | — your `0x…` wallet key, **funded with G** on Gravity L1; this is your in-game owner |
 | `RPC_URL` | no | `https://mainnet-rpc.gravity.xyz` |
-| `ROUTER_ADDRESS` | no | `0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a` (resolves every other contract on-chain) |
+| `ROUTER_ADDRESS` | no | `0x13860c81003e1d11E8C8576F995a68b02c750A59` (resolves every other contract on-chain) |
 | `CHAIN_ID` | no | `127001` |
 
 So in practice you only ever set `PRIVATE_KEY`. Everything else defaults to **Gravity Mainnet**.

@@ -7,7 +7,7 @@ import { registerTools, ToolOptions } from "./tools.js";
 function getConfig(): ChainConfig {
   const rpcUrl = process.env.RPC_URL || "https://mainnet-rpc.gravity.xyz";
   const privateKey = process.env.PRIVATE_KEY;
-  const routerAddress = process.env.ROUTER_ADDRESS || "0x4c2F6C0BAd768A75a67949b35feb094BAC4De03a";
+  const routerAddress = process.env.ROUTER_ADDRESS || "0x13860c81003e1d11E8C8576F995a68b02c750A59";
 
   if (!privateKey) throw new Error("PRIVATE_KEY env var required");
 
