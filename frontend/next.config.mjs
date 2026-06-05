@@ -35,8 +35,8 @@ if (!routerAddress) {
 // flip between them at runtime (see src/lib/networks.ts).
 // The first entry is the default on first visit. Missing config files are skipped.
 const NETWORK_FILES = [
-  { key: 'testnet', label: 'Testnet', file: 'gravity-testnet.json' },
   { key: 'mainnet', label: 'Mainnet', file: 'gravity-mainnet.json' },
+  { key: 'testnet', label: 'Testnet', file: 'gravity-testnet.json' },
 ];
 const networks = NETWORK_FILES.map(({ key, label, file }) => {
   // Prefer a local override (gitignored *.json), fall back to the committed *.example.json.
