@@ -62,7 +62,7 @@ const CARDLEDGER_ABI = [
   'event ListedCardBought(uint256 indexed cardId, uint256 indexed sellerAgent, uint256 indexed buyerAgent, uint256 priceG)',
 ];
 
-const POLL_MS = 4000;
+const POLL_MS = 8000;
 
 /**
  * Most-recent on-chain tx touching each of `agentId`'s cards. Scans the card
@@ -135,6 +135,11 @@ export function useArenaEngine() {
   // don't try to ladder them by createdAt because Settled events arrive in
   // settlement order, which is what the eye expects ("last result first").
   const recentResultsRef = useRef<Record<number, ('W' | 'L')[]>>({});
+  // Static-once / slow-changing caches that cut redundant RPC every poll:
+  //  - agent names never change after creation
+  //  - tier matchmaking cooldowns change at most once per matchmaking round
+  const namesRef = useRef<Record<number, string>>({});
+  const lastTierFetchRef = useRef<number>(0);
 
   useEffect(() => {
     // If the build was made with APP_CONFIG=localhost (FALLBACK_RPC points at
@@ -309,6 +314,9 @@ export function useArenaEngine() {
     };
 
     const pullData = async () => {
+      // Don't poll while the tab is backgrounded — a wall of idle demo tabs
+      // shouldn't each keep hammering the RPC. We re-pull on re-focus (below).
+      if (typeof document !== 'undefined' && document.hidden) return;
       if (isFetching.current) return;
       isFetching.current = true;
       try {
@@ -319,13 +327,16 @@ export function useArenaEngine() {
 
         // Pull all agents and their ghost state
         const agentIds: bigint[] = await registry.getAllAgentIds();
-        const names: Record<number, string> = {};
 
-        await Promise.all(agentIds.map(async (aId) => {
-          const id = Number(aId);
-          const [name] = await registry.getAgent(id);
-          names[id] = name;
-        }));
+        // Names are immutable after agent creation — fetch only for ids we haven't
+        // cached yet, then reuse. Saves one getAgent() per agent on every poll.
+        const names = namesRef.current;
+        const missingNames = agentIds.map(Number).filter((id) => !names[id]);
+        if (missingNames.length) {
+          await Promise.all(missingNames.map(async (id) => {
+            try { const [name] = await registry.getAgent(id); names[id] = name; } catch { /* ignore */ }
+          }));
+        }
 
         // #33 — batched tier + G for the whole roster in ONE call (replaces the
         // old per-agent _tierFor + gBalance pair). Best-effort: a pre-#33 arena
@@ -350,26 +361,33 @@ export function useArenaEngine() {
         // The cooldown is measured against CHAIN time (block.timestamp), which on
         // a dev node can lag wall-clock; compute remaining against chain time, then
         // express it as a wall-clock target so the on-screen ticker counts down.
-        try {
-          const block = await provider.getBlock('latest');
-          const chainNow = block ? Number(block.timestamp) : Math.floor(Date.now() / 1000);
-          const wallNow = Math.floor(Date.now() / 1000);
-          const [l0, l1, l2, p0, p1, p2] = await Promise.all([
-            arena.lastTierMatchmakingAt(0), arena.lastTierMatchmakingAt(1), arena.lastTierMatchmakingAt(2),
-            arena.effectiveTierPeriod(0), arena.effectiveTierPeriod(1), arena.effectiveTierPeriod(2),
-          ]);
-          const lasts = [Number(l0), Number(l1), Number(l2)];
-          const periods = [Number(p0), Number(p1), Number(p2)];
-          let soonestRemaining: number | null = null;
-          for (let tr = 0; tr < 3; tr++) {
-            if (lasts[tr] === 0) continue;                 // never run → available now
-            const remaining = lasts[tr] + periods[tr] - chainNow;
-            if (remaining > 0 && (soonestRemaining === null || remaining < soonestRemaining)) {
-              soonestRemaining = remaining;
+        // Tier cooldowns change at most once per matchmaking round (tens of
+        // seconds). Refetch at most every 30s — the on-screen countdown ticks
+        // client-side from the last target, so being a few seconds stale right
+        // after a round is harmless. Saves the getBlock + 6 reads on most polls.
+        if (Date.now() - lastTierFetchRef.current > 30_000) {
+          lastTierFetchRef.current = Date.now();
+          try {
+            const block = await provider.getBlock('latest');
+            const chainNow = block ? Number(block.timestamp) : Math.floor(Date.now() / 1000);
+            const wallNow = Math.floor(Date.now() / 1000);
+            const [l0, l1, l2, p0, p1, p2] = await Promise.all([
+              arena.lastTierMatchmakingAt(0), arena.lastTierMatchmakingAt(1), arena.lastTierMatchmakingAt(2),
+              arena.effectiveTierPeriod(0), arena.effectiveTierPeriod(1), arena.effectiveTierPeriod(2),
+            ]);
+            const lasts = [Number(l0), Number(l1), Number(l2)];
+            const periods = [Number(p0), Number(p1), Number(p2)];
+            let soonestRemaining: number | null = null;
+            for (let tr = 0; tr < 3; tr++) {
+              if (lasts[tr] === 0) continue;                 // never run → available now
+              const remaining = lasts[tr] + periods[tr] - chainNow;
+              if (remaining > 0 && (soonestRemaining === null || remaining < soonestRemaining)) {
+                soonestRemaining = remaining;
+              }
             }
-          }
-          setNextMatchmakingAt(soonestRemaining !== null ? wallNow + soonestRemaining : null);
-        } catch { /* pre-#33 arena — no tier cooldowns */ }
+            setNextMatchmakingAt(soonestRemaining !== null ? wallNow + soonestRemaining : null);
+          } catch { /* pre-#33 arena — no tier cooldowns */ }
+        }
 
         // Recent W/L form, once, before ghosts are built so each ghost captures
         // its filled strip (recentResults is snapshotted per-ghost below).
@@ -436,19 +454,25 @@ export function useArenaEngine() {
         const earliest = Math.max(1, nextId - 20); // last ~20 matches
         for (let mid = earliest; mid < nextId; mid++) {
           try {
-            const r = await arena.getMatch(mid);
-            const m: ArenaMatch = {
-              matchId: mid,
-              attackerId: Number(r[0]),
-              defenderId: Number(r[1]),
-              attackerBench: Array.from(r[2]).map(Number),
-              defenderBench: Array.from(r[3]).map(Number),
-              seed: (r[4] as bigint).toString(),
-              createdAt: Number(r[5]),
-              settled: Boolean(r[6]),
-              winnerId: Number(r[7]),
-            };
-            upsertMatch(m);
+            // Settled matches are immutable. Once we hold a fully-hydrated settled
+            // copy (attackerId>0 distinguishes it from an event-only stub), skip the
+            // getMatch refetch — only pending/missing matches need a pull each poll.
+            const cached = useArenaStore.getState().matches[mid];
+            if (!(cached && cached.settled && cached.attackerId > 0)) {
+              const r = await arena.getMatch(mid);
+              const m: ArenaMatch = {
+                matchId: mid,
+                attackerId: Number(r[0]),
+                defenderId: Number(r[1]),
+                attackerBench: Array.from(r[2]).map(Number),
+                defenderBench: Array.from(r[3]).map(Number),
+                seed: (r[4] as bigint).toString(),
+                createdAt: Number(r[5]),
+                settled: Boolean(r[6]),
+                winnerId: Number(r[7]),
+              };
+              upsertMatch(m);
+            }
 
             // Hydrate the simulation cache lazily — only for the most recent
             // matches to keep RPC pressure low.
@@ -519,6 +543,11 @@ export function useArenaEngine() {
 
     pullData();
     const interval = setInterval(pullData, POLL_MS);
+
+    // Re-pull immediately when the tab comes back to the foreground, so a
+    // returning viewer sees fresh data without waiting for the next interval.
+    const onVisible = () => { if (!document.hidden) pullData(); };
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
 
     // Live event subscriptions — best-effort. JsonRpcProvider polls under the hood.
     let createdHandler: ((...a: unknown[]) => void) | null = null;
@@ -619,6 +648,7 @@ export function useArenaEngine() {
 
     return () => {
       clearInterval(interval);
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
       if (arena) {
         if (createdHandler) arena.off('MatchCreated', createdHandler);
         if (settledHandler) arena.off('MatchSettled', settledHandler);
