@@ -52,7 +52,7 @@
 
 **怎么交互**：
 - 点 Featured Markets 标题右的 **`all markets →`**，或**点任意一张市场迷你卡** → 都跳到 `#/markets` 列表页。（注意：落地页点卡是去**列表**，不是直接弹下注框。）
-- 顶栏导航点 **`Arena`** → `#/arena`。**观众默认落在 `BATTLE REPLAY`**：可以**直接点 `▶ Play` 看一整场回放**（标题写 `REPLAY · 5v5`，实际渲染 4v4，见已知问题）（逐步点亮事件日志，到最后 `🏆 YOU WIN · ELO +16`）。观众播完只弹一句 `Nice finish — create an agent to play your own matches`，不改任何数据。
+- 顶栏导航点 **`Arena`** → `#/arena`。**观众默认落在 `BATTLE REPLAY`**：可以**直接点 `▶ Play` 看一整场 5v5 回放**（逐步点亮事件日志，顶部有 `turn N/总数` 进度条，到最后 `🏆 YOU WIN · ELO +16`）。观众态阵容标为 `DEMO SQUAD (A)`，播完只弹一句 `Nice finish — create an agent to play your own matches`，不改任何数据。
 - Arena 的 **`CARD MARKET`** 标签观众也能看（含紫边故事卡 + `📜 provenance` 出处）。
 
 > **观众能看的边界**：World 全部、Markets 列表与下注弹窗（按钮会引导建号）、Arena 的 `BATTLE REPLAY` 与 `CARD MARKET`。Arena 的 Overview/Shop/Bench 三个账户页对观众显示 `👁 Spectating` CTA。
@@ -96,7 +96,7 @@
 
 **我在哪**：`#/me` My Agent 仪表盘。头部是头像/名字/`agent #42` + 6 个统计格（Rank/Territory/Buildings/ELO/Chronicle/Score）+ 两块余额（ORE 带 /1000 上限、G）。
 
-**autopilot「活着」的表现**（不是我点的）：创建后立刻写一条 `✨ Spawned…`，首次进面板若日志空会先 seed 一条推理；之后当 **Autopilot 开启**，中栏 AGENTMIND 每约 **3.8s 自动写一条** AI 行为，且**真的改数值**：
+**autopilot「活着」的表现**（不是我点的）：创建后立刻 seed `✨ Spawned…` + 3 条 AI 开局推理（读世界 / 扫邻格 / 采矿建矿计划），所以一进面板 AGENTMIND 就是满的；之后当 **Autopilot 开启**，中栏 AGENTMIND 每约 **3.8s 自动写一条** AI 行为，且**真的改数值**：
 - `⛏️ Harvested +18 ore`（真 +18，封顶 1000）
 - `⚒️ Built a mine (-50 ore)`（ore≥50 时真扣 50、buildings+1）
 - `🤔 Ore pool at X/1000…`、`📢 Posted to board…`、`🛰️ Scanned…`、`🗡️ Probed…`
@@ -190,7 +190,7 @@
 
 ### US-E4 · 我想看自己阵容打一场（爬塔/留存）
 
-**怎么交互**：`BATTLE REPLAY`：左栏 `▶ Play` / `⏭ Skip` / `🔗 Share`，对阵 `YOUR SQUAD (A)`（取自你 bench）vs `VORTEX (B)`；右栏 10 步事件日志。
+**怎么交互**：`BATTLE REPLAY`：左栏 `▶ Play` / `⏭ Skip` / `🔗 Share`，对阵 `YOUR SQUAD (A)`（取自你 bench，登录态；观众态显示 `DEMO SQUAD (A)`）vs `VORTEX (B)`，**双方各 5 单位（真 5v5）**；右栏 10 步事件日志 + `turn N/总数` 进度条。
 - `▶ Play` → 每约 1.1s 推进一步，到 `🏆 …YOU WIN · ELO +16`。**登录者**记一胜、ELO+16、写战绩、toast `Match WON · ELO a → b (+16)`（`C.ELO_WIN_DELTA=16`，等 ELO 胜 = K×0.5）。
 - `⏭ Skip` → 直接跳末步，**不触发结算/战绩**（只有 `▶ Play` 自动播完才记）。
 - `🔗 Share` → toast `Replay link copied (mock) — share to recruit`（**纯 mock，不真复制**；路线图里「回放可分享/导出」是拉新奇观，此处仅占位）。
@@ -222,8 +222,7 @@
 7. **创建 agent 后 Arena 直接是满账户**（G=240/ELO=1043/bench 满/有战绩挂单）——刻意 seed，非你打出来的。
 8. **网络指示 `GRAVITY · 7771625`、Mock 警示条、AgentMind 落地页 5 行**均为静态装饰，不可交互。
 9. **Battle Replay 的 ELO 可重复刷**：每次点 `▶ Play` 都把 `settled` 重置为 false，登录者反复播完会**反复 +16 ELO、反复写一条胜绩**（约 `demo/index.html:1924`+`:1900-1908`）。demo 无防重放。
-10. **「5v5」名不副实**：标题写 `REPLAY · 5v5`，但 spectator 默认阵容与对手 Vortex 实际只渲染 **4 个单位**。
-11. **刷新页面 = 全部重置**（无任何持久化）。
+10. **刷新页面 = 全部重置**（无任何持久化）。
 
 ---
 
