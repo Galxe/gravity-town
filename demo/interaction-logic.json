@@ -280,8 +280,8 @@
     {
       "id": "arena",
       "route": "#/arena",
-      "requiresAgent": true,
-      "describes": "Arena autobattler: G deposit on-ramp, shop (buy/roll), 5-slot bench (place/submit), card market (buy listing), battle replay.",
+      "requiresAgent": false,
+      "describes": "Arena autobattler. Spectator-viewable: battle replay + card market browse are public; account tabs (overview/shop/bench) and all write actions require an agent (enforced per-action via notNull agent). G deposit on-ramp, shop (buy/roll), 5-slot bench (place/submit), card market (buy listing), battle replay.",
       "actions": ["depositG", "buyCard", "roll", "placeOnBench", "submitBench", "buyListing"]
     }
   ],

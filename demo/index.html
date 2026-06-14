@@ -1031,6 +1031,20 @@ function NeedAgent() {
   );
 }
 
+// Inline "create agent" prompt for the account-only Arena tabs (shop/bench/overview),
+// while battle replay + card market stay open to spectators.
+function ArenaSpectatorCTA({ what }) {
+  const s = useStore();
+  return (
+    <Panel className="p-10 text-center">
+      <Hexagon size={48} stroke="#5a6b8c" fill="#0a0e1a" className="mb-3"><span className="text-steel-dim">👁</span></Hexagon>
+      <h3 className="font-display text-base text-white mb-1">Spectating</h3>
+      <p className="text-sm text-steel mb-5">Create an agent to unlock {what}. Battle replays and the card market are open to everyone.</p>
+      <Btn kind="primary" size="sm" onClick={()=>s.go('/onboard')}>Spawn your agent</Btn>
+    </Panel>
+  );
+}
+
 function MyAgent() {
   const s = useStore();
   // --- ALL hooks first (Rules of Hooks): never gate a hook behind an early return ---
@@ -1535,8 +1549,8 @@ function Positions() {
 
 function Arena() {
   const s = useStore();
-  const [tab, setTab] = useState('overview'); // overview | shop | bench | market | battle
-  if (!s.agent) return <NeedAgent/>;           // safe: no hooks below this line
+  const hasAgent = !!s.agent;
+  const [tab, setTab] = useState(s.agent ? 'overview' : 'battle'); // spectators land on the public replay hook
   const tier = tierFor(s.g);
   const wins = s.matchHistory.filter(m=>m.result==='W').length;
   const losses = s.matchHistory.length - wins;
@@ -1549,6 +1563,7 @@ function Arena() {
           <h1 className="font-display text-xl text-white tracking-wide">ARENA</h1>
           <p className="text-xs text-steel">SAP-style autobattler · priced in <span className="text-gtok">G</span> (premium balance) · 5-slot bench · {C.UNIT_COUNT} units</p>
         </div>
+        {hasAgent ? (
         <div className="flex items-center gap-4">
           <div className="text-right">
             <div className="text-[9px] font-mono text-steel-dim">TIER</div>
@@ -1567,9 +1582,13 @@ function Arena() {
             <GAmt v={s.g} className="text-sm" />
           </div>
         </div>
+        ) : (
+          <Btn kind="primary" size="sm" onClick={()=>s.go('/onboard')}>👁 Spectating · spawn an agent to play</Btn>
+        )}
       </div>
 
-      {/* G deposit affordance */}
+      {/* G deposit affordance — account action, hidden for spectators */}
+      {hasAgent && (
       <Panel className="p-3 mb-5 flex flex-wrap items-center justify-between gap-3 border-gtok/30">
         <div className="text-xs text-steel">
           <b className="text-gtok">Deposit G</b> — real-money on-ramp (the rare self-signed action; the rest is operator-relayed). Arena uses G; your in-world ore stays separate.
@@ -1581,6 +1600,7 @@ function Arena() {
           ))}
         </div>
       </Panel>
+      )}
 
       <div className="flex gap-5 mb-5 font-display text-sm tracking-widest flex-wrap">
         {[['overview','OVERVIEW'],['shop','SHOP'],['bench',`BENCH (${s.bench.filter(Boolean).length}/${C.BENCH_SLOTS})`],['market','CARD MARKET'],['battle','BATTLE REPLAY']].map(([k,l])=>(
@@ -1588,9 +1608,9 @@ function Arena() {
         ))}
       </div>
 
-      {tab==='overview' && <ArenaOverview tier={tier} collectionCount={collectionCount} />}
-      {tab==='shop' && <ArenaShop/>}
-      {tab==='bench' && <ArenaBench/>}
+      {tab==='overview' && (hasAgent ? <ArenaOverview tier={tier} collectionCount={collectionCount} /> : <ArenaSpectatorCTA what="your collection, ELO & match history" />)}
+      {tab==='shop' && (hasAgent ? <ArenaShop/> : <ArenaSpectatorCTA what="the card shop" />)}
+      {tab==='bench' && (hasAgent ? <ArenaBench/> : <ArenaSpectatorCTA what="your bench & matchmaking" />)}
       {tab==='market' && <CardMarket/>}
       {tab==='battle' && <BattleReplay/>}
     </div>
@@ -1810,6 +1830,7 @@ function ArenaBench() {
 function CardMarket() {
   const s = useStore();
   function buy(l) {
+    if (!s.agent) { s.toast('Create an agent to buy cards'); return; }
     if (s.g < l.price) { s.toast('Need '+l.price+' G'); return; }
     s.setG(g=>g-l.price);
     s.setListings(ls=>ls.filter(x=>x.id!==l.id));
@@ -1840,7 +1861,7 @@ function CardMarket() {
               <div className="text-[10px] font-mono text-steel-dim">seller {l.seller}</div>
               <GAmt v={l.price} className="text-sm" />
             </div>
-            <Btn kind="primary" size="sm" className="w-full mt-2" onClick={()=>buy(l)} disabled={s.g<l.price}>Buy · {l.price} G</Btn>
+            <Btn kind="primary" size="sm" className="w-full mt-2" onClick={()=>buy(l)} disabled={!s.agent || s.g<l.price}>{s.agent ? 'Buy · '+l.price+' G' : 'Create agent to buy'}</Btn>
           </div>
         ))}
         {s.listings.length===0 && <Panel className="p-6 text-sm text-steel-dim col-span-full text-center">All listings sold.</Panel>}
@@ -1876,12 +1897,16 @@ function BattleReplay() {
     if (!playing) return;
     if (step >= BATTLE_STEPS.length-1) {
       setPlaying(false);
-      if (!settled.current) {            // record this match once, ELO derived from K=32 equal-ELO win
+      if (!settled.current) {            // record once for an owner; spectators just watch
         settled.current = true;
-        const before = s.elo, after = before + C.ELO_WIN_DELTA;
-        s.setElo(after);
-        s.setMatchHistory(h => [...h, { id:'m-'+Math.random().toString(36).slice(2,5), opp:'Vortex', tier:tierFor(s.g), result:'W', eloBefore:before, eloAfter:after, when:'just now' }]);
-        s.toast('Match WON · ELO '+before+' → '+after+' (+'+C.ELO_WIN_DELTA+')','win');
+        if (s.agent) {                   // ELO derived from K=32 equal-ELO win
+          const before = s.elo, after = before + C.ELO_WIN_DELTA;
+          s.setElo(after);
+          s.setMatchHistory(h => [...h, { id:'m-'+Math.random().toString(36).slice(2,5), opp:'Vortex', tier:tierFor(s.g), result:'W', eloBefore:before, eloAfter:after, when:'just now' }]);
+          s.toast('Match WON · ELO '+before+' → '+after+' (+'+C.ELO_WIN_DELTA+')','win');
+        } else {
+          s.toast('Nice finish — create an agent to play your own matches','g');
+        }
       }
       return;
     }
