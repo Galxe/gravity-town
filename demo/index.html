@@ -156,6 +156,7 @@ const C = {
   ROLL_COST: 1,
   ELO_START: 1000,
   ELO_K: 32,
+  ELO_WIN_DELTA: 16,   // equal-ELO win delta = K×(1−0.5); was missing → NaN on replay
   TIER_SILVER: 100,   // >=100 G
   TIER_GOLD: 1000,    // >=1000 G
   BENCH_SLOTS: 5,
