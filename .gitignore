@@ -3,6 +3,7 @@
 # ============================================================
 agent-runner/config/*.toml
 agent-runner/config/*.env
+agent-runner/config/*.csv
 frontend/config/*.json
 .mcp.json
 !frontend/config/gravity.json
@@ -59,3 +60,4 @@ yarn-error.log*
 
 # git worktrees
 .worktrees/
+demo/_shots/

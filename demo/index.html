@@ -36,7 +36,7 @@
           ore:    { DEFAULT: '#f5a623', glow: '#ffcf6b', deep: '#7a4d05' },
           gtok:   { DEFAULT: '#2dd4bf', glow: '#7af5e6', deep: '#0d5048' }, // G token = teal
           void:   { 900: '#06080f', 800: '#0a0e1a', 700: '#101626', 600: '#172033' },
-          steel:  { DEFAULT: '#8aa0c8', dim: '#7d8fb3' },
+          steel:  { DEFAULT: '#aec0e2', dim: '#9fb2d6' },
           danger: '#ff5470',
           win:    '#3ad29f',
         },
@@ -415,6 +415,9 @@ function StoreProvider({ children }) {
     // alive immediately (no grind required to see bench / history / listings).
     loadArenaMockAccount();
     pushMind('✨', `Spawned. Claimed ${C.SPAWN_HEXES}-hex cluster with ${C.SPAWN_ORE} ore. Personality online.`, 'spawn');
+    pushMind('🧠', `Reading the world: 6 rivals on the board, Ironclad leads on territory. My opening edge is the north — soft borders at (1,0) and (0,1).`, 'think');
+    pushMind('🛰️', `Scanned neighbours. (1,0) reads undefended; queuing an expansion probe once ore clears 250.`, 'scan');
+    pushMind('⛏️', `Ore at ${C.SPAWN_ORE}/1000 — harvesting on cycle, then a mine on (1,0) for +5/s. Holding arsenals in reserve.`, 'plan');
   }
 
   // Populate the Arena with a generous, pre-built collection + history.
@@ -525,7 +528,7 @@ function Btn({ children, onClick, kind='primary', disabled=false, className='', 
   };
   return (
     <button disabled={disabled} onClick={onClick}
-      className={base+sz+kinds[kind]+(disabled?'opacity-35 cursor-not-allowed ':'cursor-pointer ')+className}>
+      className={base+sz+kinds[kind]+(disabled?'opacity-40 grayscale cursor-not-allowed ':'cursor-pointer ')+className}>
       {children}
     </button>
   );
@@ -1465,9 +1468,9 @@ function Positions() {
       <div>
         <h2 className="font-display text-sm tracking-widest text-white mb-3">OPEN POSITIONS</h2>
         {open.length===0 ? (
-          <Panel className="p-6 text-center text-sm text-steel-dim">No open bets yet. Open a market and back a side.</Panel>
+          <Panel className="p-6 text-center text-sm text-steel-dim">No open bets yet. Open a market and back a side.<div className="mt-3"><Btn kind="ghost" size="sm" onClick={()=>setTab('all')}>← Browse markets</Btn></div></Panel>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-3 max-w-3xl">
             {open.map(p=>{
               const m = s.markets.find(x=>x.id===p.mktId);
               const poolYes = m?m.poolYes:p.poolAt.yes, poolNo = m?m.poolNo:p.poolAt.no;
@@ -1893,7 +1896,7 @@ function BattleReplay() {
   const settled = useRef(false);
   // Your squad is loosely drawn from your actual benched cards.
   const yourSquad = s.bench.filter(Boolean).map(c=>c.unit);
-  const squadView = (yourSquad.length ? yourSquad : ['Reaver','Forgeling','Mystic','Bulwark']).slice(0,5);
+  const squadView = (yourSquad.length ? yourSquad : ['Reaver','Forgeling','Mystic','Bulwark','Sentinel']).slice(0,5);
   useEffect(()=>{
     if (!playing) return;
     if (step >= BATTLE_STEPS.length-1) {
@@ -1928,7 +1931,7 @@ function BattleReplay() {
         </div>
         {/* board */}
         <div className="grid grid-cols-2 gap-4">
-          {[['YOUR SQUAD (A)',squadView],['VORTEX (B)',['Sentinel','Wraith','Bulwark','Mystic']]].map(([side,units],si)=>(
+          {[[(s.agent?'YOUR SQUAD (A)':'DEMO SQUAD (A)'),squadView],['VORTEX (B)',['Sentinel','Wraith','Bulwark','Mystic','Reaver']]].map(([side,units],si)=>(
             <div key={si}>
               <div className="text-[10px] font-mono text-steel-dim mb-2">{side}</div>
               <div className="space-y-1.5">
@@ -1947,7 +1950,17 @@ function BattleReplay() {
 
       <Panel className="p-5">
         <h2 className="font-display text-sm tracking-widest text-white mb-1">EVENT LOG</h2>
-        <p className="text-[10px] font-mono text-steel-dim mb-3">attacks + ability events (summon / buff / damage cascade)</p>
+        <p className="text-[10px] font-mono text-steel-dim mb-2">attacks + ability events (summon / buff / damage cascade)</p>
+        {/* timeline / progress bar — turn N of total */}
+        <div className="mb-3">
+          <div className="flex justify-between text-[9px] font-mono text-steel-dim mb-1">
+            <span>turn {Math.min(step+1,BATTLE_STEPS.length)} / {BATTLE_STEPS.length}</span>
+            <span>{Math.round(Math.min(step+1,BATTLE_STEPS.length)/BATTLE_STEPS.length*100)}%</span>
+          </div>
+          <div className="h-1.5 bg-void-700 rounded-full overflow-hidden">
+            <div className="h-full bg-gtok transition-all duration-300" style={{width:Math.min(step+1,BATTLE_STEPS.length)/BATTLE_STEPS.length*100+'%'}} />
+          </div>
+        </div>
         <div className="space-y-2 font-mono text-xs">
           {BATTLE_STEPS.map((b,i)=>(
             <div key={i} className={'flex gap-2 items-start transition-opacity duration-300 '+(i<=step?'opacity-100 mind-in':'opacity-25')}>
