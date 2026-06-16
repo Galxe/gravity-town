@@ -3,8 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
 
 jobs:
   contracts:
@@ -20,12 +26,17 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
 
       - name: Build
         run: forge build
 
       - name: Test
         run: forge test -vv
+
+      - name: Gas snapshot check
+        run: forge snapshot --check
 
   frontend:
     name: Frontend
