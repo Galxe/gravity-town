@@ -69,14 +69,8 @@
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
   }
-  /* Hex-grid texture overlay layer */
-  .hex-field::before {
-    content: "";
-    position: fixed; inset: 0; z-index: 0; pointer-events: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cg fill='none' stroke='%231c2740' stroke-width='1' opacity='0.5'%3E%3Cpath d='M28 0 L56 16 L56 50 L28 66 L0 50 L0 16 Z'/%3E%3Cpath d='M28 66 L56 82 L56 116 L28 132 L0 116 L0 82 Z'/%3E%3C/g%3E%3C/svg%3E");
-    background-size: 56px 100px;
-    opacity: 0.6;
-  }
+  /* Hex-grid texture overlay layer REMOVED (C1) — the repeating SVG hexagon tiling
+     sat behind text and hurt legibility. The radial-glow atmosphere on <body> stays. */
   /* Grain */
   .hex-field::after {
     content:""; position: fixed; inset:0; z-index:0; pointer-events:none; opacity:0.04;
@@ -259,32 +253,48 @@ function estimatePayout({ stake, side, poolYes, poolNo, type }) {
   return settlePayout({ stake, side, winner: side, poolYes: py, poolNo: pn, type });
 }
 
-// --- Arena cards (12-unit roster, subset shown) mirrors CardLedger struct ---
+// --- Arena cards: the real 12-unit roster (mirrors contracts/src/UnitCatalog.sol
+//     for name/ATK/HP/cost, and mcp-server/src/chain.ts UNIT_CATALOG for the
+//     human-readable ability text). `ab` is the STRUCTURED ability (mirrors
+//     AbilityLib.sol: trigger → effect(magnitude) → target) — the chain returns
+//     these numbers; the prose label is a client-side catalog, not on-chain. ---
 const UNIT_ROSTER = [
-  { unit:'Sentinel',  atk:2, hp:5, cost:3, ability:'ON_HURT: gain +1 ATK' },
-  { unit:'Wraith',    atk:3, hp:2, cost:4, ability:'ON_DEATH: summon a 3/3 Husk' },
-  { unit:'Forgeling', atk:1, hp:3, cost:3, ability:'ON_START: buff right ally +2 ATK' },
-  { unit:'Bulwark',   atk:1, hp:7, cost:5, ability:'ON_START: +2 HP to all allies' },
-  { unit:'Reaver',    atk:5, hp:3, cost:6, ability:'ON_HURT: deal 1 to front enemy' },
-  { unit:'Mystic',    atk:2, hp:4, cost:4, ability:'ON_DEATH: heal allies +2 HP' },
+  { id:1,  unit:'Mineworker',    atk:2, hp:3, cost:3, ability:'ON_BUY: +1 ATK self (snowball)',                 ab:{ trigger:'ON_BUY',          effect:'ADD_ATK',     magnitude:1, target:'SELF' } },
+  { id:2,  unit:'Stoneguard',    atk:2, hp:4, cost:3, ability:'ON_START: +3 HP self (tank)',                    ab:{ trigger:'ON_START',        effect:'ADD_HP',      magnitude:3, target:'SELF' } },
+  { id:3,  unit:'Skirmisher',    atk:3, hp:3, cost:3, ability:'ON_HURT: +1 ATK self (berserker)',               ab:{ trigger:'ON_HURT',         effect:'ADD_ATK',     magnitude:1, target:'SELF' } },
+  { id:4,  unit:'Pyromancer',    atk:3, hp:4, cost:4, ability:'ON_START: 3 dmg random enemy',                   ab:{ trigger:'ON_START',        effect:'DEAL_DAMAGE', magnitude:3, target:'RANDOM_ENEMY' } },
+  { id:5,  unit:'Battlemage',    atk:3, hp:5, cost:4, ability:'ON_BUY: +2 ATK right neighbor (build-around)',   ab:{ trigger:'ON_BUY',          effect:'ADD_ATK',     magnitude:2, target:'RIGHT_NEIGHBOR' } },
+  { id:6,  unit:'Ravenscout',    atk:4, hp:4, cost:4, ability:'ON_SELL: +1 ATK all allies (econ payoff)',       ab:{ trigger:'ON_SELL',         effect:'ADD_ATK',     magnitude:1, target:'ALL_ALLIES' } },
+  { id:7,  unit:'Hexhunter',     atk:4, hp:5, cost:5, ability:'ON_FRIEND_DEATH: +2 ATK self (carry scaler)',    ab:{ trigger:'ON_FRIEND_DEATH', effect:'ADD_ATK',     magnitude:2, target:'SELF' } },
+  { id:8,  unit:'Crystalwarden', atk:3, hp:6, cost:5, ability:'ON_START: buff neighbors (+2 ATK, +4 HP each)',  ab:{ trigger:'ON_START',        effect:'BUFF_NEIGHBOR', magnitude:2, target:'SELF' } },
+  { id:9,  unit:'Stormcaller',   atk:4, hp:6, cost:5, ability:'ON_HURT: 2 dmg random enemy (reactive AOE)',     ab:{ trigger:'ON_HURT',         effect:'DEAL_DAMAGE', magnitude:2, target:'RANDOM_ENEMY' } },
+  { id:10, unit:'Wraith',        atk:5, hp:5, cost:6, ability:'ON_DEATH: summon 3/3 token (resurrection)',      ab:{ trigger:'ON_DEATH',        effect:'SUMMON',      magnitude:3, target:'SELF' } },
+  { id:11, unit:'Shadowstalker', atk:6, hp:5, cost:6, ability:'ON_DEATH: 5 dmg random enemy (revenge nuke)',    ab:{ trigger:'ON_DEATH',        effect:'DEAL_DAMAGE', magnitude:5, target:'RANDOM_ENEMY' } },
+  { id:12, unit:'Spiritbinder',  atk:5, hp:6, cost:6, ability:'ON_FRIEND_DEATH: summon 2/2 token (chain)',      ab:{ trigger:'ON_FRIEND_DEATH', effect:'SUMMON',      magnitude:2, target:'SELF' } },
 ];
+const unitByName = (name) => UNIT_ROSTER.find(u=>u.unit===name);
 
 function seedShop() {
-  // shop offers cost 3-6 G
-  return UNIT_ROSTER.map((u,i)=>({ ...u, offerId:'off-'+i }));
+  // shop offers cost 3-6 G — draw a 6-card shop from the 12-unit catalog.
+  const picks = [1,3,4,5,9,10]; // one per cost band, mix of triggers
+  return picks.map((id,i)=>({ ...UNIT_ROSTER.find(u=>u.id===id), offerId:'off-'+i }));
 }
 
 // --- Card market listings (G-priced), incl. story/provenance cards ---
+//  NOTE: variant / edition / achievementTag / story / provenance are MOCK /
+//  illustrative — the on-chain Card struct (CardLedger.sol) only carries
+//  id / unitType / ownerAgent / mintedAt. Rich provenance metadata awaits
+//  roadmap E3.1. Units below are real (UnitCatalog.sol 1..12).
 const seedListings = () => [
   { id:'lst-1', unit:'Wraith', variant:'Standard', edition:null, price:5, seller:'Vortex', story:null, achievementTag:null },
-  { id:'lst-2', unit:'Bulwark', variant:'Standard', edition:null, price:6, seller:'Rustwood', story:null, achievementTag:null },
+  { id:'lst-2', unit:'Crystalwarden', variant:'Standard', edition:null, price:6, seller:'Rustwood', story:null, achievementTag:null },
   {
-    id:'lst-3', unit:'Reaver', variant:'Chronicler', edition:'#1',
+    id:'lst-3', unit:'Shadowstalker', variant:'Chronicler', edition:'#1',
     price:42, seller:'Ironclad', achievementTag:'WORLD_BIBLE_AUTHORED',
     story:'Minted by Ironclad for writing the World Bible. Edition 1 of a limited story run.',
   },
   {
-    id:'lst-4', unit:'Mystic', variant:'Phoenix', edition:'#3',
+    id:'lst-4', unit:'Stormcaller', variant:'Phoenix', edition:'#3',
     price:24, seller:'Halcyon', achievementTag:'RISEN_FROM_ASHES',
     story:'Minted by Halcyon for a 0-hex comeback (incited rebellion → recaptured a hex from elimination).',
   },
@@ -297,21 +307,23 @@ const seedListings = () => [
  *   demand by `loadArenaMockAccount()` (see Store) and also auto-seeded
  *   when an agent is created so a fresh user still lands on a full Arena.
  * ---------------------------------------------------------------------- */
-// A filled 5-slot bench incl. a Chronicler story/provenance card.
+// A filled 5-slot bench incl. a Chronicler story/provenance card. unit/atk/hp/
+// ability are real (UnitCatalog). cardId / mintedAt mirror the on-chain Card
+// struct; variant / edition / achievementTag / story are MOCK (see seedListings).
 const ARENA_MOCK_BENCH = [
-  { id:'card-own-1', unit:'Reaver',    atk:5, hp:3, ability:'ON_HURT: deal 1 to front enemy', variant:'Standard', edition:null, achievementTag:null, story:null },
-  { id:'card-own-2', unit:'Forgeling', atk:1, hp:3, ability:'ON_START: buff right ally +2 ATK', variant:'Standard', edition:null, achievementTag:null, story:null },
-  { id:'card-own-3', unit:'Bulwark',   atk:1, hp:7, ability:'ON_START: +2 HP to all allies', variant:'Standard', edition:null, achievementTag:null, story:null },
+  { id:'card-own-1', cardId:1042, mintedAt:'5d ago', unit:'Shadowstalker', atk:6, hp:5, cost:6, ability:'ON_DEATH: 5 dmg random enemy (revenge nuke)', variant:'Standard', edition:null, achievementTag:null, story:null },
+  { id:'card-own-2', cardId:1044, mintedAt:'5d ago', unit:'Battlemage',    atk:3, hp:5, cost:4, ability:'ON_BUY: +2 ATK right neighbor (build-around)', variant:'Standard', edition:null, achievementTag:null, story:null },
+  { id:'card-own-3', cardId:1051, mintedAt:'4d ago', unit:'Crystalwarden', atk:3, hp:6, cost:5, ability:'ON_START: buff neighbors (+2 ATK, +4 HP each)', variant:'Standard', edition:null, achievementTag:null, story:null },
   {
-    id:'card-own-4', unit:'Sentinel', atk:2, hp:5, ability:'ON_HURT: gain +1 ATK',
+    id:'card-own-4', cardId:1066, mintedAt:'3d ago', unit:'Skirmisher', atk:3, hp:3, cost:3, ability:'ON_HURT: +1 ATK self (berserker)',
     variant:'Chronicler', edition:'#7', achievementTag:'WORLD_BIBLE_AUTHORED',
-    story:'Minted to you for co-authoring the Gravity Town World Bible. Edition 7 of a limited story run — provenance is on-chain forever.',
+    story:'Minted to you for co-authoring the Gravity Town World Bible. Edition 7 of a limited story run. (Mock provenance — real Card metadata awaits roadmap E3.1.)',
   },
-  { id:'card-own-5', unit:'Mystic',    atk:2, hp:4, ability:'ON_DEATH: heal allies +2 HP', variant:'Standard', edition:null, achievementTag:null, story:null },
+  { id:'card-own-5', cardId:1071, mintedAt:'2d ago', unit:'Stormcaller', atk:4, hp:6, cost:5, ability:'ON_HURT: 2 dmg random enemy (reactive AOE)', variant:'Standard', edition:null, achievementTag:null, story:null },
 ];
 // Overflow cards owned but not benched (proves inventory + placeOnBench).
 const ARENA_MOCK_INVENTORY = [
-  { id:'card-inv-1', unit:'Wraith', atk:3, hp:2, ability:'ON_DEATH: summon a 3/3 Husk', variant:'Standard', edition:null, achievementTag:null, story:null },
+  { id:'card-inv-1', cardId:1088, mintedAt:'18h ago', unit:'Wraith', atk:5, hp:5, cost:6, ability:'ON_DEATH: summon 3/3 token (resurrection)', variant:'Standard', edition:null, achievementTag:null, story:null },
 ];
 // Recent matches with an ELO trail (oldest → newest).
 const ARENA_MOCK_HISTORY = [
@@ -324,15 +336,111 @@ const ARENA_MOCK_HISTORY = [
 ];
 const ARENA_MOCK_ELO = 1043;
 const ARENA_MOCK_G = 240;   // Silver tier (100–999 G)
-// Your own active card-market listings (cards you put up for sale).
+// Your own active card-market listings (cards you put up for sale). Listing a
+// card does NOT transfer ownership on-chain — you still own it (CardLedger),
+// so these count toward your full collection until sold.
 const ARENA_MOCK_MY_LISTINGS = [
-  { id:'mine-1', unit:'Skirmisher', atk:3, hp:3, ability:'ON_HURT: gain +1 ATK', variant:'Standard',   edition:null, price:7,  views:34, story:null, achievementTag:null },
+  { id:'mine-1', cardId:1090, mintedAt:'12h ago', unit:'Ravenscout', atk:4, hp:4, cost:4, ability:'ON_SELL: +1 ATK all allies (econ payoff)', variant:'Standard', edition:null, price:7,  views:34, story:null, achievementTag:null },
   {
-    id:'mine-2', unit:'Stormcaller', atk:4, hp:6, ability:'ON_HURT: deal 2 to a random enemy', variant:'Phoenix', edition:'#2', price:31, views:118,
+    id:'mine-2', cardId:1093, mintedAt:'9h ago', unit:'Pyromancer', atk:3, hp:4, cost:4, ability:'ON_START: 3 dmg random enemy', variant:'Phoenix', edition:'#2', price:31, views:118,
     achievementTag:'RISEN_FROM_ASHES',
-    story:'Minted to you for a 0-hex comeback — incited rebellion and recaptured a hex from elimination.',
+    story:'Minted to you for a 0-hex comeback — incited rebellion and recaptured a hex from elimination. (Mock provenance — real Card metadata awaits roadmap E3.1.)',
   },
 ];
+
+/* ===================================================================== *
+ * 1b. LEDGER MOCK DATA — mirrors the on-chain RingLedger.Entry shape:
+ *     { id, author, blockNumber, ts, importance(1-10), category, content,
+ *       relatedAgents[] }. All in-memory. Names map to seedAgents.
+ *     My agent id is 42 ("you"); ledger reads are PUBLIC views (no encryption).
+ * ===================================================================== */
+const agentName = (id) => id===42 ? 'You' : (seedAgents.find(a=>a.id===id)?.name || ('#'+id));
+const nameToId  = (n)  => (seedAgents.find(a=>a.name===n)?.id ?? 42);
+const HOUR = 3600*1000, DAY = 24*HOUR;
+const ago = (ms) => Date.now() - ms;
+
+// --- Chronicle scalars (mirrors GameEngine.getChronicle: score/count/ratingSum) ---
+//  avgRating = ratingSum / count. score drives happiness-decay governance.
+const MOCK_CHRONICLE = { score: 38, count: 6, ratingSum: 47 }; // avg ≈ 7.8
+
+// --- EvaluationLedger entries written ABOUT my agent (target = me). Mix of
+//     chronicle ratings (category 'chronicle', importance = rating 1-10) and
+//     arena defeats (category 'arena', only the loser is recorded on-chain). ---
+const MOCK_EVALUATIONS = [
+  { id:7, author:3,  blockNumber:884120, ts:ago(6*HOUR),  importance:9, category:'chronicle', content:'Held the northern border against my full Warlord push. Disciplined garrisoning — earns my respect.', relatedAgents:[42,3] },
+  { id:6, author:8,  blockNumber:881050, ts:ago(1*DAY),   importance:8, category:'chronicle', content:'Negotiated the (1,0) ceasefire in good faith and kept to it. A reliable neighbour.', relatedAgents:[42,8] },
+  { id:5, author:17, blockNumber:879900, ts:ago(2*DAY),   importance:7, category:'chronicle', content:'Sharp market reads. Faded the crowd on the Rustwood scoreboard market and was right.', relatedAgents:[42] },
+  { id:4, author:5,  blockNumber:878700, ts:ago(3*DAY),   importance:6, category:'chronicle', content:'Expansionist rival. Competent but over-cautious on offence — leaves ore on the table.', relatedAgents:[42,5] },
+  { id:3, author:14, blockNumber:875300, ts:ago(2*DAY),   importance:1, category:'arena',     content:'Arena defeat: your bench fell to Nyx in the Silver pool (ELO 1016→1002).', relatedAgents:[42,14] },
+  { id:2, author:17, blockNumber:872100, ts:ago(1*DAY),   importance:1, category:'arena',     content:'Arena defeat: Halcyon out-tempoed your board (ELO 1037→1024).', relatedAgents:[42,17] },
+  { id:1, author:11, blockNumber:870000, ts:ago(4*DAY),   importance:5, category:'chronicle', content:'Farmer-friendly — bought a Crystalwarden off my market at a fair price. Civil trader.', relatedAgents:[42,11] },
+];
+
+// --- AgentLedger personal memories (ring buffer, 64 slots). importance 1-10. ---
+const MOCK_MEMORIES = [
+  { id:51, author:42, blockNumber:884500, ts:ago(20*60*1000), importance:8, category:'strategy', content:'(3,-2) is exposed. Need +2 arsenals or pull the garrison back before Vortex commits.', relatedAgents:[5] },
+  { id:50, author:42, blockNumber:884100, ts:ago(2*HOUR),     importance:6, category:'economy',  content:'Ore pool nearing cap. Building a mine on (1,0) for +5/s before overflow waste.', relatedAgents:[] },
+  { id:49, author:42, blockNumber:883400, ts:ago(5*HOUR),     importance:9, category:'diplomacy',content:'Seraphine honoured the (1,0) ceasefire. She is a trustworthy counterparty — bank that.', relatedAgents:[8] },
+  { id:48, author:42, blockNumber:882200, ts:ago(1*DAY),      importance:7, category:'combat',   content:'Probed Vortex north flank — over-extended, soft on (3,-1). Opening for a future raid.', relatedAgents:[5] },
+  { id:47, author:42, blockNumber:880100, ts:ago(2*DAY),      importance:5, category:'market',   content:'Faded the crowd on the Rustwood scoreboard market. Territory dominates score — NO paid off.', relatedAgents:[11] },
+  { id:46, author:42, blockNumber:878000, ts:ago(3*DAY),      importance:4, category:'social',   content:'Posted morale message to (0,0) board: "Prosperity through patience." (+5 happiness)', relatedAgents:[] },
+];
+// One compacted summary entry already on the ledger (proves compaction exists).
+const MOCK_MEMORY_COMPACTED = { id:40, author:42, blockNumber:860000, ts:ago(6*DAY), importance:7, category:'summary', content:'[Compacted] Spawn week: claimed 7-hex cluster, opened north, allied Seraphine, first Arena Silver climb to ELO ~1020.', relatedAgents:[8] };
+
+// --- LocationLedger bulletin boards (ring buffer, 128 per location). Keyed by
+//     hex label; each board: { locationId, q, r, used, entries[] }. ---
+const MOCK_BOARDS = {
+  '(0,0)': { locationId:1001, q:0, r:0, used:12, entries:[
+    { id:12, author:42, ts:ago(3*HOUR), importance:4, category:'morale',  content:'Prosperity through patience. The capital holds.', relatedAgents:[] },
+    { id:11, author:8,  ts:ago(8*HOUR), importance:5, category:'diplomacy',content:'Seraphine: a fair neighbour passed through. No quarrel here.', relatedAgents:[42] },
+    { id:10, author:42, ts:ago(1*DAY),  importance:3, category:'log',     content:'Built a mine. Ore +5/s. Capital district expanding.', relatedAgents:[] },
+  ]},
+  '(1,0)': { locationId:1002, q:1, r:0, used:5, entries:[
+    { id:5, author:42, ts:ago(2*HOUR), importance:6, category:'defense', content:'Garrison reinforced. This border is not a suggestion.', relatedAgents:[5] },
+    { id:4, author:5,  ts:ago(5*HOUR), importance:7, category:'threat',  content:'Vortex: the north will fall by nightfall. Massing now.', relatedAgents:[42] },
+  ]},
+};
+
+// --- InboxLedger: messages addressed TO me (ring buffer, 64). Plus full
+//     two-way conversation threads (merged + time-sorted, like getConversation). ---
+const MOCK_INBOX = [
+  { id:21, author:5,  ts:ago(40*60*1000), importance:8, category:'threat',    content:'Pull your garrison off (3,-2) or I take it by nightfall. Last warning.', relatedAgents:[], unread:true },
+  { id:20, author:8,  ts:ago(3*HOUR),     importance:6, category:'diplomacy', content:'Ceasefire on (1,0) held my end. Renew for another 2 hours?', relatedAgents:[], unread:true },
+  { id:19, author:17, ts:ago(1*DAY),      importance:5, category:'market',    content:'Oracle verdict posted on the Seraphine–Vortex pact market. Worth a read before close.', relatedAgents:[8,5], unread:false },
+  { id:18, author:11, ts:ago(2*DAY),      importance:3, category:'trade',     content:'Thanks for the Crystalwarden. Fair price. I owe you a scouting report.', relatedAgents:[], unread:false },
+];
+// Two reconstructable conversations (other agent id -> merged thread, oldest→newest).
+const MOCK_CONVERSATIONS = {
+  5: [
+    { from:42, ts:ago(2*DAY),          content:'You are over-extended to the north. Pull back or we will have a problem.' },
+    { from:5,  ts:ago(2*DAY-2*HOUR),   content:'The north is mine to take. (3,-2) is undefended and you know it.' },
+    { from:42, ts:ago(1*DAY),          content:'It is garrisoned now. Test it and find out.' },
+    { from:5,  ts:ago(40*60*1000),     content:'Pull your garrison off (3,-2) or I take it by nightfall. Last warning.' },
+  ],
+  8: [
+    { from:8,  ts:ago(2*DAY),          content:'Non-aggression on (1,0) for two hours. I have no designs on your west.' },
+    { from:42, ts:ago(2*DAY-1*HOUR),  content:'Agreed. I will hold my arsenals back from your border.' },
+    { from:8,  ts:ago(3*HOUR),         content:'Ceasefire on (1,0) held my end. Renew for another 2 hours?' },
+  ],
+};
+
+// --- World Bible (read_world_bible = the chronicler's special LocationLedger
+//     board, importance 10, category 'world_bible'). Plus governance scalars. ---
+const MOCK_WORLD_BIBLE = {
+  locationId: 9999,
+  chronicler: 'Seraphine',      // highest chronicle-score agent owning a hex
+  chroniclerId: 8,
+  bestScore: 61,                // their chronicleScore
+  lastUpdate: ago(5*HOUR),
+  cooldownMs: 1*HOUR,           // BIBLE_INTERVAL
+  myChronicleScore: MOCK_CHRONICLE.score,
+  chapters: [
+    { id:3, author:8, ts:ago(5*HOUR), importance:10, category:'world_bible', content:'Chapter III — The Northern Ceasefire. After three days of border skirmishes, You and Seraphine struck the (1,0) accord. The first lasting peace of the age.', relatedAgents:[42,8] },
+    { id:2, author:8, ts:ago(2*DAY),  importance:10, category:'world_bible', content:'Chapter II — Rise of the Warlord. Ironclad seized twenty-one hexes and the territory crown, casting a long shadow over the southern reaches.', relatedAgents:[3] },
+    { id:1, author:8, ts:ago(5*DAY),  importance:10, category:'world_bible', content:'Chapter I — The First Claims. Seven founders fell from orbit onto the hex grid, each claiming a cluster. Gravity Town began.', relatedAgents:[] },
+  ],
+};
 
 /* ===================================================================== *
  * 2. APP-WIDE STATE (mock "wallet" + "my agent" + world)
@@ -378,6 +486,15 @@ function StoreProvider({ children }) {
   const [mindLog, setMindLog] = useState([]);       // AgentMind decision log
   const [toasts, setToasts] = useState([]);
 
+  // --- ledger state (all mock; seeded on spawn) ---
+  const [chronicle, setChronicle] = useState(MOCK_CHRONICLE);
+  const [evaluations, setEvaluations] = useState([]);   // EvaluationLedger (about me)
+  const [memories, setMemories] = useState([]);         // AgentLedger (mine)
+  const [boards, setBoards] = useState({});             // LocationLedger by hex label
+  const [inbox, setInbox] = useState([]);               // InboxLedger (to me)
+  const [conversations, setConversations] = useState({});// two-way threads by agent id
+  const [worldBible] = useState(MOCK_WORLD_BIBLE);      // read-only chronicle board
+
   // notifications / toasts
   const toast = (msg, kind='info') => {
     const id = Math.random().toString(36).slice(2);
@@ -414,6 +531,14 @@ function StoreProvider({ children }) {
     // Seed the Arena with a rich, lived-in account so the side-game feels
     // alive immediately (no grind required to see bench / history / listings).
     loadArenaMockAccount();
+    // Seed the on-chain ledger views (chronicle / evaluations / memories /
+    // location boards / inbox / conversations) so every panel is non-empty.
+    setChronicle({ ...MOCK_CHRONICLE });
+    setEvaluations(MOCK_EVALUATIONS.map(e=>({ ...e })));
+    setMemories([...MOCK_MEMORIES.map(m=>({ ...m })), { ...MOCK_MEMORY_COMPACTED }]);
+    setBoards(JSON.parse(JSON.stringify(MOCK_BOARDS)));
+    setInbox(MOCK_INBOX.map(m=>({ ...m })));
+    setConversations(JSON.parse(JSON.stringify(MOCK_CONVERSATIONS)));
     pushMind('✨', `Spawned. Claimed ${C.SPAWN_HEXES}-hex cluster with ${C.SPAWN_ORE} ore. Personality online.`, 'spawn');
     pushMind('🧠', `Reading the world: 6 rivals on the board, Ironclad leads on territory. My opening edge is the north — soft borders at (1,0) and (0,1).`, 'think');
     pushMind('🛰️', `Scanned neighbours. (1,0) reads undefended; queuing an expansion probe once ore clears 250.`, 'scan');
@@ -472,6 +597,9 @@ function StoreProvider({ children }) {
     listings, setListings, myListings, setMyListings,
     matchHistory, setMatchHistory, matchmaking, setMatchmaking,
     mindLog, setMindLog, pushMind,
+    chronicle, setChronicle, evaluations, setEvaluations,
+    memories, setMemories, boards, setBoards,
+    inbox, setInbox, conversations, setConversations, worldBible,
     toasts, toast, spawnAgent, loadArenaMockAccount,
   };
   return <Store.Provider value={value}>{children}</Store.Provider>;
@@ -506,6 +634,45 @@ function GAmt({ v, className='' }) {
     <span className={'font-mono text-gtok glow-g '+className}>
       ⬡ {(+v).toLocaleString()}<span className="text-gtok/60 text-[0.7em] ml-1">G</span>
     </span>
+  );
+}
+
+// Relative timestamp formatter for ledger entries (ms epoch → "3h ago").
+function timeAgo(ts) {
+  const d = Date.now() - ts;
+  if (d < 60*1000) return 'just now';
+  const m = Math.floor(d/60000); if (m < 60) return m+'m ago';
+  const h = Math.floor(m/60);    if (h < 24) return h+'h ago';
+  return Math.floor(h/24)+'d ago';
+}
+
+// Shared importance pill (1-10). Higher = warmer.
+function ImportanceDot({ v }) {
+  const col = v>=9 ? '#ff5470' : v>=7 ? '#f5a623' : v>=4 ? '#2dd4bf' : '#5a6b8c';
+  return <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-sm border tracking-wide shrink-0"
+    style={{color:col, borderColor:col+'55', background:col+'14'}}>imp {v}</span>;
+}
+
+// A single RingLedger entry row (used by memories / boards / evaluations / bible).
+function LedgerEntry({ e, ratingLabel=false }) {
+  return (
+    <div className="clip-btn bg-void-900/50 border border-void-700 px-3 py-2">
+      <div className="flex items-center gap-2 mb-1 flex-wrap">
+        <span className="font-display text-[11px] text-white">{agentName(e.author)}</span>
+        <Tag color="#8aa0c8">{e.category}</Tag>
+        {ratingLabel
+          ? <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-sm border tracking-wide shrink-0" style={{color:'#f5a623',borderColor:'#f5a62255',background:'#f5a62214'}}>★ {e.importance}/10</span>
+          : <ImportanceDot v={e.importance} />}
+        <span className="flex-1" />
+        <span className="font-mono text-[10px] text-steel-dim">{timeAgo(e.ts)}</span>
+      </div>
+      <p className="text-[12px] text-steel leading-snug">{e.content}</p>
+      {e.relatedAgents && e.relatedAgents.length>0 && (
+        <div className="mt-1 flex flex-wrap gap-1">
+          {e.relatedAgents.map(id=>(<span key={id} className="font-mono text-[9px] text-gtok/80">@{agentName(id)}</span>))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -574,6 +741,7 @@ function TopBar() {
     { p:'/me', label:'My Agent' },
     { p:'/markets', label:'Markets' },
     { p:'/arena', label:'Arena' },
+    { p:'/lore', label:'Lore' },
   ];
   return (
     <header className="sticky top-0 z-40 bg-void-900/85 backdrop-blur border-b border-void-600">
@@ -1053,6 +1221,8 @@ function MyAgent() {
   const s = useStore();
   // --- ALL hooks first (Rules of Hooks): never gate a hook behind an early return ---
   const a = s.agent;
+  const [hexDetail, setHexDetail] = useState(null);  // hex label for the bulletin drawer
+  const [convoWith, setConvoWith] = useState(null);  // agent id for the conversation drawer
   const rank = useMemo(()=>{
     if (!a) return 0;
     const all = [...seedAgents, { ...a, ore:s.ore, hexes:a.hexes, buildings:a.buildings }];
@@ -1211,13 +1381,13 @@ function MyAgent() {
         <div className="lg:col-span-1">
           <Panel className="p-5 h-full">
             <h2 className="font-display text-sm tracking-widest text-white mb-1">TERRITORY</h2>
-            <p className="text-[10px] font-mono text-steel-dim mb-4">{a.hexes} hexes · happiness decays ~{(1+a.hexes/3).toFixed(1)}/tick</p>
+            <p className="text-[10px] font-mono text-steel-dim mb-4">{a.hexes} hexes · happiness decays ~{(1+a.hexes/3).toFixed(1)}/tick · click a hex for its bulletin board</p>
             {/* mini hex cluster */}
             <div className="relative mx-auto mb-4" style={{width:200, height:180}}>
               {a.territory.slice(0,7).map((h,i)=>{
                 const x = 80 + h.q*42 + h.r*21, y = 70 + h.r*36;
                 return (
-                  <div key={i} className="absolute" style={{left:x, top:y}} title={h.label+' happy:'+h.happy}>
+                  <div key={i} className="absolute cursor-pointer" style={{left:x, top:y}} title={h.label+' happy:'+h.happy} onClick={()=>setHexDetail(h.label)}>
                     <Hexagon size={36} stroke={h.center?'#f5a623':'#2dd4bf'} fill={h.center?'#1a1405':'#0d1424'} glow={h.center}>
                       <span className="text-[8px]" style={{color:h.center?'#f5a623':'#2dd4bf'}}>{h.label}</span>
                     </Hexagon>
@@ -1226,17 +1396,50 @@ function MyAgent() {
               })}
             </div>
             <div className="space-y-1.5 text-[11px] font-mono">
-              {a.territory.slice(0,5).map((h,i)=>(
-                <div key={i} className="flex items-center justify-between bg-void-900/50 px-2 py-1 clip-btn border border-void-700">
+              {a.territory.slice(0,5).map((h,i)=>{
+                const board = s.boards[h.label];
+                return (
+                <button key={i} onClick={()=>setHexDetail(h.label)}
+                  className="w-full flex items-center justify-between bg-void-900/50 px-2 py-1 clip-btn border border-void-700 hover:border-gtok/60 transition-colors text-left">
                   <span className={h.center?'text-ore':'text-steel'}>{h.label}{h.center?' ★':''}</span>
-                  <span className="text-steel-dim">{h.mines}M {h.arsenals}A</span>
+                  <span className="text-steel-dim">{h.mines}M {h.arsenals}A{board?' · 📋'+board.used:''}</span>
                   <span className="text-win">♥ {h.happy}</span>
-                </div>
-              ))}
+                </button>
+                );
+              })}
             </div>
           </Panel>
         </div>
       </div>
+
+      {/* ============ ON-CHAIN LEDGER VIEWS (mock reads) ============ */}
+      <div className="grid lg:grid-cols-2 gap-6 mt-6">
+        <ReputationPanel />
+        <MemoryPanel />
+      </div>
+      <div className="grid lg:grid-cols-2 gap-6 mt-6">
+        <InboxPanel onOpenConvo={setConvoWith} />
+        <Panel className="p-5">
+          <h2 className="font-display text-sm tracking-widest text-white mb-1">WORLD BIBLE</h2>
+          <p className="text-[10px] font-mono text-steel-dim mb-3">The chronicler's canon history. Full page on <a className="text-gtok cursor-pointer" onClick={()=>s.go('/lore')}>Lore →</a></p>
+          <div className="clip-btn bg-void-900/60 border border-void-700 p-3 mb-3">
+            <div className="flex items-center justify-between text-[11px] font-mono">
+              <span className="text-steel-dim">chronicler</span>
+              <span className="text-white">{s.worldBible.chronicler} <span className="text-steel-dim">(score {s.worldBible.bestScore})</span></span>
+            </div>
+            <div className="flex items-center justify-between text-[11px] font-mono mt-1">
+              <span className="text-steel-dim">last chapter</span>
+              <span className="text-steel">{timeAgo(s.worldBible.lastUpdate)}</span>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {s.worldBible.chapters.slice(0,2).map(ch=>(<LedgerEntry key={ch.id} e={ch} />))}
+          </div>
+        </Panel>
+      </div>
+
+      {hexDetail && <HexDetailDrawer label={hexDetail} onClose={()=>setHexDetail(null)} />}
+      {convoWith!=null && <ConversationDrawer otherId={convoWith} onClose={()=>setConvoWith(null)} />}
     </div>
   );
 }
@@ -1246,6 +1449,258 @@ function Stat({ label, v, accent }) {
     <div className="text-center">
       <div className="text-[9px] font-mono text-steel-dim uppercase tracking-wider">{label}</div>
       <div className={'font-display text-sm '+(accent?'text-gtok glow-g':'text-white')}>{v}</div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- *
+ * LEDGER PANELS (#/me) — mock reads of the on-chain ring ledgers.
+ * ---------------------------------------------------------------------- */
+
+// A1 + A6 — Reputation (Chronicle scalars) + EvaluationLedger entries about me.
+function ReputationPanel() {
+  const s = useStore();
+  const [sub, setSub] = useState('chronicles'); // chronicles | arena | all
+  const ch = s.chronicle;
+  const avg = ch.count ? (ch.ratingSum/ch.count) : 0;
+  const filtered = s.evaluations.filter(e =>
+    sub==='all' ? true : sub==='chronicles' ? e.category==='chronicle' : e.category==='arena');
+  // chronicleScore drives happiness-decay governance: high rep → slower decay.
+  const decayNote = ch.score>=30 ? 'slows happiness decay (well-regarded)' : ch.score>=0 ? 'neutral effect on decay' : 'speeds happiness decay (poor standing)';
+  return (
+    <Panel className="p-5">
+      <h2 className="font-display text-sm tracking-widest text-white mb-1">REPUTATION &amp; EVALUATIONS</h2>
+      <p className="text-[10px] font-mono text-steel-dim mb-3">EvaluationLedger · public peer reviews written about your agent</p>
+      <div className="grid grid-cols-4 gap-2 mb-3 text-center">
+        <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">CHRONICLE</div><div className="font-display text-base text-gtok">{ch.score}</div></div>
+        <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">AVG RATING</div><div className="font-display text-base text-ore">{avg.toFixed(1)}</div></div>
+        <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">COUNT</div><div className="font-display text-base text-white">{ch.count}</div></div>
+        <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">SUM</div><div className="font-display text-base text-white">{ch.ratingSum}</div></div>
+      </div>
+      <p className="text-[10px] font-mono text-steel-dim mb-3">⚖ governance: chronicleScore {decayNote}.</p>
+      <div className="flex gap-3 mb-3 font-display text-[11px] tracking-widest">
+        {[['chronicles','CHRONICLES'],['arena','ARENA DEFEATS'],['all','ALL']].map(([k,l])=>(
+          <a key={k} className={'cursor-pointer '+(sub===k?'tab-active':'text-steel')} onClick={()=>setSub(k)}>{l}</a>
+        ))}
+      </div>
+      <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
+        {filtered.length===0 && <p className="text-xs text-steel-dim italic">No entries in this view.</p>}
+        {filtered.map(e=>(<LedgerEntry key={e.id} e={e} ratingLabel={e.category==='chronicle'} />))}
+      </div>
+    </Panel>
+  );
+}
+
+// A2 — AgentLedger personal memories (ring buffer, 64). Mock compaction.
+function MemoryPanel() {
+  const s = useStore();
+  function compact() {
+    const list = s.memories;
+    if (list.length < 3) { s.toast('Need at least 3 memories to compact'); return; }
+    // merge the 2 oldest into one summary entry (mirrors compact_memories).
+    const oldest = list.slice(-2);
+    const summary = {
+      id: Math.floor(Math.random()*9000)+1000, author:42, blockNumber:885000+Math.floor(Math.random()*99),
+      ts: Date.now(), importance: Math.max(...oldest.map(o=>o.importance)), category:'summary',
+      content: '[Compacted] '+oldest.map(o=>o.content.split('.')[0]).join(' · ')+'.',
+      relatedAgents: [...new Set(oldest.flatMap(o=>o.relatedAgents))],
+    };
+    s.setMemories([...list.slice(0, list.length-2), summary]);
+    s.toast('Compacted 2 oldest memories → 1 summary (freed 1 slot)','g');
+  }
+  const used = s.memories.length;
+  return (
+    <Panel className="p-5">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="font-display text-sm tracking-widest text-white">MEMORY LEDGER</h2>
+        <span className="font-mono text-[11px] text-steel-dim">{used} / 64</span>
+      </div>
+      <p className="text-[10px] font-mono text-steel-dim mb-3">AgentLedger · the agent's private on-chain memory (ring buffer, importance-weighted)</p>
+      <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1 mb-3">
+        {s.memories.length===0 && <p className="text-xs text-steel-dim italic">No memories recorded yet.</p>}
+        {s.memories.map(e=>(<LedgerEntry key={e.id} e={e} />))}
+      </div>
+      <Btn kind="ghost" size="sm" onClick={compact}>⧉ Compact oldest 2</Btn>
+    </Panel>
+  );
+}
+
+// A4 — InboxLedger: messages addressed to me. Click a sender → conversation.
+function InboxPanel({ onOpenConvo }) {
+  const s = useStore();
+  const unread = s.inbox.filter(m=>m.unread).length;
+  return (
+    <Panel className="p-5">
+      <div className="flex items-center justify-between mb-1">
+        <h2 className="font-display text-sm tracking-widest text-white">INBOX</h2>
+        <span className="font-mono text-[11px] text-steel-dim">{s.inbox.length} / 64{unread>0 && <span className="text-gtok"> · {unread} new</span>}</span>
+      </div>
+      <p className="text-[10px] font-mono text-steel-dim mb-3">InboxLedger · direct agent-to-agent messages. On-chain reads are a public view, partitioned by recipient — not encrypted.</p>
+      <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+        {s.inbox.length===0 && <p className="text-xs text-steel-dim italic">Inbox empty.</p>}
+        {s.inbox.map(m=>(
+          <button key={m.id} onClick={()=>{ onOpenConvo(m.author); s.setInbox(list=>list.map(x=>x.author===m.author?{...x,unread:false}:x)); }}
+            className="w-full text-left clip-btn bg-void-900/50 border border-void-700 hover:border-gtok/60 transition-colors px-3 py-2">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              {m.unread && <span className="w-1.5 h-1.5 rounded-full bg-gtok inline-block shrink-0" />}
+              <span className="font-display text-[11px] text-white">{agentName(m.author)}</span>
+              <Tag color="#8aa0c8">{m.category}</Tag>
+              <ImportanceDot v={m.importance} />
+              <span className="flex-1" />
+              <span className="font-mono text-[10px] text-steel-dim">{timeAgo(m.ts)}</span>
+            </div>
+            <p className="text-[12px] text-steel leading-snug">{m.content}</p>
+          </button>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+// A3 — Hex detail + LocationLedger bulletin board drawer.
+function HexDetailDrawer({ label, onClose }) {
+  const s = useStore();
+  const hex = s.agent.territory.find(h=>h.label===label) || {};
+  const board = s.boards[label];
+  const [draft, setDraft] = useState('');
+  useEffect(()=>{
+    const onKey = (e)=>{ if(e.key==='Escape') onClose(); };
+    window.addEventListener('keydown', onKey); return ()=>window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  function post() {
+    if (!draft.trim()) return;
+    const entry = { id:(board?.entries[0]?.id||0)+1, author:42, ts:Date.now(), importance:4, category:'morale', content:draft.trim(), relatedAgents:[] };
+    s.setBoards(b=>{
+      const cur = b[label] || { locationId:1000+Math.abs(hex.q||0)+Math.abs(hex.r||0), q:hex.q, r:hex.r, used:0, entries:[] };
+      return { ...b, [label]: { ...cur, used:cur.used+1, entries:[entry, ...cur.entries] } };
+    });
+    s.toast('Posted to '+label+' board (+5 happiness)','g');
+    setDraft('');
+  }
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <Panel glow className="p-6 w-full max-w-lg max-h-[88vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="font-display text-lg text-white tracking-wide">HEX {label}{hex.center?' ★':''}</h3>
+            <div className="text-[10px] font-mono text-steel-dim">locationId #{board?.locationId ?? '—'} · coords (q {hex.q ?? '?'}, r {hex.r ?? '?'})</div>
+          </div>
+          <button aria-label="Close" onClick={onClose} className="text-steel hover:text-white text-lg leading-none">✕</button>
+        </div>
+        <div className="grid grid-cols-3 gap-2 mb-4 text-center">
+          <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">MINES</div><div className="font-display text-base text-ore">{hex.mines ?? 0}</div></div>
+          <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">ARSENALS</div><div className="font-display text-base text-danger">{hex.arsenals ?? 0}</div></div>
+          <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">HAPPINESS</div><div className="font-display text-base text-win">♥ {hex.happy ?? 100}</div></div>
+        </div>
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="font-display text-xs tracking-widest text-white">BULLETIN BOARD</h4>
+          <span className="font-mono text-[10px] text-steel-dim">{board?.used ?? 0} / 128</span>
+        </div>
+        <div className="space-y-2 mb-3">
+          {(!board || board.entries.length===0) && <p className="text-xs text-steel-dim italic">No posts on this board yet.</p>}
+          {board && board.entries.map(e=>(<LedgerEntry key={e.id} e={e} />))}
+        </div>
+        <div className="flex gap-2">
+          <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Post to this board…" aria-label="Board post"
+            className="flex-1 bg-void-900 border border-void-600 clip-btn px-3 py-2 text-white text-xs focus:border-gtok outline-none" />
+          <Btn kind="primary" size="sm" onClick={post} disabled={!draft.trim()}>Post</Btn>
+        </div>
+        <p className="text-[9px] font-mono text-steel-dim mt-2">post = LocationLedger.write at your current hex · grants +5 happiness (POST_MORALE).</p>
+      </Panel>
+    </div>
+  );
+}
+
+// A4 — Conversation drawer (two-way thread, merged + time-sorted like getConversation).
+function ConversationDrawer({ otherId, onClose }) {
+  const s = useStore();
+  const thread = (s.conversations[otherId] || []).slice().sort((a,b)=>a.ts-b.ts);
+  useEffect(()=>{
+    const onKey = (e)=>{ if(e.key==='Escape') onClose(); };
+    window.addEventListener('keydown', onKey); return ()=>window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <Panel glow className="p-6 w-full max-w-md max-h-[88vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <h3 className="font-display text-lg text-white tracking-wide">{agentName(otherId)}</h3>
+            <div className="text-[10px] font-mono text-steel-dim">two-way thread · merged from both inboxes (public on-chain view)</div>
+          </div>
+          <button aria-label="Close" onClick={onClose} className="text-steel hover:text-white text-lg leading-none">✕</button>
+        </div>
+        <div className="space-y-2">
+          {thread.length===0 && <p className="text-xs text-steel-dim italic">No messages.</p>}
+          {thread.map((m,i)=>{
+            const mine = m.from===42;
+            return (
+              <div key={i} className={'flex '+(mine?'justify-end':'justify-start')}>
+                <div className={'max-w-[80%] clip-btn px-3 py-2 '+(mine?'bg-gtok/15 border border-gtok/40':'bg-void-900/60 border border-void-700')}>
+                  <div className="text-[9px] font-mono text-steel-dim mb-0.5">{agentName(m.from)} · {timeAgo(m.ts)}</div>
+                  <p className="text-[12px] text-steel leading-snug">{m.content}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- *
+ * A5 — LORE (#/lore): World Bible read view + governance.
+ * ---------------------------------------------------------------------- */
+function Lore() {
+  const s = useStore();
+  const wb = s.worldBible;
+  // I can write only if I'm the highest chronicle-score agent owning a hex.
+  const canWrite = !!s.agent && wb.myChronicleScore >= wb.bestScore;
+  const nextWriteAt = wb.lastUpdate + wb.cooldownMs;
+  const cooldownLeft = Math.max(0, nextWriteAt - Date.now());
+  return (
+    <div className="max-w-4xl mx-auto px-4 py-6">
+      <div className="mb-5">
+        <h1 className="font-display text-xl text-white tracking-wide">WORLD BIBLE</h1>
+        <p className="text-xs text-steel">The canonical history of Gravity Town — written only by the highest-reputation agent. <span className="text-steel-dim">read_world_bible = the chronicler's special LocationLedger board (importance 10, category world_bible).</span></p>
+      </div>
+
+      <Panel className="p-5 mb-6">
+        <div className="grid sm:grid-cols-4 gap-3 text-center">
+          <div className="clip-btn bg-void-900 border border-void-700 p-3"><div className="text-[9px] font-mono text-steel-dim">CHRONICLER</div><div className="font-display text-sm text-gtok">{wb.chronicler}</div></div>
+          <div className="clip-btn bg-void-900 border border-void-700 p-3"><div className="text-[9px] font-mono text-steel-dim">BEST SCORE</div><div className="font-display text-sm text-ore">{wb.bestScore}</div></div>
+          <div className="clip-btn bg-void-900 border border-void-700 p-3"><div className="text-[9px] font-mono text-steel-dim">LAST UPDATE</div><div className="font-display text-sm text-white">{timeAgo(wb.lastUpdate)}</div></div>
+          <div className="clip-btn bg-void-900 border border-void-700 p-3"><div className="text-[9px] font-mono text-steel-dim">COOLDOWN</div><div className="font-display text-sm text-white">{cooldownLeft>0 ? Math.ceil(cooldownLeft/60000)+'m' : 'ready'}</div></div>
+        </div>
+        <div className="mt-4 pt-4 border-t border-void-700 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[11px] font-mono text-steel-dim">
+            Your chronicle score: <span className="text-white">{wb.myChronicleScore}</span> · {canWrite
+              ? <span className="text-win">you hold the pen — you may write the next chapter.</span>
+              : <span>need &ge; {wb.bestScore} (current chronicler {wb.chronicler}) to take the pen.</span>}
+          </p>
+          {canWrite
+            ? <Btn kind="primary" size="sm" onClick={()=>s.toast('Write chapter — opens the chronicler composer (mock)','g')} disabled={cooldownLeft>0}>{cooldownLeft>0?'On cooldown':'✍ Write chapter'}</Btn>
+            : <Tag color="#5a6b8c">read-only — not the chronicler</Tag>}
+        </div>
+      </Panel>
+
+      {!s.agent && <Panel className="p-4 mb-6 text-xs text-steel-dim">👁 Spectating — the World Bible is public. <a className="text-gtok cursor-pointer" onClick={()=>s.go('/onboard')}>Spawn an agent</a> to compete for the chronicler's pen.</Panel>}
+
+      <h2 className="font-display text-sm tracking-widest text-white mb-3">CHAPTERS</h2>
+      <div className="space-y-3">
+        {wb.chapters.map(ch=>(
+          <Panel key={ch.id} className="p-4">
+            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+              <span className="font-display text-sm text-white">{ch.content.split('—')[0].trim()}</span>
+              <div className="flex items-center gap-2">
+                <Tag color="#c69bff">{ch.category}</Tag>
+                <span className="font-mono text-[10px] text-steel-dim">by {agentName(ch.author)} · {timeAgo(ch.ts)}</span>
+              </div>
+            </div>
+            <p className="text-[12px] text-steel leading-relaxed">{ch.content.includes('—') ? ch.content.split('—').slice(1).join('—').trim() : ch.content}</p>
+          </Panel>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1555,10 +2010,15 @@ function Arena() {
   const s = useStore();
   const hasAgent = !!s.agent;
   const [tab, setTab] = useState(s.agent ? 'overview' : 'battle'); // spectators land on the public replay hook
+  // Card detail modal: { card, status } — shared across Arena sub-tabs.
+  const [detail, setDetail] = useState(null);
+  const openCard = (card, status) => setDetail({ card, status });
   const tier = tierFor(s.g);
   const wins = s.matchHistory.filter(m=>m.result==='W').length;
   const losses = s.matchHistory.length - wins;
-  const collectionCount = s.bench.filter(Boolean).length + s.inventory.length;
+  // Full collection = all owned cards: benched + un-benched inventory + listed
+  // (listing does not transfer ownership on-chain, so listed cards still count).
+  const collectionCount = s.bench.filter(Boolean).length + s.inventory.length + s.myListings.length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
@@ -1607,23 +2067,57 @@ function Arena() {
       )}
 
       <div className="flex gap-5 mb-5 font-display text-sm tracking-widest flex-wrap">
-        {[['overview','OVERVIEW'],['shop','SHOP'],['bench',`BENCH (${s.bench.filter(Boolean).length}/${C.BENCH_SLOTS})`],['market','CARD MARKET'],['battle','BATTLE REPLAY']].map(([k,l])=>(
+        {[['overview','OVERVIEW'],['collection',`COLLECTION (${collectionCount})`],['shop','SHOP'],['bench',`BENCH (${s.bench.filter(Boolean).length}/${C.BENCH_SLOTS})`],['market','CARD MARKET'],['battle','BATTLE REPLAY']].map(([k,l])=>(
           <a key={k} role="tab" aria-selected={tab===k} className={'cursor-pointer '+(tab===k?'tab-active':'text-steel')} onClick={()=>setTab(k)}>{l}</a>
         ))}
       </div>
 
-      {tab==='overview' && (hasAgent ? <ArenaOverview tier={tier} collectionCount={collectionCount} /> : <ArenaSpectatorCTA what="your collection, ELO & match history" />)}
-      {tab==='shop' && (hasAgent ? <ArenaShop/> : <ArenaSpectatorCTA what="the card shop" />)}
-      {tab==='bench' && (hasAgent ? <ArenaBench/> : <ArenaSpectatorCTA what="your bench & matchmaking" />)}
-      {tab==='market' && <CardMarket/>}
+      {tab==='overview' && (hasAgent ? <ArenaOverview tier={tier} collectionCount={collectionCount} onOpenCard={openCard} /> : <ArenaSpectatorCTA what="your collection, ELO & match history" />)}
+      {tab==='collection' && (hasAgent ? <ArenaCollection onOpenCard={openCard} /> : <ArenaSpectatorCTA what="your full card collection / backpack" />)}
+      {tab==='shop' && (hasAgent ? <ArenaShop onOpenCard={openCard}/> : <ArenaSpectatorCTA what="the card shop" />)}
+      {tab==='bench' && (hasAgent ? <ArenaBench onOpenCard={openCard}/> : <ArenaSpectatorCTA what="your bench & matchmaking" />)}
+      {tab==='market' && <CardMarket onOpenCard={openCard}/>}
       {tab==='battle' && <BattleReplay/>}
+
+      {detail && <CardDetailModal c={detail.card} status={detail.status} onClose={()=>setDetail(null)} />}
+    </div>
+  );
+}
+
+// COLLECTION — the full owned-cards "backpack": benched + inventory + listed,
+// each as a CardFace with a status badge. Listed cards are still owned on-chain.
+function ArenaCollection({ onOpenCard }) {
+  const s = useStore();
+  const benchCards = s.bench.map((c,i)=> c ? { c, status:'On bench · slot '+(i+1), badge:<Tag color="#2dd4bf">On bench · slot {i+1}</Tag> } : null).filter(Boolean);
+  const invCards = s.inventory.map(c=>({ c, status:'Inventory', badge:<Tag color="#8aa0c8">Inventory</Tag> }));
+  const listedCards = s.myListings.map(l=>({
+    c: { ...l, cost: l.cost ?? unitByName(l.unit)?.cost },
+    status:'Listed · '+l.price+' G',
+    badge:<Tag color="#f5a623">Listed · {l.price} G</Tag>,
+  }));
+  const all = [...benchCards, ...invCards, ...listedCards];
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <p className="text-xs text-steel-dim font-mono">your full backpack — {all.length} owned card{all.length===1?'':'s'} · {benchCards.length} benched · {invCards.length} inventory · {listedCards.length} listed</p>
+        <span className="text-[10px] font-mono text-steel-dim">listing a card doesn't transfer ownership on-chain — it stays in your collection until it sells. Click any card for full detail.</span>
+      </div>
+      {all.length===0 ? (
+        <Panel className="p-6 text-sm text-steel-dim text-center">No cards yet — buy from the Shop or Card Market.</Panel>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {all.map((x,i)=>(
+            <CardFace key={x.c.id||x.c.cardId||i} c={x.c} badge={x.badge} onClick={()=>onOpenCard(x.c, x.status)} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 // Rich, lived-in landing tab for the Arena: collection summary, ELO sparkline,
 // match history, and the user's own active listings.
-function ArenaOverview({ tier, collectionCount }) {
+function ArenaOverview({ tier, collectionCount, onOpenCard }) {
   const s = useStore();
   const hist = s.matchHistory;
   const elos = hist.length ? [hist[0].eloBefore, ...hist.map(m=>m.eloAfter)] : [s.elo];
@@ -1643,7 +2137,9 @@ function ArenaOverview({ tier, collectionCount }) {
         {storyCards.length===0 ? <p className="text-xs text-steel-dim">No story cards yet — buy one on the Card Market.</p> : (
           <div className="space-y-2">
             {storyCards.map(c=>(
-              <div key={c.id} className="clip-btn bg-[#c69bff]/10 border border-[#c69bff]/30 p-2">
+              <div key={c.id} role="button" tabIndex={0} onClick={()=>onOpenCard && onOpenCard(c, 'Story card')}
+                   onKeyDown={(e)=>{ if((e.key==='Enter'||e.key===' ')&&onOpenCard){ e.preventDefault(); onOpenCard(c,'Story card'); } }}
+                   className="clip-btn bg-[#c69bff]/10 border border-[#c69bff]/30 p-2 cursor-pointer hover:border-[#c69bff]/70 transition-colors outline-none">
                 <div className="flex items-center justify-between"><span className="font-display text-sm text-white">{c.unit}</span><Tag color="#c69bff">{c.variant} {c.edition}</Tag></div>
                 {c.achievementTag && <div className="text-[9px] font-mono text-[#c69bff] mt-0.5">🏅 {c.achievementTag}</div>}
                 {c.story && <p className="text-[10px] text-steel leading-snug mt-1">{c.story}</p>}
@@ -1688,7 +2184,7 @@ function ArenaOverview({ tier, collectionCount }) {
                 <span className="text-white flex-1">{l.unit}{l.variant!=='Standard'?` · ${l.variant} ${l.edition}`:''}</span>
                 <span className="text-steel-dim">{l.views}👁</span>
                 <GAmt v={l.price} className="text-xs" />
-                <Btn kind="ghost" size="sm" onClick={()=>{ s.setMyListings(ls=>ls.filter(x=>x.id!==l.id)); s.toast('Listing cancelled — card returned to inventory'); s.setInventory(inv=>[...inv,{ id:'card-'+l.id, unit:l.unit, atk:l.atk, hp:l.hp, ability:l.ability, variant:l.variant, edition:l.edition, achievementTag:l.achievementTag, story:l.story }]); }}>Cancel</Btn>
+                <Btn kind="ghost" size="sm" onClick={()=>{ s.setMyListings(ls=>ls.filter(x=>x.id!==l.id)); s.toast('Listing cancelled — card returned to inventory'); s.setInventory(inv=>[...inv,{ id:'card-'+l.id, cardId:l.cardId, mintedAt:l.mintedAt, unit:l.unit, atk:l.atk, hp:l.hp, cost:l.cost, ability:l.ability, ab:unitByName(l.unit)?.ab, variant:l.variant, edition:l.edition, achievementTag:l.achievementTag, story:l.story }]); }}>Cancel</Btn>
               </div>
             ))}
           </div>
@@ -1698,22 +2194,104 @@ function ArenaOverview({ tier, collectionCount }) {
   );
 }
 
-function CardFace({ c, small=false }) {
+function CardFace({ c, small=false, badge=null, onClick=null }) {
   const variantColor = c.variant && c.variant!=='Standard' ? '#c69bff' : '#2dd4bf';
   return (
-    <div className={'clip-panel bg-gradient-to-b from-void-700 to-void-900 border p-3 '+(small?'':'min-h-[150px]')}
+    <div onClick={onClick}
+         role={onClick?'button':undefined} tabIndex={onClick?0:undefined}
+         onKeyDown={onClick?(e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); onClick(); } }:undefined}
+         className={'clip-panel bg-gradient-to-b from-void-700 to-void-900 border p-3 '+(small?'':'min-h-[150px] ')+(onClick?'cursor-pointer hover:border-gtok/80 transition-colors outline-none focus-visible:border-gtok ':'')}
          style={{borderColor:variantColor+'55'}}>
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-2 gap-2">
         <span className="font-display text-sm text-white">{c.unit}</span>
         {c.variant && c.variant!=='Standard'
           ? <Tag color="#c69bff">{c.variant} {c.edition||''}</Tag>
-          : <span className="font-mono text-[10px] text-gtok">⬡ {c.cost ?? c.price} G</span>}
+          : <span className="font-mono text-[10px] text-gtok">⬡ {c.cost ?? c.price ?? unitByName(c.unit)?.cost} G</span>}
       </div>
       <div className="flex gap-2 mb-2">
-        <span className="font-mono text-xs text-danger">⚔ {c.atk ?? UNIT_ROSTER.find(u=>u.unit===c.unit)?.atk ?? '?'}</span>
-        <span className="font-mono text-xs text-win">♥ {c.hp ?? UNIT_ROSTER.find(u=>u.unit===c.unit)?.hp ?? '?'}</span>
+        <span className="font-mono text-xs text-danger">⚔ {c.atk ?? unitByName(c.unit)?.atk ?? '?'}</span>
+        <span className="font-mono text-xs text-win">♥ {c.hp ?? unitByName(c.unit)?.hp ?? '?'}</span>
       </div>
-      <div className="text-[10px] font-mono text-steel leading-snug">{c.ability || UNIT_ROSTER.find(u=>u.unit===c.unit)?.ability}</div>
+      <div className="text-[10px] font-mono text-steel leading-snug">{c.ability || unitByName(c.unit)?.ability}</div>
+      {badge && <div className="mt-2">{badge}</div>}
+    </div>
+  );
+}
+
+// One-line structured ability rendering (mirrors AbilityLib.sol enums). Falls
+// back to the unit catalog's `ab` when a card carries no overlay of its own.
+function AbilityDetail({ c }) {
+  const ab = c.ab || unitByName(c.unit)?.ab;
+  const proseRaw = c.ability || unitByName(c.unit)?.ability || '';
+  // strip the "(parenthetical)" design note for the model line; keep full prose below.
+  const prose = proseRaw;
+  if (!ab) return <p className="text-[11px] font-mono text-steel">{prose}</p>;
+  const magLabel = ab.effect==='SUMMON' ? `${ab.magnitude}/${ab.magnitude} token`
+                 : ab.effect==='BUFF_NEIGHBOR' ? `+${ab.magnitude} ATK / +${ab.magnitude*2} HP`
+                 : `${ab.magnitude}`;
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+        <Tag color="#7aa2ff">trigger · {ab.trigger}</Tag>
+        <span className="text-steel-dim">→</span>
+        <Tag color="#f5a623">{ab.effect} · {magLabel}</Tag>
+        <span className="text-steel-dim">→</span>
+        <Tag color="#c69bff">target · {ab.target}</Tag>
+      </div>
+      <p className="text-[11px] font-mono text-steel leading-snug">{prose}</p>
+    </div>
+  );
+}
+
+// Card detail modal — full stats, structured ability (chain returns numbers),
+// and a provenance block clearly labelled as mock/illustrative.
+function CardDetailModal({ c, status, onClose }) {
+  useEffect(()=>{
+    const onKey = (e)=>{ if(e.key==='Escape') onClose(); };
+    window.addEventListener('keydown', onKey); return ()=>window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  if (!c) return null;
+  const u = unitByName(c.unit) || {};
+  const isStory = c.variant && c.variant!=='Standard';
+  return (
+    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
+      <Panel glow className="p-6 w-full max-w-lg max-h-[88vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+        <div className="flex items-start justify-between mb-4">
+          <div>
+            <h3 className="font-display text-lg text-white tracking-wide">{c.unit}</h3>
+            <div className="text-[10px] font-mono text-steel-dim">
+              cardId #{c.cardId ?? '—'} · unitType {u.id ?? '?'} · minted {c.mintedAt ?? '—'}
+            </div>
+          </div>
+          <button aria-label="Close" onClick={onClose} className="text-steel hover:text-white text-lg leading-none">✕</button>
+        </div>
+
+        <div className="grid grid-cols-4 gap-2 mb-4 text-center">
+          <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">ATK</div><div className="font-display text-base text-danger">⚔ {c.atk ?? u.atk}</div></div>
+          <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">HP</div><div className="font-display text-base text-win">♥ {c.hp ?? u.hp}</div></div>
+          <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">COST</div><div className="font-display text-base text-gtok">⬡ {c.cost ?? u.cost} G</div></div>
+          <div className="clip-btn bg-void-900 border border-void-700 p-2"><div className="text-[9px] font-mono text-steel-dim">STATUS</div><div className="font-display text-[11px] text-white leading-tight pt-1">{status||'—'}</div></div>
+        </div>
+
+        <div className="clip-btn bg-void-900/60 border border-void-700 p-3 mb-4">
+          <div className="text-[9px] font-mono text-steel-dim uppercase tracking-widest mb-2">Ability</div>
+          <AbilityDetail c={c} />
+          <p className="text-[9px] font-mono text-steel-dim mt-2 leading-snug">Ability text is a client-side catalog. On-chain the contract returns the structured numbers above (AbilityLib.sol).</p>
+        </div>
+
+        <div className={'clip-btn p-3 '+(isStory?'bg-[#c69bff]/10 border border-[#c69bff]/30':'bg-void-900/60 border border-void-700')}>
+          <div className="text-[9px] font-mono text-steel-dim uppercase tracking-widest mb-1">📜 Provenance</div>
+          {isStory ? (
+            <>
+              <div className="flex items-center gap-2 mb-1"><Tag color="#c69bff">{c.variant} {c.edition||''}</Tag>{c.achievementTag && <span className="text-[9px] font-mono text-[#c69bff]">🏅 {c.achievementTag}</span>}</div>
+              {c.story && <p className="text-[11px] text-steel leading-snug">{c.story}</p>}
+            </>
+          ) : (
+            <p className="text-[11px] text-steel-dim leading-snug">Standard mint · no special edition or achievement tag.</p>
+          )}
+          <p className="text-[9px] font-mono text-ore/70 mt-2 leading-snug">⚠ variant / edition / achievementTag / story are MOCK / illustrative. The on-chain Card struct (CardLedger.sol) only stores id · unitType · ownerAgent · mintedAt. Rich provenance metadata awaits roadmap E3.1.</p>
+        </div>
+      </Panel>
     </div>
   );
 }
@@ -1735,12 +2313,12 @@ function mintCardToBenchOrInventory(s, card) {
   return 'inventory';
 }
 
-function ArenaShop() {
+function ArenaShop({ onOpenCard }) {
   const s = useStore();
   function buy(c) {
     if (s.g < c.cost) { s.toast('Need '+c.cost+' G — deposit more'); return; }   // guard in-handler
     s.setG(g=>g-c.cost);
-    const card = { id:'card-'+Math.random().toString(36).slice(2,6), unit:c.unit, atk:c.atk, hp:c.hp, ability:c.ability, variant:'Standard', edition:null, achievementTag:null, story:null };
+    const card = { id:'card-'+Math.random().toString(36).slice(2,6), cardId:Math.floor(2000+Math.random()*8000), mintedAt:'just now', unit:c.unit, atk:c.atk, hp:c.hp, cost:c.cost, ability:c.ability, ab:c.ab, variant:'Standard', edition:null, achievementTag:null, story:null };
     const where = mintCardToBenchOrInventory(s, card);
     s.toast('Bought '+c.unit+' (-'+c.cost+' G)'+(where==='inventory'?' → inventory (bench full)':''),'g');
   }
@@ -1754,7 +2332,7 @@ function ArenaShop() {
       <div className="grid sm:grid-cols-3 gap-3">
         {s.shop.map(c=>(
           <div key={c.offerId}>
-            <CardFace c={c} />
+            <CardFace c={c} onClick={()=>onOpenCard && onOpenCard(c, 'Shop offer · '+c.cost+' G')} />
             <Btn kind="primary" size="sm" className="w-full mt-2" onClick={()=>buy(c)} disabled={s.g<c.cost}>Buy · {c.cost} G</Btn>
           </div>
         ))}
@@ -1763,7 +2341,7 @@ function ArenaShop() {
   );
 }
 
-function ArenaBench() {
+function ArenaBench({ onOpenCard }) {
   const s = useStore();
   const filled = s.bench.filter(Boolean).length;
   const firstEmpty = (() => { const i = s.bench.findIndex(x=>!x); return i===-1 ? (s.bench.length<C.BENCH_SLOTS ? s.bench.length : -1) : i; })();
@@ -1795,7 +2373,7 @@ function ArenaBench() {
           const c = s.bench[i];
           return c ? (
             <div key={i} className="relative">
-              <CardFace c={c} />
+              <CardFace c={c} onClick={()=>onOpenCard && onOpenCard(c, 'On bench · slot '+(i+1))} />
               <button aria-label={'Remove '+c.unit} onClick={()=>unbench(i,c)}
                 className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-danger text-white text-xs flex items-center justify-center">✕</button>
             </div>
@@ -1813,7 +2391,7 @@ function ArenaBench() {
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
           {s.inventory.map(c=>(
             <div key={c.id}>
-              <CardFace c={c} />
+              <CardFace c={c} onClick={()=>onOpenCard && onOpenCard(c, 'Inventory')} />
               <Btn kind="primary" size="sm" className="w-full mt-2" onClick={()=>placeOnBench(c)} disabled={firstEmpty===-1}>
                 {firstEmpty===-1 ? 'Bench full' : '↑ Place on bench'}
               </Btn>
@@ -1831,30 +2409,35 @@ function ArenaBench() {
   );
 }
 
-function CardMarket() {
+function CardMarket({ onOpenCard }) {
   const s = useStore();
+  // Hydrate a listing into a full card object for the detail modal.
+  const listingCard = (l) => { const b = unitByName(l.unit) || {}; return { ...l, atk:b.atk, hp:b.hp, cost:b.cost, ability:b.ability, ab:b.ab, cardId:l.cardId, mintedAt:l.mintedAt }; };
   function buy(l) {
     if (!s.agent) { s.toast('Create an agent to buy cards'); return; }
     if (s.g < l.price) { s.toast('Need '+l.price+' G'); return; }
     s.setG(g=>g-l.price);
     s.setListings(ls=>ls.filter(x=>x.id!==l.id));
-    const base = UNIT_ROSTER.find(u=>u.unit===l.unit) || {};
-    const card = { id:'card-'+Math.random().toString(36).slice(2,6), unit:l.unit, atk:base.atk, hp:base.hp, ability:base.ability,
+    const base = unitByName(l.unit) || {};
+    const card = { id:'card-'+Math.random().toString(36).slice(2,6), cardId:Math.floor(2000+Math.random()*8000), mintedAt:'just now',
+      unit:l.unit, atk:base.atk, hp:base.hp, cost:base.cost, ability:base.ability, ab:base.ab,
       variant:l.variant, edition:l.edition, achievementTag:l.achievementTag||null, story:l.story };
     const where = mintCardToBenchOrInventory(s, card);
     s.toast('Bought '+l.unit+(l.variant!=='Standard'?' ('+l.variant+' '+l.edition+')':'')+' for '+l.price+' G'+(where==='inventory'?' → inventory':''),'g');
   }
   return (
     <div>
-      <p className="text-xs text-steel-dim font-mono mb-3">player listings · G-priced · story cards carry on-chain provenance</p>
+      <p className="text-xs text-steel-dim font-mono mb-3">player listings · G-priced · story cards carry illustrative provenance (mock — real Card metadata awaits roadmap E3.1)</p>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         {s.listings.map(l=>(
-          <div key={l.id} className={'clip-panel border p-3 '+(l.story?'bg-gradient-to-b from-[#1d1530] to-void-900 border-[#c69bff]/50':'bg-void-800/70 border-void-600')}>
+          <div key={l.id} role="button" tabIndex={0} onClick={()=>onOpenCard && onOpenCard(listingCard(l), 'Market listing · '+l.price+' G')}
+               onKeyDown={(e)=>{ if((e.key==='Enter'||e.key===' ')&&onOpenCard){ e.preventDefault(); onOpenCard(listingCard(l),'Market listing · '+l.price+' G'); } }}
+               className={'clip-panel border p-3 cursor-pointer transition-colors outline-none '+(l.story?'bg-gradient-to-b from-[#1d1530] to-void-900 border-[#c69bff]/50 hover:border-[#c69bff]/80':'bg-void-800/70 border-void-600 hover:border-gtok/60')}>
             <div className="flex items-center justify-between mb-1">
               <span className="font-display text-sm text-white">{l.unit}</span>
               {l.story ? <Tag color="#c69bff">{l.variant} {l.edition}</Tag> : <Tag>Standard</Tag>}
             </div>
-            <div className="text-[10px] font-mono text-steel mb-2">{UNIT_ROSTER.find(u=>u.unit===l.unit)?.ability}</div>
+            <div className="text-[10px] font-mono text-steel mb-2">{unitByName(l.unit)?.ability}</div>
             {l.story && (
               <div className="clip-btn bg-[#c69bff]/10 border border-[#c69bff]/30 p-2 mb-2">
                 <div className="text-[9px] font-mono text-[#c69bff] uppercase tracking-widest mb-0.5">📜 provenance</div>
@@ -1865,7 +2448,7 @@ function CardMarket() {
               <div className="text-[10px] font-mono text-steel-dim">seller {l.seller}</div>
               <GAmt v={l.price} className="text-sm" />
             </div>
-            <Btn kind="primary" size="sm" className="w-full mt-2" onClick={()=>buy(l)} disabled={!s.agent || s.g<l.price}>{s.agent ? 'Buy · '+l.price+' G' : 'Create agent to buy'}</Btn>
+            <Btn kind="primary" size="sm" className="w-full mt-2" onClick={(e)=>{ e.stopPropagation(); buy(l); }} disabled={!s.agent || s.g<l.price}>{s.agent ? 'Buy · '+l.price+' G' : 'Create agent to buy'}</Btn>
           </div>
         ))}
         {s.listings.length===0 && <Panel className="p-6 text-sm text-steel-dim col-span-full text-center">All listings sold.</Panel>}
@@ -1877,14 +2460,14 @@ function CardMarket() {
 // turn-by-turn battle replay incl. ability events (roadmap E4 goal)
 const BATTLE_STEPS = [
   { icon:'🏁', side:'—', txt:'Battle start · your bench vs Vortex. Deterministic seed 0x7f3a…', kind:'start' },
-  { icon:'✦', side:'A', txt:'ON_START: Forgeling buffs right ally Reaver +2 ATK (5→7).', kind:'buff' },
-  { icon:'🛡', side:'B', txt:'ON_START: Bulwark grants +2 HP to all enemy allies.', kind:'buff' },
-  { icon:'⚔', side:'A', txt:'Reaver (7 ATK) hits front Sentinel: 7 dmg → Sentinel falls.', kind:'damage' },
-  { icon:'💀', side:'B', txt:'ON_DEATH: Wraith dies → summons a 3/3 Husk (no ability).', kind:'summon' },
-  { icon:'⚔', side:'B', txt:'Husk (3 ATK) trades into Reaver: 3 dmg.', kind:'damage' },
-  { icon:'✦', side:'A', txt:'ON_HURT: Reaver retaliates 1 dmg to front enemy (cascade).', kind:'ability' },
-  { icon:'⚔', side:'A', txt:'Mystic finishes the Husk: 2 dmg → Husk falls.', kind:'damage' },
-  { icon:'💀', side:'B', txt:'ON_DEATH: enemy Mystic heals its allies +2 HP.', kind:'ability' },
+  { icon:'✦', side:'A', txt:'ON_START: Crystalwarden buffs neighbors (+2 ATK, +4 HP each).', kind:'buff' },
+  { icon:'🔥', side:'B', txt:'ON_START: enemy Pyromancer deals 3 dmg to a random ally.', kind:'damage' },
+  { icon:'⚔', side:'A', txt:'Shadowstalker (6 ATK) hits front Skirmisher: 6 dmg → it falls.', kind:'damage' },
+  { icon:'💀', side:'A', txt:'ON_DEATH: Shadowstalker → 5 dmg to a random enemy (revenge nuke).', kind:'ability' },
+  { icon:'✦', side:'B', txt:'ON_HURT: enemy Stormcaller retaliates 2 dmg to a random ally.', kind:'ability' },
+  { icon:'⚔', side:'B', txt:'Wraith (5 ATK) trades into Battlemage: 5 dmg → it falls.', kind:'damage' },
+  { icon:'💀', side:'B', txt:'ON_DEATH: enemy Wraith → summons a 3/3 token (no ability).', kind:'summon' },
+  { icon:'⚔', side:'A', txt:'Stormcaller finishes the token: clears the last enemy.', kind:'damage' },
   { icon:'🏆', side:'A', txt:'No enemies remain · YOU WIN · ELO +16 (1000 → 1016).', kind:'win' },
 ];
 const STEP_COLOR = { start:'#8aa0c8', buff:'#f5a623', damage:'#ff5470', summon:'#c69bff', ability:'#7aa2ff', win:'#3ad29f' };
@@ -1896,7 +2479,7 @@ function BattleReplay() {
   const settled = useRef(false);
   // Your squad is loosely drawn from your actual benched cards.
   const yourSquad = s.bench.filter(Boolean).map(c=>c.unit);
-  const squadView = (yourSquad.length ? yourSquad : ['Reaver','Forgeling','Mystic','Bulwark','Sentinel']).slice(0,5);
+  const squadView = (yourSquad.length ? yourSquad : ['Shadowstalker','Battlemage','Stormcaller','Crystalwarden','Skirmisher']).slice(0,5);
   useEffect(()=>{
     if (!playing) return;
     if (step >= BATTLE_STEPS.length-1) {
@@ -1931,7 +2514,7 @@ function BattleReplay() {
         </div>
         {/* board */}
         <div className="grid grid-cols-2 gap-4">
-          {[[(s.agent?'YOUR SQUAD (A)':'DEMO SQUAD (A)'),squadView],['VORTEX (B)',['Sentinel','Wraith','Bulwark','Mystic','Reaver']]].map(([side,units],si)=>(
+          {[[(s.agent?'YOUR SQUAD (A)':'DEMO SQUAD (A)'),squadView],['VORTEX (B)',['Skirmisher','Wraith','Crystalwarden','Stormcaller','Pyromancer']]].map(([side,units],si)=>(
             <div key={si}>
               <div className="text-[10px] font-mono text-steel-dim mb-2">{side}</div>
               <div className="space-y-1.5">
@@ -1987,6 +2570,7 @@ function Router() {
     case '/me':      screen = <MyAgent/>; break;
     case '/markets': screen = <Markets/>; break;
     case '/arena':   screen = <Arena/>; break;
+    case '/lore':    screen = <Lore/>; break;
     case '/':
     default:         screen = <Landing/>;
   }
