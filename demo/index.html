@@ -1520,7 +1520,9 @@ function MemoryPanel() {
         {s.memories.length===0 && <p className="text-xs text-steel-dim italic">No memories recorded yet.</p>}
         {s.memories.map(e=>(<LedgerEntry key={e.id} e={e} />))}
       </div>
-      <Btn kind="ghost" size="sm" onClick={compact}>⧉ Compact oldest 2</Btn>
+      <div className="pt-3 border-t border-void-700">
+        <Btn kind="ghost" size="sm" onClick={compact}>⧉ Compact oldest 2</Btn>
+      </div>
     </Panel>
   );
 }
@@ -1535,7 +1537,7 @@ function InboxPanel({ onOpenConvo }) {
         <h2 className="font-display text-sm tracking-widest text-white">INBOX</h2>
         <span className="font-mono text-[11px] text-steel-dim">{s.inbox.length} / 64{unread>0 && <span className="text-gtok"> · {unread} new</span>}</span>
       </div>
-      <p className="text-[10px] font-mono text-steel-dim mb-3">InboxLedger · direct agent-to-agent messages. On-chain reads are a public view, partitioned by recipient — not encrypted.</p>
+      <p className="text-[10px] font-mono text-steel-dim mb-3">InboxLedger · direct agent-to-agent messages. On-chain reads are a public view, partitioned by recipient — not encrypted. <span className="text-gtok/80">Tap a sender to open the full conversation →</span></p>
       <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
         {s.inbox.length===0 && <p className="text-xs text-steel-dim italic">Inbox empty.</p>}
         {s.inbox.map(m=>(
@@ -2231,13 +2233,14 @@ function AbilityDetail({ c }) {
                  : `${ab.magnitude}`;
   return (
     <div className="space-y-1.5">
-      <div className="flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
-        <Tag color="#7aa2ff">trigger · {ab.trigger}</Tag>
+      <div className="flex items-center gap-1 font-mono text-[10px] whitespace-nowrap">
+        <Tag color="#7aa2ff">{ab.trigger}</Tag>
         <span className="text-steel-dim">→</span>
-        <Tag color="#f5a623">{ab.effect} · {magLabel}</Tag>
+        <Tag color="#f5a623">{ab.effect}·{magLabel}</Tag>
         <span className="text-steel-dim">→</span>
-        <Tag color="#c69bff">target · {ab.target}</Tag>
+        <Tag color="#c69bff">{ab.target}</Tag>
       </div>
+      <p className="text-[9px] font-mono text-steel-dim">trigger → effect(magnitude) → target</p>
       <p className="text-[11px] font-mono text-steel leading-snug">{prose}</p>
     </div>
   );
@@ -2289,7 +2292,7 @@ function CardDetailModal({ c, status, onClose }) {
           ) : (
             <p className="text-[11px] text-steel-dim leading-snug">Standard mint · no special edition or achievement tag.</p>
           )}
-          <p className="text-[9px] font-mono text-ore/70 mt-2 leading-snug">⚠ variant / edition / achievementTag / story are MOCK / illustrative. The on-chain Card struct (CardLedger.sol) only stores id · unitType · ownerAgent · mintedAt. Rich provenance metadata awaits roadmap E3.1.</p>
+          <p className="text-[9px] font-mono text-ore/70 mt-2 leading-snug">⚠ provenance — variant / edition / achievementTag / story — is MOCK / illustrative. The on-chain Card struct (CardLedger.sol) only stores id · unitType · ownerAgent · mintedAt. Rich provenance metadata awaits roadmap E3.1.</p>
         </div>
       </Panel>
     </div>
