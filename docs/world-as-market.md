@@ -591,7 +591,7 @@ DoD：
 
 ## 8. 对 `docs/dev-breakdown.md` 的 Lane 重构骨架
 
-当前 `docs/dev-breakdown.md` 的 Lane C 是“预测市场（全新独立合约）”，文件域指向 `contracts/src/PredictionMarket.sol`（`docs/dev-breakdown.md:52`、`docs/dev-breakdown.md:302-304`），P lane 也围绕 `predictionMarket` 槽位（`docs/dev-breakdown.md:61`、`docs/dev-breakdown.md:67-85`）。这要整体升级。
+本节是本设计稿驱动的 `docs/dev-breakdown.md` Lane 重构骨架。**重构前**，dev-breakdown 的 Lane C 是“预测市场（全新独立合约）”、文件域指向 `contracts/src/PredictionMarket.sol`，P lane 围绕 `predictionMarket` 槽位。**该重构现已落地于 dev-breakdown**（Lane C 已为 World-as-Market Core C0-C8、P 槽位已为 `world`），下文记录其骨架与文件域重写依据，便于追溯；具体工单以 `docs/dev-breakdown.md` 现状为准。
 
 ### 8.1 Lane C 作废并升级为 World-as-Market Core
 
@@ -601,18 +601,21 @@ DoD：
 - C1-C3 = interface、自结算市场、Oracle 市场。
 - D1/E4/F8 都接 `PredictionMarket`。
 
-**文件域 owner 重写（不是「升级 Lane C」）**：原 dev-breakdown 里 Lane C 只独占新建 `contracts/src/PredictionMarket.sol` 与其 interface/test，**明确不碰 Router/Deploy/GameEngine，只读 GameEngine 经 `spendOre/refundOre` 钩子动 ore**（`docs/dev-breakdown.md:50`，即文件域表的 C 行）。新 C0..C5 含 G escrow、harvest/build adapter、World event registry，会触碰 `GTreasury`/`GameEngine`/`Router`/MCP，**早已越出原 Lane C 的独占文件域**。因此这是对 dev-breakdown 文件域归属的**重写**：World Core 需要重新分配 `GTreasury`/`GameEngine`/`Router`/MCP 的 owner（与 P/A/D lane 重新对齐互斥），而非在旧 Lane C 边界内加任务。
+**文件域 owner 重写（不是「升级 Lane C」）**：原 dev-breakdown 里 Lane C 只独占新建 `contracts/src/PredictionMarket.sol` 与其 interface/test，**明确不碰 Router/Deploy/GameEngine，只读 GameEngine 经 `spendOre/refundOre` 钩子动 ore**（`docs/dev-breakdown.md:50`，即文件域表的 C 行）。新 C0..C8 含 G escrow、harvest/build adapter、G parimutuel、ORACLE refund/dispute、World event registry，会触碰 `GTreasury`/`GameEngine`/`Router`/MCP，**早已越出原 Lane C 的独占文件域**。因此这是对 dev-breakdown 文件域归属的**重写**：World Core 需要重新分配 `GTreasury`/`GameEngine`/`Router`/MCP 的 owner（与 P/A/D lane 重新对齐互斥），而非在旧 Lane C 边界内加任务。
 
 新：
 
 | 任务 | 名称 | DoD 方向 |
 |---|---|---|
-| C0 | `IWorldQuestion` / `World` storage skeleton | `forge build` 通过；能创建 `Question` 并读回；不改旧 GameEngine 行为 |
-| C1 | 双币 question accounting | G escrow、ore fixed reward、fee/tax/burn/eventPrizePool 账都可单测；ore -> G invariant 有负向测试 |
-| C2 | MATH/STATE difficulty 0 adapter | harvest/build 可通过 `answer_question` 跑通，legacy 入口仍可兼容 |
-| C3 | G parimutuel market module | `bet/resolve/claimPayout` 用 G 计价；不使用 ore 下注；支持 self-resolving STATE |
-| C4 | ORACLE resolver / timeout / refund | resolver、grace、refund、dispute hook 字段完整；世界杯冠军 demo market 可配置 |
-| C5 | World event registry | `WorldEventTriggered` 能由 treasury threshold 或 owner seed 触发；矿潮/boss 样例有最小实现 |
+| C0 | 机制规格 + 不变量落库 | World spec 与 invariant skeleton 可编译；禁止 ore -> G、G pool no cap、score guard、freeze guard 都有测试锚点 |
+| C1 | `IWorldQuestion` 状态机：OPEN/LOCKED/RESOLVED/CANCELLED + `QuestionLocked` | `Question` storage/events 可用；非法状态转换拒绝；money-staked STATE 必须 lock 并写 snapshot hash |
+| C2 | MATH/STATE faucet 包装 `harvest/build` | `answer_question` 可跑通 harvest/build；ore mint/sink 不改 G accounting；agent owner/delegate/permit 校验生效 |
+| C3 | combat 分阶段 RNG + 状态锁定快照 | attack/raid/incite 经 lock snapshot + entropy resolve；target owner drift 时 cancel/refund；trace 可回放 |
+| C4 | treasury + G 会计不变量（escrow/tax/burn/event pool） | GTreasury 有 escrow/release/payout/refund 原语；surplus 排除 escrow/event pool；ore 路径不能 credit G |
+| C5 | legacy 冻结迁移与兼容 alias checklist | D4 先切 MCP/runner alias；checklist 阻止过早 freeze；旧工具名默认映射 World |
+| C6 | G parimutuel 通用市场模块（含 market type） | `create/betG/resolve/claimPayout` 用 G 计价；支持 market type；不接受 ore stake；G payout 无 ore cap |
+| C7 | ORACLE resolver + 超时退款 + 争议 | resolver/proof、grace refund、dispute window/status 完整；超时可退全部 G escrow |
+| C8 | World event registry 注册式扩展 | 事件类型可注册/触发/查询；treasury threshold 可触发 `WorldEventTriggered`；event prize pool 不动 agent escrow |
 
 ### 8.2 P 槽位：`predictionMarket` -> `world`
 

@@ -1,10 +1,10 @@
-# Gravity Town · 开发任务分解（可执行工单版）
+# Gravity Town · World-as-Market 开发任务分解（可执行工单版）
 
-> 目的：把「demo 预览的 UX + roadmap 想要的功能」翻译成一份按文件域切分、可多人并行 review 的开发工单。本文所有缺口均锚定当前 `pr76` 工作树真实源码行号；旧稿行号已重新核校。
+> 机制权威源 = `docs/world-as-market.md`；本文是其执行车道/工单细化。
 >
-> 关系：本文是 [`docs/roadmap.md`](roadmap.md) WBS 的细化稿。roadmap 给 epic 和方向；本文据当前代码、[`demo/index.html`](../demo/index.html)、[`docs/demo-user-stories.md`](demo-user-stories.md)、[`docs/player-capabilities.md`](player-capabilities.md)、[`docs/capability-matrix.md`](capability-matrix.md) 重新校准「已做 / mock-only / 未做」，并把任务拆成互不撞文件域的 lane。
+> 目的：把 owner 已拍板的 **World-as-Market（万物皆答题 + 双币）** 机制落成一份按文件域切分、可多人并行 review 的执行工单。旧 ore-based、独立 `PredictionMarket`、分立入口扩展计划正式作废；本文保留旧文档的“功能点 / 现状&缺口(file:line) / 子任务拆分 / 验收标准(命令→期望)”格式。
 >
-> 命名约定：`E*.*` 复用 roadmap epic/任务号；`US-*` 是 demo 用户故事号；`Lane P/A-F` 是本文的并行车道；`maps-to` 标注来自 roadmap、demo story 或本文新增。
+> 路径约定：所有 `file:line` 以仓库根 `/mnt/data2/kenji/galxe/game` 为准；行号已按当前 PR #76 工作树重新核实。
 >
 > 角色：`SC`=合约 · `MCP`=工具层 · `FE`=前端 · `INFRA`=keeper/runner/遥测 · `PLAT`=部署/Router/授权 · `DOC`=文档/决策。
 
@@ -12,1141 +12,928 @@
 
 ## 1. 现状快照（一表锚定，含 file:line）
 
-| 领域 | DONE（已可用） | MOCK-ONLY（demo 里假的） | MISSING / GAP（要新建或修正） |
+| 领域 | DONE（已可用） | MOCK / LEGACY | MISSING / GAP（World-as-Market 要补） |
 |---|---|---|---|
-| **合约 · 主世界** | hex/ore/建造/战斗/民心/incite/chronicle/圣典/三类 ledger 均由 `GameEngine` 驱动；`createAgent` 自动 7 格 + 200 ore（`contracts/src/GameEngine.sol:232`、`:261-264`）；`harvest` 是 permissionless（`:288-290`）；`build`/`raid` 受 `canControlAgent` gate（`:344-345`、`:623-624`）；外部系统可经 `spendOre`/`refundOre` 动 ore（`:471-482`）；身份 gate 认 registry operator 或 agent owner（`:164-178`）。 | demo 的 `/me` 手动 harvest/build/raid、autopilot 行为、AgentMind 行为流均为内存态。 | **21 个主世界参数仍是 `constant`**（`GameEngine.sol:25-45`，debate 常量 `:48-55`，chronicle 常量 `:58-59`），`_calcDecay` 系数硬编码（`:1173-1186`）；事件列表 `:139-160` 无 `AchievementUnlocked`；`MAX_ORE_POOL=1000` cap 会影响 `refundOre` 和派彩（`:26`、`:482-486`）。 |
-| **合约 · Auth/Delegation** | `AgentRegistry` 同时有单一 `operator`（`contracts/src/AgentRegistry.sol:19`）和全局 `operators` mapping（`:24`）；`addOperator/removeOperator/isOperator` 是 owner-only 全局权限（`:67-69`；`setOperator`=66、add/remove=`:67-68`、`isOperator`=69）；`canControlAgent` 只认全局 operator 或 `agentOwner`（`:45-48`）。 | demo `#/me` 的 AUTOPILOT 开关呈现为用户可独立开关/撤回。 | **无 per-agent delegation**；用户不能自己调用 `addOperator/removeOperator` 给某个 agent 委托或撤权。E3/E1b/E7/D7 必须先过 §2 Auth 决策门，不能声称当前合约支持用户级链上委托。 |
-| **合约 · 预测市场** | 当前只有 debate 内的 parimutuel 雏形：`startDebate` 必须挂当前 hex（`GameEngine.sol:710-743`），`resolveDebate` 处理注池/Oracle 10% tax（`:804`、`:862-868`），无赢家退款分支在 `:889-890`，退款 helper `_refundDebateBettors` 在 `:914-924`。 | demo 预置 SELF_RESOLVING 与 ORACLE 市场（`demo/index.html:177-215`），Oracle 10% rake（`:236-244`），下注/结算/凭证全为内存态。 | **无独立 `PredictionMarket` 合约**；`Router` 仅到 `cardLedger` 槽位（`contracts/src/Router.sol:10-21`），getter 止于 V3（`:86-108`）；现 debate 与 hex 民心耦合，不能做 scoreboard/hex ownership 等解耦市场。 |
-| **合约 · Arena/卡** | Arena 已有 G-tier、shop、bench、匹配、ELO、二级市场：`buy/place/remove/move/freeze/roll` 在 `ArenaEngine`（`contracts/src/ArenaEngine.sol:274-403`）；tier 可热调（`:217-221`、`:573-575`）；`CardLedger` 支持 `mintCard/listCard/cancelListing/buyListed`（`contracts/src/CardLedger.sol:75-138`）；12 单位在 `UnitCatalog`（`contracts/src/UnitCatalog.sol:6-12`）；`simulateWithTrace` 输出攻击 turn（`contracts/src/ArenaCombat.sol:54-67`）。 | demo 的 story card `variant/edition/achievementTag/story/provenance` 明确是 mock（`demo/index.html:283-320`、`:2250-2295`）；Share 链接是 mock toast（`:2513-2515`）。 | `CardLedger.Card` 只有 `id/unitType/ownerAgent/mintedAt`（`CardLedger.sol:17-22`），无叙事元数据/`mintStoryCard`；`ArenaCombat.Turn` 只记录普攻（`ArenaCombat.sol:30-36`），没有 `AbilityEvent[]`；RNG 仍用 `block.prevrandao`（`ArenaEngine.sol:398-400`、`:545-548`）。 |
-| **MCP** | 主世界工具齐全：`create_agent`（`mcp-server/src/tools.ts:20`）、`harvest`（`:132`）、`build`（`:142`）、`raid`（`:177`）、ledger/chronicle/bible 读写（`:297`、`:529`、`:597`）；Arena 已有 buy/deposit/withdraw/place/remove/inventory/market/listing/submit 及 `arena_get_card`（`:630-762`、`arena_get_card` 在 `:954`）。`chain.ts` 解析 Router V3/V2/V1（`mcp-server/src/chain.ts:261-281`），已有 CardLedger ABI（`:166-175`）与 `simulateMatch`（`:136`）。 | demo 市场工具、shop roll/freeze/move、成就铸卡 keeper 都是假体验或未连后端。 | 无 `create_market/bet/resolve_market/list_markets/get_market`；MCP `tools.ts` 无 `arena_roll/arena_freeze/arena_move`，但旧 e2e 脚本已期待这些工具（`mcp-server/scripts/e2e-arena-tools.mjs:51-58`）；`tools.ts` 文案漂移：公告板写 +10（`:316`）但合约 `POST_MORALE=5`（`GameEngine.sol:42`），chronicle 写 10 分钟（`tools.ts:530`）但合约 5 分钟（`GameEngine.sol:58`）；`chain.ts` 事件 ABI 漂移：不存在 `HexClaimed`（`:44`）、`Harvested(bytes32,...)` 签名错误（`:47`），缺 `HexCaptured/HexRebelled`（真实事件 `GameEngine.sol:150-151`）。 |
-| **前端** | 真实路由只有 `/` 与 `/arena`：`frontend/src/app/page.tsx:11-23`、`frontend/src/app/arena/page.tsx:13-51`；均为只读 RPC。`useGameEngine` 已读 world、memories、location board、inbox、chronicle、evaluations、world bible（`frontend/src/hooks/useGameEngine.ts:123-250`）；`useArenaEngine` 已读 Arena、events、inventory（`frontend/src/hooks/useArenaEngine.ts:119-218`，CardLedger ABI `:55-63`，inventory mapping `:400-427`）；arena 页复用 `useGameEngine` 喂 AgentMind（`app/arena/page.tsx:15-18`、`AgentMindPanel.tsx:26-30`）。 | demo 有 `#/ #/me #/markets #/arena #/lore #/onboard` 六路由（`demo/index.html:455-456`、`:2571`），但全部内存态。 | 无钱包/写链依赖：`frontend/package.json:11-19` 只有 `ethers/lucide/next/phaser/zustand` 等，`rg` 未发现 wagmi/viem/RainbowKit/Privy/sendTransaction/useWallet；无 `/onboard`、`/me`、`/markets`、`/lore` 路由；`frontend/src/chain/*` 五文件存在但无 import 引用，且与当前直读 hook 重复/过时。 |
-| **demo / 故事文档** | `demo/index.html` 2604 行，六路由，用户故事覆盖观众、onboarding、My Agent、Markets、Arena、Lore；story manual 标注 demo 纯 mock（`docs/demo-user-stories.md:7-9`），六路由入口（`:9`）。 | 所有余额、交易、对局、钱包、下注、卡 metadata、分享链接刷新即丢。 | demo 是目标 UX 规格，不是可复用实现；真实代码必须分别落到合约/MCP/FE/keeper 工单。 |
-| **infra / runner / config** | Arena keeper 已有独立心跳脚本（`mcp-server/scripts/keeper.mjs:1-33`），`just keeper-start`/`keeper-gravity` 调它（`justfile:90-110`）；agent-runner 支持 accounts + heartbeat（`agent-runner/src/orchestrator.ts:76-83`、`role-runner.ts:63-109`）。 | demo 的 relay/gasless/autopilot 计费均为文案。 | runner 当前固定 `agent-runner/accounts.json` 26 个启用角色，25 个 `heartbeatMs=5000`、Oracle `60000`（`accounts.json:13-14`、`:349-350`、`:363-367`）；全局 `loop_delay_ms` 随 config 不同：mainnet 5min（`agent-runner/config/gravity-mainnet.toml:27-31`）、testnet 10s（`agent-runner/config/gravity.toml:27-32`）、localhost 15s（`agent-runner/config/localhost.toml:23-28`）。无多租户 runner、relay 后端、市场 keeper、成就铸卡 keeper、遥测。 |
-| **部署/config 风险** | `agent-runner/config/gravity.toml` 指向 Gravity Testnet router `0x96...`（`:13-16`）；`frontend/config/gravity.json` 当前指向 Gravity Mainnet `chain_id=127001`、router `0x13860c...`（`frontend/config/gravity.json:1-7`）；`just gravity-upgrade` 用 `grep -o '0x...' frontend/config/gravity.json | head -1` 取 `ROUTER_ADDRESS`（命中的是 mainnet router），但 `--rpc-url` 硬编码为 testnet RPC `https://rpc-testnet.gravity.xyz`（`justfile:47-53`）。 | — | 真实风险不是“升级到 mainnet”，而是 **mainnet router 地址 + testnet RPC 的链/地址 mismatch**：脚本会拿 mainnet router 去 testnet RPC 上跑 upgrade，地址在 testnet 链上不存在/不对应，行为未定义。任何 P2/P3a/P5 验收跑 `just gravity-upgrade` 前必须先对齐 router 地址与 RPC 所属链。 |
+| **目标架构 vs 当前架构** | 目标是统一 `World` 合约：唯一问题/市场流、唯一 G 金库入口、统一 `Question` 状态机。现状仍是分立 `GameEngine` + ledgers + Arena：`GameEngine` 持有 registry/ledger 引用（`contracts/src/GameEngine.sol:15-18`）、hex/ore storage（`contracts/src/GameEngine.sol:63-83`）、debate storage（`contracts/src/GameEngine.sol:88-112`）、chronicle/world bible storage（`contracts/src/GameEngine.sol:114-135`）。 | 旧 dev-breakdown 的独立 `PredictionMarket` 路线作废；现有“市场”只是 `GameEngine` debate 的 ore betting。 | 新建中心 `World` / `IWorldQuestion` / extension registry；把 harvest/build/raid/debate 等动作包装为 `Question`，并逐步冻结旧 `GameEngine` 直写入口。 |
+| **主世界入口** | `createAgent` 自动 7 hex + 200 ore（`contracts/src/GameEngine.sol:231-264`）；`harvest` permissionless（`contracts/src/GameEngine.sol:288-290`）；`build` 受 `canControlAgent` gate（`contracts/src/GameEngine.sol:344-345`）；`attack`/`raid` 直写世界状态（`contracts/src/GameEngine.sol:375-448`、`contracts/src/GameEngine.sol:622-695`）；`inciteRebellion` 0 hex comeback（`contracts/src/GameEngine.sol:563-615`）。 | demo quick actions 仍是内存态 Harvest/Build/Raid/Bet（`demo/index.html:1344-1357`）。 | `World.answer_question` 接管基础动作；旧 `harvest/build/attack/raid/incite/startDebate/vote/resolve` 外部直写在 MCP/runner 切流后 freeze。 |
+| **双币经济** | ore 已存在：`orePool`（`contracts/src/GameEngine.sol:82-83`）、`MAX_ORE_POOL=1000`（`contracts/src/GameEngine.sol:26`）、build sink 50/100 ore（`contracts/src/GameEngine.sol:27-28`、`contracts/src/GameEngine.sol:354-361`）。G 已存在于 `GTreasury.gBalance`/`totalOutstandingG`（`contracts/src/GTreasury.sol:21-30`）；`depositG` 由 agent owner 充值（`contracts/src/GTreasury.sol:100-107`）；Arena buy/roll 消耗 G（`contracts/src/ArenaEngine.sol:273-284`、`contracts/src/ArenaEngine.sol:390-400`）。 | debate 下注仍用 ore，赢家 payout 会 clamp 到 `MAX_ORE_POOL`（`contracts/src/GameEngine.sol:858-881`）；demo market 也把 payout clamp 到 `ORE_POOL_CAP`（`demo/index.html:575-584`）。 | G 才是价值层：prediction/world markets 用 G pool，**G 池无 cap**；ore 只做免费 engagement/faucet/sink，禁止 ore->G 裸兑换。 |
+| **G 金库会计** | `spendG` 扣 agent G 并降低 `totalOutstandingG`，让 native 余额成为 surplus（`contracts/src/GTreasury.sol:117-122`）；`creditG` 仍是 operator-only 裸 credit（`contracts/src/GTreasury.sol:126-130`）；`surplusG` 只按 `balance - totalOutstandingG`（`contracts/src/GTreasury.sol:165-169`）。`CardLedger.buyListed` 是守恒撮合：买家 `spendG(market_buy)` + 卖家 `creditG(market_sale)`（`contracts/src/CardLedger.sol:118-132`）。 | `ArenaEngine.bootstrapMarket` 在 faucet 模式下 `creditG(seedAgentId, 500 G, "market_seed")`，是 testnet unbacked seed 先例（`contracts/src/ArenaEngine.sol:755-767`）。 | 新增 escrow/eventPrizePool/protocolBurn 拆账；`surplusG`/`withdrawSurplus` 必须排除 escrow 与 event pool；`creditG` reason/调用方收紧，保留 `market_sale` 守恒路径。 |
+| **授权 / per-agent delegation** | `AgentRegistry` 有单一 `operator`（`contracts/src/AgentRegistry.sol:19`）、全局 `operators`（`contracts/src/AgentRegistry.sol:24`）、`_isOperator = operator || operators || owner()`（`contracts/src/AgentRegistry.sol:36-38`）；`canControlAgent` 认全局 operator 或 agent owner（`contracts/src/AgentRegistry.sol:45-48`）。`GameEngine` 也复刻了 owner/operator gate（`contracts/src/GameEngine.sol:164-178`）。 | 旧文档把 per-agent delegation 写成“仅 Auth 选 b 才做”的条件任务。 | **A3 升级为强制前置**：`World.answer/bet` 不能因为 World 是全局 operator 就替任意 agent 花 G 或改状态；必须有 agent owner / scoped delegate / permit 校验。 |
+| **RNG** | `attack` 用 `block.prevrandao`（`contracts/src/GameEngine.sol:413-415`）；`inciteRebellion` 用 `prevrandao` 50%（`contracts/src/GameEngine.sol:575-579`）；`raid` 用 `prevrandao`（`contracts/src/GameEngine.sol:661-665`）；Arena roll 用 `prevrandao`（`contracts/src/ArenaEngine.sol:398-400`）；Arena matchmaking TODO 已承认可 grind（`contracts/src/ArenaEngine.sol:545-548`）。 | 低价值 demo 可保留 deterministic/mock，但不能承载 G 市场或 event prize。 | Lane B 升级为全局 randomness service：覆盖 World money-staked STATE question、旧 GameEngine attack/raid/incite 迁移路径、Arena roll/matchmaking。 |
+| **Router / deploy / config** | Router storage 到 `cardLedger`（`contracts/src/Router.sol:10-21`），setter 止于 `setCardLedger`（`contracts/src/Router.sol:53`），最新 getter 是 V3 九元组（`contracts/src/Router.sol:86-108`）。Deploy 已部署 Router/GameEngine/GTreasury/CardLedger/ArenaEngine 并授权（`contracts/script/Deploy.s.sol:26-122`）。Upgrade 可 backfill/upgrade GTreasury/CardLedger/Arena（`contracts/script/Upgrade.s.sol:107-185`）。 | 旧 P lane 的 `predictionMarket` 槽位全部作废。`just gravity-upgrade` 仍用 `frontend/config/gravity.json` 的 mainnet router，却打 testnet RPC（`justfile:47-53`、`frontend/config/gravity.json:1-7`）。 | P lane 改为 `world` 槽位 + `getAddressesV4()`；部署 `World` proxy、module registry、GTreasury wiring、World 授权；修 config/upgrade chain mismatch。 |
+| **MCP / runner** | MCP 主世界工具直调旧合约：`harvest/build/attack/raid`（`mcp-server/src/tools.ts:131-192`，chain 实现 `mcp-server/src/chain.ts:415-490`），`claim_neutral/incite_rebellion`（`mcp-server/src/tools.ts:197-219`，chain 实现 `mcp-server/src/chain.ts:493-500`）；debate 工具是事实上的 ore 市场 API（`mcp-server/src/tools.ts:401-470`，chain 实现 `mcp-server/src/chain.ts:620-664`）；`arena_get_treasury` 只看 Arena surplus/outstanding（`mcp-server/src/tools.ts:822-830`、`mcp-server/src/chain.ts:1099-1115`）。agent-runner 每轮通过 MCP 收集 `get_my_hexes/get_active_oracle_debate/arena_get_state`（`agent-runner/src/mcp.ts:86-99`），selfTools 默认注入旧主世界动作（`agent-runner/src/mcp.ts:118-122`）和旧 debate 动作（`agent-runner/src/mcp.ts:123`）。 | `start_debate/vote_debate/resolve_debate` 仍是 ore betting 文案；Oracle timer 仍围绕旧 debate（`agent-runner/src/orchestrator.ts:125-158`）。 | D lane 重命名为 `answer_question/bet_question/resolve_question/get_treasury/get_world_events`；保留旧工具 alias 但内部切 World。冻结旧直写会打断现有 debate、harvest/build/attack/raid/claim/incite 工具和 agent-runner 自主循环，必须先切流。 |
+| **前端 / demo** | 真实前端只有 `/` 与 `/arena`，均只读（`frontend/src/app/page.tsx:11-23`、`frontend/src/app/arena/page.tsx:13-51`）；`useGameEngine` 只解析 Router V1 `getAddresses` 并读 `GameEngine.getScore/orePool/getHex`（`frontend/src/hooks/useGameEngine.ts:13-51`、`frontend/src/hooks/useGameEngine.ts:104-150`）；`useArenaEngine` 解析 V3/V2/V1（`frontend/src/hooks/useArenaEngine.ts:12-21`、`frontend/src/hooks/useArenaEngine.ts:171-213`）。`frontend/package.json` 只有 `ethers/lucide/next/phaser/zustand` 等（`frontend/package.json:11-19`），未引入 wallet SDK。 | demo markets 仍是 ore parimutuel：seed markets（`demo/index.html:176-231`）、payout math（`demo/index.html:234-253`）、resolve clamp（`demo/index.html:559-588`）、下注按钮显示 ore（`demo/index.html:1708-1908`）；landing featured markets（`demo/index.html:955-965`）。 | E lane 只做钱包连接，不做 email 登录；E4 把 market stake 从 ore 改 G；E6 做 G 充值/余额；F7 前端 resolver 加 world；F8 改 Featured Questions + World Treasury meter。 |
+| **score** | 合约 `getScore = hexes*100 + ore + buildings*50`（`contracts/src/GameEngine.sol:494-506`）；MCP scoreboard 直接读 `getScore`（`mcp-server/src/chain.ts:458-469`）；真实前端也读 `gameEngine.getScore`（`frontend/src/hooks/useGameEngine.ts:139-150`）；demo 复制同公式（`demo/index.html:163-164`、`demo/index.html:937-950`）。 | 旧 score 可被免费 ore 间接污染。 | A4 必须把 score 改为领地/建筑/声誉/答题准确率为主，ore 取 `sqrt` 或封顶；**凡用 score 结算的 G 市场必须等 score 降权后才能上线**。 |
 
 ---
 
-## 2. 按文件域切分的并行车道（lane 内串行，lane 间并行）
+## 2. 按文件域切分的并行车道（lane 内串行，lane 间按依赖并行）
 
-> **防撞总则**：
-> 1. `GameEngine.sol` 的存储改动由 Lane A 独占，先 land；其他 lane 不得 append `GameEngine` storage。
-> 2. 新事件、新独立合约可以并行；但 Router/Deploy/Upgrade/授权统一进 Lane P。
-> 3. 每个 ledger/合约单一 owner：`CardLedger` + `ArenaCombat` + `AbilityLib` + `ArenaEngine` + `UnitCatalog` 归 Lane B；`PredictionMarket` 新文件归 Lane C。
-> 4. Lane P 唯一拥有 `Router.sol`、部署/升级脚本、operator 授权、前端 config、P 自己的新地址解析层；D 才拥有 `mcp-server/src/chain.ts`。
-> 5. 前端写链（Lane E）只建新 wallet/write 子树和新路由；既有 `/arena` 页、`useArenaEngine.ts`、只读 store/组件由 Lane F 独占。
-> 6. `/me` 拆法：`frontend/src/app/me/*` 主壳和写控件归 E；只读账本/AgentMind 子组件落 `frontend/src/components/ledger/*` 归 F，由 E import。
-
-> **决策门 · Auth / Delegation（E3/E1b/E7/D7 共同前置）**：
-> - 当前事实：`AgentRegistry` 有全局 `operator`（`AgentRegistry.sol:19`）和全局 `operators` mapping（`:24`）；`addOperator/removeOperator` 是 `onlyOwner`（`:67-68`）；`canControlAgent` 只认全局 operator 或 agent owner（`:45-48`）。**没有 per-agent delegation**。
-> - **默认路径 (a)：全局平台 operator/relay signer + off-chain 用户开关**。平台 owner 把 relay signer 加进全局 operator；用户的“开/关 autopilot”是 DB/runner/relay flag，不是链上用户可撤回委托。验收授权必须用 `build`/`raid` 这类有 `canControlAgent` 的动作（`GameEngine.sol:344-345`、`:623-624`），不能用 permissionless `harvest`（`:288-290`）。
-> - **备选路径 (b)：新增 per-agent delegation 合约能力（A3）**。新增 `delegate/undelegate` 和 per-agent mapping，再改 `canControlAgent`。这会引入 storage layout 测试，并改变 E3/E1b/E7/D7 的实现语义。
-> - 本轮默认按 (a) 写工单；若 owner 选择 (b)，A3 必须打开并成为 E3/E1b/E7/D7 的合约前置。
+> 防撞总则：
+> 1. `World` 新合约、`IWorldQuestion`、extension registry、World 测试归 Lane C；`Router`/部署脚本/config 归 Lane P；`GameEngine.sol` 与 `AgentRegistry.sol` 迁移/freeze/score 归 Lane A；`mcp-server/src/{tools,chain}.ts` 与 agent-runner 归 Lane D；真实前端写链归 Lane E；既有只读前端/Phaser/Arena page 归 Lane F。
+> 2. `GTreasury.sol` 的 World 会计补账归 Lane C4；`CardLedger.sol` 的二级市场守恒路径归 Lane B 保持；P 只做部署/wiring，不改 treasury 会计。
+> 3. 全局 RNG 的服务接口归 Lane B；Arena call-site 修改归 B；GameEngine/World 战斗调用 RNG 的实际接入分别落 A2/C3，按 B 的接口验收，不允许多人并行改同一 hunk。
+> 4. 旧 `PredictionMarket` 文件、`predictionMarket` Router 槽位、ore market 独立合约任务全部作废；只可在 D/E 中作为兼容 alias 或 legacy 文案出现。
+> 5. `legacyWritesFrozen` 打开前必须满足：A3 delegation/permit 可用、C2/C3/C4/C6/C7 World 入口与 G 会计可用、D1/D4 MCP alias 与 agent-runner 切流完成、C5 migration checklist 通过、P2/P3a/F7 地址解析完成。
 
 ### 2.1 文件域归属表（互斥确认）
 
 | Lane | owner 角色 | 独占文件域 | 关键互斥点 |
 |---|---|---|---|
-| **P** | PLAT·部署/授权 | `contracts/src/Router.sol`、`contracts/script/{Deploy,Upgrade}.s.sol`、operator 授权编排、`frontend/config/*.json`、新建 `mcp-server/src/addressResolver.ts`、部署/运维文档 | 唯一改 Router 槽位/getter、部署脚本和 config；P 不改 `mcp-server/src/chain.ts`，ABI/地址同步请求交 D |
-| **A** | SC·主世界 | `contracts/src/GameEngine.sol`；若 Auth 选 (b)，再含 `contracts/src/AgentRegistry.sol` per-agent delegation | 唯一允许改主世界存储/事件；A1→A2 串行 |
-| **B** | SC·Arena | `contracts/src/{ArenaEngine,ArenaCombat,AbilityLib,CardLedger,UnitCatalog}.sol` | 不碰 Router/Deploy；注册或授权请求进 P |
-| **C** | SC·新合约 | 新建 `contracts/src/PredictionMarket.sol` 与 interface/test | 不碰 Router/Deploy；只读 GameEngine，经 `spendOre/refundOre` 钩子动 ore |
-| **D** | MCP/INFRA | `mcp-server/src/{tools,chain}.ts`、新建 `mcp-server/scripts/keeper-market.mjs`、`keeper-achievement.mjs`、`telemetry/`、`agent-runner/*` | `chain.ts` 唯一 owner；不碰 `frontend/config/*`；不改现有 Arena keeper 逻辑除非 D 自己维护 scripts |
-| **E** | FE·写链路 | 新建 `frontend/src/hooks/wallet/*`、`frontend/src/lib/wallet/*`（含 `relay-client`）、`frontend/src/components/wallet/*`、`frontend/src/app/onboard/*`、`frontend/src/app/markets/*`、`frontend/src/app/arena/market/*`、`frontend/src/app/me/page.tsx` | 不改既有 `useGameEngine.ts`/`useArenaEngine.ts`/`app/page.tsx`/`app/arena/page.tsx`；写控件只 import F 的只读组件；**relay 后端目录不归 E**：E 只拥有 `lib/wallet/relay-client` 前端侧，relay 后端落点是 D6 决策门，定下后该后端归单一 owner（放 `mcp-server` 则归 D，独立服务则归该服务 owner），E 不在未授权文件域里建后端 |
-| **F** | FE·只读视图 | 既有 `frontend/src/{phaser,game,store}`、`frontend/src/hooks/useArenaEngine.ts`、`frontend/src/components/arena/*`、`frontend/src/app/arena/page.tsx`、`frontend/src/app/page.tsx`、新建 `frontend/src/app/lore/*`、`frontend/src/components/{spectator,ledger}/*` | Arena 页/store/hook 唯一 owner；F 不拥有 `app/me/*` 与 `app/arena/market/*` |
+| **P** | PLAT·部署/授权 | `contracts/src/Router.sol`、`contracts/script/{Deploy,Upgrade}.s.sol`、`frontend/config/*.json`、新建 `mcp-server/src/addressResolver.ts`、部署/运维文档 | 唯一改 Router slot/getter、部署 World proxy、World/module/GTreasury wiring；不改 `mcp-server/src/chain.ts` |
+| **A** | SC·主世界迁移 | `contracts/src/GameEngine.sol`、`contracts/src/AgentRegistry.sol`、`contracts/test/GameEngine*.t.sol`、`contracts/test/AgentRegistry*.t.sol` | 唯一改 legacy 写入口、freeze flag、score、per-agent delegation；不实现 World question storage |
+| **B** | SC·全局 RNG / Arena trace | 新建 `contracts/src/Randomness*.sol`；`contracts/src/{ArenaEngine,ArenaCombat,AbilityLib,CardLedger,UnitCatalog}.sol`；Arena/RNG 测试 | 不改 Router/Deploy；GameEngine/World 只通过 B 定义接口接 RNG |
+| **C** | SC·World Core | 新建 `contracts/src/{IWorldQuestion,World,WorldExtensionRegistry,World*Module}.sol`、`contracts/test/World*.t.sol`；`contracts/src/GTreasury.sol` 的 escrow/burn/eventPool 会计补账 | C4 可改 GTreasury；不改 Router/Deploy；不直接拥有 MCP/FE；调用 GameEngine legacy adapter 需等 A |
+| **D** | MCP/INFRA | `mcp-server/src/{tools,chain}.ts`、`mcp-server/scripts/{keeper-question,keeper-treasury,*.mjs}`、`agent-runner/*`、`telemetry/` | `chain.ts` 唯一 owner；不改 frontend config；负责旧工具 alias、runner 切流、遥测 |
+| **E** | FE·写链路 | 新建 `frontend/src/hooks/wallet/*`、`frontend/src/lib/wallet/*`、`frontend/src/components/wallet/*`、`frontend/src/app/{onboard,me,markets}/*`、`frontend/src/app/arena/market/*` | 钱包连接/tx 三态/G deposit/Question bet UI；不做 email 登录；不改 F 的 Arena replay 核心 |
+| **F** | FE·只读视图 | 既有 `frontend/src/{phaser,game,store}`、`frontend/src/hooks/{useGameEngine,useArenaEngine}.ts`、`frontend/src/chain/*`、`frontend/src/components/arena/*`、`frontend/src/app/{page,arena/page}.tsx`、新建 `frontend/src/components/{spectator,ledger,world}/*` | F7 resolver、F8 landing/treasury meter、F2/F3 replay；不拥有 wallet write hooks |
 
-### 2.2 跨 lane「注册/授权」请求（统一进 Lane P 排队）
+### 2.2 跨 lane 注册/授权请求
 
-| 发起 lane | 需要 P 做的事 | 阻塞的下游 |
+| 发起 lane | 需要 P/A/C/D 做的事 | 阻塞下游 |
 |---|---|---|
-| C（PredictionMarket） | `Router` 加 `predictionMarket` 槽位 + V4 getter/setter；Deploy/Upgrade 部署 proxy 并 set；`AgentRegistry.addOperator(predictionMarket)`，否则 `GameEngine.spendOre/refundOre` 的 `onlyOperatorOrOwner` 会 revert（`GameEngine.sol:168-170`、`:471-482`）；地址/config 同步。 | D1、D2、E4 |
-| D（achievement keeper） | 给成就铸卡 keeper signer 加全局 operator，或复用已授权 operator；用于调用 B3 的 `mintStoryCard`。market keeper 因 C2 `resolve` permissionless，不需要 operator，只要 gas。 | D3 |
-| E1b（relay signer） | 若 Auth 走 (a)，把 relay signer 加全局 operator；撤权是 owner-only 全局 kill switch。若走 (b)，P 不做全局授权，用户走 per-agent `delegate`。 | E1b-b、E2 gasless、E7、D7 |
+| C（World Core） | P1/P2 给 Router 加 `world` 并部署 proxy；P2 把 World/module registry/GTreasury wiring 成可调用；A3 提供 scoped delegation/permit；C4 收紧 G accounting。 | D1、E4、F7、C2-C8 上链验收 |
+| A（legacy freeze） | D1/D4 先把 MCP/agent-runner 从旧直写切到 World alias；C5 提供 freeze migration checklist。 | A5 freeze 开关 |
+| B（全局 RNG） | C3/A2 调用 B 的 randomness service；D9 暴露 trace；F2/F3 等 D9。 | C3、A2、F2、F3 |
+| D（question/treasury keeper） | P3a resolver 能拿到 world；C1/C4 有 due questions / treasury threshold view。 | D2、F8 treasury ticker |
+| E/F（前端） | F7 先支持 Router V4 world；E4 下注必须走 A3/C4 权限与 G escrow；E6 用 GTreasury deposit。 | E4、E6、F8 |
 
-### Lane P · 平台集成 / 部署 / 授权（唯一 owner：Router + 脚本 + operator 授权 + 地址配置）
+---
 
-#### P1 · Router 市场槽位与 V4 getter [PLAT/SC | `Router.sol` | 依赖 C1 | maps-to 新增]
+### Lane P · 平台集成 / 部署 / 地址发现
+
+#### P1 · Router `world` 槽位与 `getAddressesV4()` [PLAT/SC | `Router.sol` | 依赖无 | maps-to world-as-market §6.2/§8.2]
 
 **功能点（交付什么）**
-- 玩家/用户可见：市场页和 MCP 能从 Router 发现真实 PredictionMarket 地址，不需要手填地址。
-- 技术交付物：在 `cardLedger` 之后 append `predictionMarket` storage；新增 `setPredictionMarket(address)` 和 `getAddressesV4()`；保持 `getAddresses`/V2/V3 ABI 完全不变。
+- 用户可见：MCP、前端、keeper 都能从 Router 发现中心 `World` 地址。
+- 技术交付物：在 `cardLedger` 后 append `address public world;`；新增 `setWorld(address)`；新增 `getAddressesV4()`，返回 V3 九项 + world，共 10 项；旧 `getAddresses`/V2/V3 ABI 不变。
 
 **现状 & 缺口（file:line 锚定）**
-- 已有：Router 槽位止于 `cardLedger`（`contracts/src/Router.sol:10-21`）；setter 止于 `setCardLedger`（`:45-53`）；V3 getter 返回 9-tuple（`:86-108`）。
-- 缺：无 `predictionMarket` 槽位、setter、V4 getter；无 Router storage append 测试。
+- 已有：Router storage 止于 `cardLedger`（`contracts/src/Router.sol:10-21`）；setter 止于 `setCardLedger`（`contracts/src/Router.sol:53`）；V3 getter 返回九项（`contracts/src/Router.sol:86-108`）。
+- 已有：旧 getter 注释明确不要扩签名（`contracts/src/Router.sol:55-57`）。
+- 缺：无 `world` 槽位、setter、V4 getter、storage append 测试。
 
 **子任务拆分（有序，可独立提交）**
-1. 在 `Router.sol` append `address public predictionMarket;`，新增 setter。
-2. 新增 `getAddressesV4()`，返回 V3 九项 + predictionMarket；旧 getter 不改。
-3. 补 Router ABI/storage 测试，覆盖 legacy getter decode 长度和新槽位。
-4. 在 P3a/F7/D1 的接口说明中同步 V4 tuple 顺序。
+1. 在 `Router.sol` append `address public world;`，不得插入旧槽位中间。
+2. 新增 `setWorld(address)`，owner-only，与现 setter 风格一致。
+3. 新增 `getAddressesV4()`：返回 `(registry, agentLedger, locationLedger, inboxLedger, gameEngine, evaluationLedger, arenaEngine, gTreasury, cardLedger, world)`。
+4. 补 Router ABI/storage 测试：旧 getter decode 长度、V4 tuple 顺序、升级后旧槽位不漂移。
+5. 在 P3a/F7/D1 的接口说明同步 `getAddressesV4()` 定名与顺序。
 
 **验收标准（命令 + 期望结果）**
-- [ ] 命令：`cd contracts && forge test --match-test test_RouterV4KeepsLegacyGetters -vv` → 期望：`getAddresses`/V2/V3 返回值与升级前兼容，V4 返回第 10 项 market 地址。
-- [ ] 命令：`cd contracts && forge test --match-test test_RouterStorageAppendPredictionMarket -vv` → 期望：升级后既有 `registry/gameEngine/arenaEngine/gTreasury/cardLedger` 未漂移，新 `predictionMarket` 可 set/get。
+- [ ] 命令：`cd contracts && forge test --match-test test_RouterV4KeepsLegacyGetters -vv` → 期望：`getAddresses`/V2/V3 返回值与升级前兼容，V4 返回第 10 项 `world`。
+- [ ] 命令：`cd contracts && forge test --match-test test_RouterStorageAppendWorld -vv` → 期望：升级后既有 `registry/gameEngine/arenaEngine/gTreasury/cardLedger` 未漂移，新 `world` 可 set/get。
 
-#### P2 · Deploy/Upgrade 部署 PredictionMarket proxy 并授权 [PLAT/SC | `Deploy.s.sol`,`Upgrade.s.sol` | 依赖 P1,C2 | maps-to 新增]
+#### P2 · 部署 World proxy + module registry + GTreasury wiring [PLAT/SC | `Deploy.s.sol`,`Upgrade.s.sol` | 依赖 P1,C1,C4,A3 | maps-to world-as-market §8.2]
 
 **功能点**
-- 玩家/用户可见：测试网/本地升级后，市场下注能真正扣/退 agent ore。
-- 技术交付物：部署 `PredictionMarket` implementation + UUPS proxy；`Router.setPredictionMarket(proxy)`；`AgentRegistry.addOperator(market)`；本地和 Gravity upgrade 冒烟。
+- 用户可见：本地/测试网升级后有真实 `World` 合约承载 `Question`、G market、faucet、world events。
+- 技术交付物：部署 `World` implementation + UUPS proxy；部署/初始化 module registry；`Router.setWorld(worldProxy)`；把 World/registry 连接到 `GTreasury` 的 onlyWorld/allowlist 入口；授权 World 调 legacy adapter（但不授予无限替任意 agent 花 G 的权限）。
 
 **现状 & 缺口**
-- 已有：Deploy 已部署 Router、GameEngine、GTreasury、CardLedger、ArenaEngine（`contracts/script/Deploy.s.sol:26-122`）；现有 operator 授权范式在 `registry.addOperator(address(engine))`/`cardLedger`/`arena`（`:97-99`、`:117-119`）。
-- 已有：Upgrade 可 backfill/upgrade G/Card/Arena 并授权（`contracts/script/Upgrade.s.sol:107-185`）。
-- 缺：脚本未 import/deploy/upgrade `PredictionMarket`；未 set Router market；未授权 market 调 `spendOre/refundOre`；`just gravity-upgrade` 从 `frontend/config/gravity.json` grep 出的是 mainnet router `0x13860c...`，却把 `--rpc-url` 硬编码为 testnet RPC（`justfile:47-53`、`frontend/config/gravity.json:1-7`）——存在 mainnet router 地址 + testnet RPC 的链/地址 mismatch，升级前必须对齐。
+- 已有：Deploy 部署 registry/ledgers/GameEngine/GTreasury/CardLedger/ArenaEngine/Router，并 set Arena/G/Card slot（`contracts/script/Deploy.s.sol:26-122`）。
+- 已有：Upgrade 可 backfill GTreasury/CardLedger/Arena，并给 CardLedger/Arena 授权（`contracts/script/Upgrade.s.sol:107-185`）。
+- 缺：脚本无 `World` import/deploy/upgrade；无 module registry；无 `Router.setWorld`；无 GTreasury World-only wiring；`just gravity-upgrade` 仍有 mainnet router + testnet RPC mismatch（`justfile:47-53`、`frontend/config/gravity.json:1-7`）。
 
 **子任务拆分**
-1. 在 Deploy/Upgrade 引入 `PredictionMarket`，遵循现有 proxy 初始化模式。
-2. Deploy fresh 时 set Router market 并 `registry.addOperator(marketProxy)`。
-3. Upgrade 时检测 `router.predictionMarket()` 或 V4 getter；为空则部署 proxy，非空则 upgrade implementation；两条路径都保证 operator 授权。
-4. 给 Upgrade 加日志输出与 idempotency：重复执行不重置市场状态。
-5. 修正文档/justfile 风险：明确 `gravity-upgrade` 的目标 config，必要时新增 testnet 专用 recipe。
+1. 在 Deploy fresh 路径部署 `World`、registry/modules，初始化时传入 Router/registry/GameEngine/GTreasury。
+2. 在 Upgrade 路径检测 `router.world()` 或 `getAddressesV4()`；为空则部署 proxy，非空则 upgrade implementation；两条路径都不重置 question/treasury state。
+3. wiring：`Router.setWorld(worldProxy)`；`GTreasury.setWorld(worldProxy)` 或 `allowModule(worldProxy,true)`；CardLedger `market_sale` 守恒路径不得被误杀。
+4. 授权：若 World 需要 legacy adapter 调 `GameEngine.build/raid`，只允许 World adapter 路径；真人/agent G 下注仍必须走 A3 scoped delegation/permit 或 agent owner 校验。
+5. 增加部署日志与 idempotency：重复 upgrade 不重置 World/module registry/treasury pools。
+6. 修正 Gravity testnet/mainnet config 选择，避免 `gravity-upgrade` 链/地址错配。
 
 **验收标准**
-- [ ] 命令：`just anvil-deploy && just anvil-upgrade` → 期望：本地 `deployed-addresses.json`/Router 能解析 `predictionMarket`，重复 `just anvil-upgrade` 不重置已有市场状态。
-- [ ] 命令：`cd contracts && forge test --match-test test_UpgradeDeploysAndAuthorizesPredictionMarket -vv` → 期望：`registry.isOperator(predictionMarket)==true`，未授权路径的 `bet` 会因 `spendOre` revert，授权后通过。
+- [ ] 命令：`just anvil-deploy && just anvil-upgrade` → 期望：Router V4 能解析 `world`，重复执行不重置 `nextQuestionId`/treasury pool。
+- [ ] 命令：`cd contracts && forge test --match-test test_UpgradeDeploysWorldAndWiresTreasury -vv` → 期望：`router.world()!=0`，World 可读 GTreasury，非 World 调用 restricted treasury payout/escrow 入口 revert。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldWiringDoesNotBreakCardMarketSale -vv` → 期望：`CardLedger.buyListed` 的 `market_buy/market_sale` 守恒 credit 仍通过。
 
-#### P3a · 地址配置与 MCP 地址解析层 [PLAT/MCP | `frontend/config/*`,`addressResolver.ts` | 依赖 P2 | maps-to 新增]
+#### P3a · 地址配置与 MCP resolver 改为 `world` [PLAT/MCP | `frontend/config/*`,`addressResolver.ts` | 依赖 P1 | maps-to world-as-market §8.2]
 
 **功能点**
-- 玩家/用户可见：前端/keeper/MCP 在 local/testnet/mainnet 都能读到同一套部署地址。
-- 技术交付物：新增 `mcp-server/src/addressResolver.ts`，统一读取 env、`frontend/config/<network>.json`、Router V4/V3 fallback；前端 config 文件增加 market 地址或明确通过 Router 解析。
+- 用户可见：local/testnet/mainnet 的 MCP、keeper、前端能读同一套 Router 地址，不再手填 World。
+- 技术交付物：新增/更新 `mcp-server/src/addressResolver.ts`，返回 `world` 字段；前端 config 只保留 router/network truth，不写死 module 地址。
 
 **现状 & 缺口**
-- 已有：keeper 直接读 `frontend/config/<NETWORK>.json` 并通过 Router V3/V2 找 Arena（`mcp-server/scripts/keeper.mjs:47-104`）。
-- 已有：MCP `ChainClient` 自己在 `chain.ts` 里解析 Router V3/V2/V1（`mcp-server/src/chain.ts:261-281`），P 不应改此文件。
-- 缺：无 `mcp-server/src/addressResolver.ts`；`frontend/config/gravity.json` 与 `agent-runner/config/gravity.toml` 目标网络不一致（`frontend/config/gravity.json:1-7`、`agent-runner/config/gravity.toml:13-16`）。
+- 已有：MCP `ChainClient` 在 `chain.ts` 中直接解析 V3/V2/V1（`mcp-server/src/chain.ts:90-97`、`mcp-server/src/chain.ts:260-298`）。
+- 已有：Arena keeper 自己读 `frontend/config/<NETWORK>.json` 并解析 Router V3/V2（`mcp-server/scripts/keeper.mjs:47-104`）。
+- 缺：无共享 resolver；无 V4/world 字段；`frontend/config/gravity.json` 当前是 Gravity Mainnet（`frontend/config/gravity.json:1-7`），但部分 testnet recipes 复用它。
 
 **子任务拆分**
-1. 定义 `addressResolver.ts` API：`resolveAddresses({network, rpcUrl, routerAddress})`，返回 registry/game/arena/card/market 等地址。
-2. P 只提供/同步地址解析（`addressResolver.ts` + `frontend/config/*`），并让 P 自己拥有的脚本使用它；`keeper-market.mjs` 归 D（见 D2），P 不拥有它，只把 resolver/地址供 D 消费。D 后续可把 `chain.ts` 地址解析迁移为调用该 API（由 D 实施）。
-3. 修正/新增 `frontend/config/gravity-testnet.json` 或明确 `gravity.json` 指向环境；避免 `just gravity-upgrade` grep 到 mainnet router 却配 testnet RPC 的链/地址 mismatch。
-4. 增加 resolver fallback 测试：V4 存在取 market，V4 不存在安全回落。
+1. 定义 `resolveAddresses({ network, rpcUrl, routerAddress })`：返回 registry/ledgers/game/arena/gTreasury/cardLedger/world。
+2. resolver 优先 V4；V4 不存在则安全回落 V3/V2/V1，`world=null` 而不是抛错。
+3. P 提供 resolver 与 config；D 后续在 `chain.ts` 中消费该 API（由 D 实施，P 不直接改 `chain.ts`）。
+4. 增加 `gravity-testnet.json` 或明确 `APP_CONFIG`/`NETWORK` 选择，修正 upgrade/keeper 的链配置来源。
 
 **验收标准**
 - [ ] 命令：`cd mcp-server && npm run build` → 期望：`addressResolver.ts` 编译通过，未引入循环依赖。
-- [ ] 命令：`cd mcp-server && NETWORK=localhost node scripts/check-address-resolver.mjs` → 期望：输出 `router/gameEngine/arenaEngine/cardLedger/predictionMarket`；未升级 Router 时 `predictionMarket` 为 `null` 且进程退出码 0。
+- [ ] 命令：`cd mcp-server && NETWORK=localhost node scripts/check-address-resolver.mjs` → 期望：输出 `router/gameEngine/arenaEngine/cardLedger/gTreasury/world`；未升级 Router 时 `world:null` 且退出码 0。
 
-#### P4 · 成就铸卡 keeper operator 授权 [PLAT/INFRA | Deploy/Upgrade/运维文档 | 依赖 B3（部署前置 P2） | maps-to 新增]
+#### P4 · World operator/role 运维与撤权 [PLAT/INFRA | 部署脚本/运维文档 | 依赖 P2,A3,C4 | maps-to 新增]
 
 **功能点**
-- 玩家/用户可见：达成圣典/翻盘/声望成就后，系统能自动铸故事卡。
-- 技术交付物：为 D3 keeper signer 授权 `CardLedger.mintStoryCard` 所需 operator；记录撤权和轮换流程。market keeper 不在 P4，因为 C2 `resolve` permissionless。
+- 用户可见：World、question keeper、treasury keeper 的权限可审计、可撤回，不靠“全局 operator 永久能控制所有 agent”。
+- 技术交付物：World/module roles、keeper signer roles、撤权/轮换文档；所有 role 都可 `cast call` 验证。
 
 **现状 & 缺口**
-- 已有：`CardLedger.onlyOperator` 依赖 `registry.isOperator(msg.sender)`（`contracts/src/CardLedger.sol:61-63`）；Deploy/Upgrade 已授权 CardLedger/Arena（`Deploy.s.sol:98-99`、`:118`；`Upgrade.s.sol:150`、`:176-182`）。
-- 缺：没有故事卡铸造入口（B3 负责）；没有 keeper signer 授权/撤权编排；没有 D3 exactly-once 运维文档。
+- 已有：全局 operator 添加/删除是 owner-only（`contracts/src/AgentRegistry.sol:67-68`）；GTreasury `onlyOperator` 当前只问 `registry.isOperator(msg.sender)`（`contracts/src/GTreasury.sol:67-70`）。
+- 缺：无 World-specific role；无 per-module treasury allowlist；无 keeper role 撤权脚本。
 
 **子任务拆分**
-1. 与 D3 确认 keeper signer 来源：独立 signer 或复用 platform operator。
-2. Deploy/Upgrade 增加可选授权分支，避免无 env 时阻塞普通升级。
-3. 写运维文档：授权、撤权、轮换、重放事件去重责任归 D3。
-4. 加 forge 测试覆盖授权/撤权后 `mintStoryCard` 成功/失败。
+1. 定义 role 清单：World proxy、question keeper、treasury keeper、emergency owner、多签/owner。
+2. 把“可花 agent G”的能力与“可 resolve/keeper”的能力拆开，避免 keeper 拥有无限 agent spend。
+3. 写运维文档：授权、撤权、轮换、疑似泄露处置、testnet faucet 与 mainnet withdraw mode 差异。
+4. Forge 测试覆盖授权/撤权后 World/keeper 入口成功/失败。
 
 **验收标准**
-- [ ] 命令：`cd contracts && forge test --match-test test_AchievementKeeperOperatorGrantAndRevoke -vv` → 期望：授权 signer 可调用 `mintStoryCard`，撤权后 revert `not operator`。
-- [ ] 命令：`KEEPER_ACHIEVEMENT_ADDRESS=0x... just anvil-upgrade` → 期望：日志显示 keeper 授权；随后 `cast call <registry> "isOperator(address)(bool)" <keeper>` 返回 `true`。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldRoleGrantRevokeBoundaries -vv` → 期望：撤权后 keeper 不能 resolve/allocate，World 仍可处理用户 permit/escrow。
+- [ ] 命令：`WORLD_KEEPER_ADDRESS=0x... just anvil-upgrade` → 期望：日志列出 roles；`cast call` 验证角色为 true；撤权脚本后为 false。
 
-#### P5 · Relay signer 全局授权编排 [PLAT/INFRA | Deploy/Upgrade/运维文档 | 依赖 Auth 决策 | maps-to 新增]
+---
+
+### Lane A · 主世界迁移 / 授权 / legacy freeze
+
+#### A0 · GameEngine legacy surface 与 adapter 规格 [SC/DOC | `GameEngine.sol` 设计/测试 | 依赖 C0 | maps-to world-as-market §7 Phase 4]
 
 **功能点**
-- 玩家/用户可见：gasless onboarding/autopilot 在默认 (a) 路径下可以由平台 relay 代发真实受控动作。
-- 技术交付物：把 relay signer 加入全局 operator；记录平台级撤权；若选 (b)，P5 改为不授权，只记录 per-agent delegate 前置。
+- 用户可见：旧世界状态平滑迁移，不丢 hex/ore/building/chronicle/bible。
+- 技术交付物：列出所有 legacy 写入口、只读接口、事件兼容策略；定义 World 调 legacy adapter 的 allowlist 与 freeze 行为。
 
 **现状 & 缺口**
-- 已有：全局 operator 添加/删除是 `onlyOwner`（`AgentRegistry.sol:67-68`）；`build`/`raid` 会检查 `canControlAgent`（`GameEngine.sol:345`、`:624`）。
-- 缺：无用户级链上撤权；无 relay signer 授权脚本；无撤权后端到端验证。
+- 已有写入口：`harvest`（`contracts/src/GameEngine.sol:288-290`）、`build`（`contracts/src/GameEngine.sol:344-367`）、`attack`（`contracts/src/GameEngine.sol:375-448`）、`spendOre`/`refundOre` hooks（`contracts/src/GameEngine.sol:471-487`）、`claimNeutral`（`contracts/src/GameEngine.sol:535-554`）、`inciteRebellion`（`contracts/src/GameEngine.sol:563-615`）、`raid`（`contracts/src/GameEngine.sol:622-695`）、debate（`contracts/src/GameEngine.sol:710-895`）。
+- 已有只读接口：`getScore`（`contracts/src/GameEngine.sol:494-506`）、`getHex`（`contracts/src/GameEngine.sol:513-520`）、`getAgentHexKeys/getAllHexKeys`（`contracts/src/GameEngine.sol:522-527`）。
+- 缺：无 `world` allowlist；无 `legacyWritesFrozen`；无 adapter error；无 freeze 影响清单。
 
 **子任务拆分**
-1. 在 Auth 决策记录中确认 (a)/(b)。
-2. (a) 增加 `RELAY_SIGNER_ADDRESS` 授权脚本/recipe；(b) 禁止全局授权并等待 A3。
-3. 写撤权语义：用户暂停是 off-chain flag；owner `removeOperator(relay)` 是全局 kill switch。
-4. 与 E1b-b 对接 relay 健康检查与授权检查。
+1. 写 legacy surface 设计：哪些函数最终由 World 包装，哪些保留只读，哪些废弃。
+2. 定义 freeze 策略：外部用户直写 revert；`msg.sender==world` 或 Router 解析 World 的 adapter 调用可放行。
+3. 明确事件兼容：是否继续 emit `Harvested/Built/AttackResult/DebateResolved`，或只 emit `Question*` + indexer adapter。
+4. 补测试骨架：freeze 前行为等同旧合约；freeze 后旧用户直写 revert，World allowlist 不被挡。
 
 **验收标准**
-- [ ] 命令：`cd contracts && forge test --match-test test_RelaySignerCanBuildOnlyWhenGlobalOperator -vv` → 期望：授权前 relay 代发 `build` revert，授权后成功，撤权后再次 revert。
-- [ ] 命令：`RELAY_SIGNER_ADDRESS=0x... just anvil-upgrade` → 期望：`registry.isOperator(relaySigner)==true`；执行撤权脚本后为 `false`，且 relay 代发 `raid` 失败。
+- [ ] 命令：`cd contracts && forge test --match-test test_LegacySurfaceDocumentedAndFrozenErrorsReadable -vv` → 期望：所有旧写入口都有明确 freeze revert reason。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldAdapterAllowedWhileLegacyWritesFrozen -vv` → 期望：freeze 后非 World 调 `build/raid/debate` revert，World adapter 调用通过。
 
-### Lane A · 主世界合约（GameEngine 唯一 owner，存储改动序列化）
-
-#### A1 · 主世界平衡参数 storage 化 [SC | `GameEngine.sol` | 依赖无 | maps-to roadmap E2.1]
+#### A1 · `harvest/build` 入口由 World 接管 [SC | `GameEngine.sol` adapter + tests | 依赖 C1,A3 | maps-to world-as-market §7 Phase 1]
 
 **功能点**
-- 玩家/用户可见：运营可在不升级合约的情况下调整产矿、建筑成本、战斗、民心、debate、chronicle 参数。
-- 技术交付物：把当前常量迁移为 append storage + owner setter/batch setter；`_calcDecay` 系数参数化；保留 ABI 兼容读路径或提供新 getter。
+- 用户可见：按钮仍叫 Harvest / Build mine，但链上实际变成 `answer_question`。
+- 技术交付物：World difficulty 0/低难 STATE question 包装 `harvest/build`；legacy 入口可兼容一段时间，freeze 后只允许 World adapter。
 
 **现状 & 缺口**
-- 已有：主世界常量在 `GameEngine.sol:25-45`，debate 常量在 `:48-55`，chronicle 常量在 `:58-59`。
-- 已有：Arena 已有运行时调参范式 `setTierThresholds`/`setMatchmakingPeriod`（`ArenaEngine.sol:217-221`、`:573-575`）。
-- 缺：`_calcDecay` 写死 `1 + hexCount/3`、chronicle bonus/penalty（`GameEngine.sol:1173-1186`）；无 storage layout 测试。
+- 已有：`harvest` permissionless，调用 `_harvestAll`（`contracts/src/GameEngine.sol:288-306`）；`_harvestHex` 用 `BASE_ORE_PER_SEC`/`ORE_PER_MINE_PER_SEC` 计算 lazy 产出（`contracts/src/GameEngine.sol:313-337`）。
+- 已有：`build` 受 `canControlAgent`，先 harvest，再扣 50/100 ore 并加 building（`contracts/src/GameEngine.sol:344-367`）。
+- 缺：无 `QuestionAnswered`/difficulty/fee 记录；`build` 若由 World 代调会遇到 `canControlAgent`，必须先完成 A3/permit 或 World adapter allowlist。
 
 **子任务拆分**
-1. 定义 `WorldParams`/`DebateParams`/`ChronicleParams` append storage，不改变旧 storage 顺序。
-2. 初始化默认值等于当前常量；把内部调用切到 storage 值。
-3. 增加 owner-only batch setter + 单项 getter/事件。
-4. 补 storage layout 与现有行为回归测试。
+1. 定义 `harvest` action payload：agentId、target scope（all hexes）、expected reward/nonce/cooldown。
+2. 定义 `build` action payload：agentId、hexKey、buildingType、ore sink、questionId。
+3. Adapter 调用中保留旧 ore cap 行为，但不能触发任何 G credit。
+4. `World.answer_question` 成功后 emit `QuestionAnswered`，可选兼容 emit `Harvested/Built`。
+5. MCP/FE 接入前保留旧入口；D1/D4 切流后再由 A5 freeze。
 
 **验收标准**
-- [ ] 命令：`cd contracts && forge test --match-test test_WorldParamsDefaultMatchLegacyConstants -vv` → 期望：默认成本、产量、民心、debate、chronicle 行为与现有测试完全一致。
-- [ ] 命令：`cd contracts && forge test --match-test test_OwnerCanRetuneWorldParamsWithoutUpgrade -vv` → 期望：修改 mine cost/ore rate/decay 后，`build`、`harvest`、`currentHappiness` 读到新参数；非 owner setter revert。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldAnswerHarvestMatchesLegacyHarvest -vv` → 期望：同一时间推进下，World harvest 与 legacy harvest 增加的 ore 一致，G balance/outstanding 不变。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldAnswerBuildConsumesOreAndEmitsQuestion -vv` → 期望：build mine 扣 50 ore、building +1、emit `QuestionAnswered`；未授权 caller 失败。
 
-#### A2 · `AchievementUnlocked` 主世界成就事件 [SC | `GameEngine.sol` | 依赖 A1 | maps-to roadmap E3.2, US-E5]
+#### A2 · `attack/raid/incite` 入口由 World 分阶段接管 [SC | `GameEngine.sol` adapter + tests | 依赖 A0,A3,B1 | maps-to world-as-market §7 Phase 2]
 
 **功能点**
-- 玩家/用户可见：写圣典、0 格翻盘、声望破阈等主世界成就可触发故事卡/通知。
-- 技术交付物：新增 `AchievementUnlocked(uint256 indexed agentId, bytes32 indexed achievementTag, bytes32 contextKey, uint256 entryIdOrValue)` 事件；仅 emit，不加状态位；D3 负责 exactly-once 去重。
+- 用户可见：Raid 仍是一个动作，但真实结算变成 open/answer -> lock -> RNG finalize -> resolve。
+- 技术交付物：旧 attack/raid/incite 的状态改写只由 World resolve 阶段执行；money-staked/G fee/event prize 路径不再单 tx live 读改。
 
 **现状 & 缺口**
-- 已有：事件列表无成就事件（`GameEngine.sol:139-160`）。
-- 已有：capture/raid 成功 emit `HexCaptured`（`:441`、`:688`），neutral claim emit `HexCaptured(agent,hex,0)`（`:554`），rebellion emit `HexRebelled`（`:846`、`:1165`）；chronicle 写入后重算分并 emit（`:982-987`）；world bible 写入 emit（`:1038-1059`）。
-- 缺：没有成就 tag，也没有破阈逻辑事件；无测试断言事件只发一次或由 keeper 去重。
+- 已有：`attack` 一次 tx 内检查位置/cooldown、扣资源、用 `prevrandao`、成功改 owner 并偷 30% ore（`contracts/src/GameEngine.sol:388-447`）。
+- 已有：`raid` 一次 tx 内 auto-find best source、move agent、扣资源、`prevrandao`、改 owner（`contracts/src/GameEngine.sol:631-695`）。
+- 已有：`inciteRebellion` 一次 tx 内 `prevrandao` 50%，成功可能 respawn 200 ore（`contracts/src/GameEngine.sol:563-615`）。
+- 缺：无 lock snapshot、无 stale owner refund、无 staged RNG、无 G fee/escrow 的 battle accounting。
 
 **子任务拆分**
-1. 定义 tag 常量：`WORLD_BIBLE_AUTHORED`、`RISEN_FROM_ASHES`、`CHRONICLE_THRESHOLD_*` 等。
-2. 在 world bible 成功写入后 emit tag。
-3. 在 0 hex agent 通过 claim/incite/raid 重新获得 hex 的路径 emit comeback tag。
-4. 在 chronicle score 跨阈值时 emit reputation tag；不加持久去重状态。
-5. 补事件单测，并在 D3 文档明确 `(agentId, achievementTag)` 幂等。
+1. 把旧 `attack/raid/incite` 写状态逻辑抽成 World-only adapter 或 internal library；直接外部入口保留 legacy/freeze gate。
+2. 为 C3 `QuestionLocked` 提供 adapter 所需字段：target/source owner、arsenal、agent location、cooldown、defense、ore spend。
+3. resolve 时若 target owner 已不是 lock 快照 owner，则取消/退款，不改 owner。
+4. 低价值 legacy incite 可先通过 World STATE question 包装，money-staked 路径必须 B1 RNG。
+5. 补回归：旧无 G 路径在 freeze 前仍可跑；World 路径有 staged 状态和 refund 分支。
 
 **验收标准**
-- [ ] 命令：`cd contracts && forge test --match-test test_AchievementUnlockedWorldBibleAndComeback -vv` → 期望：写圣典和 0 格翻盘均 emit 含正确 `agentId/achievementTag` 的事件。
-- [ ] 命令：`cd contracts && forge test --match-test test_AchievementUnlockedChronicleThresholdNoStorageChange -vv` → 期望：声望跨阈 emit，storage layout append 数量为 0（A2 只加事件/逻辑）。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldRaidUsesLockedSnapshotNotLiveState -vv` → 期望：lock 后 live owner 改变时 question cancel/refund，不把 hex 判给攻击者。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldCombatDoesNotReadPrevrandaoInResolvePath -vv` → 期望：World combat resolve 使用 B1 randomness result，不在 resolve 阶段读取 `block.prevrandao`。
 
-#### A3 · per-agent delegation（条件任务，仅 Auth 选 b） [SC | `AgentRegistry.sol` + gate 调整 | 依赖 Auth 决策 | maps-to 新增]
+#### A3 · per-agent delegation / permit（强制前置，不再是条件任务） [SC | `AgentRegistry.sol` + gate 调整 | 依赖无 | maps-to world-as-market §6.4/§8.3]
 
 **功能点**
-- 玩家/用户可见：用户能只授权/撤销某个 agent 的 relay 或第三方，不影响其他 agent。
-- 技术交付物：append `delegated[agentId][addr]`；新增 `delegate/undelegate/isDelegate`；`canControlAgent` 纳入 per-agent delegate；E3/E1b/E7 使用此路径。
+- 用户可见：用户能只授权某个 agent 的某类动作（answer/bet/build/raid/runner），可撤销、可过期，不影响其他 agent。
+- 技术交付物：scoped delegation + per-action permit；`World.answer/bet` 使用 agent owner / scoped delegate / permit 校验，不能复用全局 operator 恒真语义。
 
 **现状 & 缺口**
-- 已有：全局 operator + global mapping（`AgentRegistry.sol:19`、`:24`），`canControlAgent` 只认 operator 或 owner（`:45-48`）。
-- 缺：无 per-agent mapping；`ownerAgentIds` 是当前最后的 agent-owner 相关存储锚点（`:29-30`）；无 storage layout 测试。
+- 已有：`AgentRegistry` 只有全局 operator/owner gate（`contracts/src/AgentRegistry.sol:19-24`、`contracts/src/AgentRegistry.sol:36-48`、`contracts/src/AgentRegistry.sol:67-68`）。
+- 已有：`GameEngine.canControlAgent` 同样允许 global operator 或 contract owner 控制任意 agent（`contracts/src/GameEngine.sol:164-178`）。
+- 缺：无 `agentDelegates`、无 scope/expiry、无 EIP-712 permit、无 `isAgentDelegate(agentId,actor,scope)` view。
 
 **子任务拆分**
-1. 设计 append storage 和事件 `AgentDelegated/AgentUndelegated`。
-2. 只有 `agentOwner[agentId]` 可 delegate/undelegate；全局 owner/operator 不能替用户设置 per-agent delegate，除非另有安全决策。
-3. 更新 registry 和 GameEngine/CardLedger/ArenaEngine 对 control 判断的调用方式，避免复制逻辑漂移。
-4. 补合约和 MCP/FE ABI 更新请求给 D/F/E。
+1. Append storage：`mapping(uint256 => mapping(address => Delegation)) agentDelegates`，Delegation 包含 scope bitmask 与 expiresAt。
+2. 新增 `delegateAgent(agentId, delegate, scope, expiresAt)`、`revokeAgent`、`isAgentDelegate`。
+3. 新增 `permitAgentAction(agentId, actionHash, deadline, sig)` 或在 World 中验签但 Registry 提供 domain/owner helper。
+4. 更新 World 侧校验规范：`msg.sender == agentOwner(agentId)` 或 scoped delegate 或有效 permit；全局 operator 只允许 keeper/emergency，不默认可替用户下注。
+5. 测 storage layout、scope、expiry、revoke、owner 变更/agent 删除边界。
 
 **验收标准**
-- [ ] 命令：`cd contracts && forge test --match-test test_AgentOwnerCanDelegateSingleAgentOnly -vv` → 期望：delegate 只控制指定 agent，不能控制同 owner 或其他 owner 的 agent。
-- [ ] 命令：`cd contracts && forge test --match-test test_UndelegateRevokesBuildRaidAndArenaControl -vv` → 期望：撤权后 `build`、`raid`、`ArenaEngine.placeCard` 均 revert；旧 owner 直签仍成功。
+- [ ] 命令：`cd contracts && forge test --match-test test_AgentScopedDelegateCanAnswerButNotBetWhenScopeMissing -vv` → 期望：scope 精确生效，过期/撤权后 revert。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldCannotUseGlobalOperatorToSpendArbitraryAgentG -vv` → 期望：World/keeper 即使是全局 operator，也不能绕过 agent owner/delegate/permit 替任意 agent 下注。
 
-### Lane B · Arena 合约（ArenaCombat/AbilityLib/CardLedger 单一 owner）
-
-#### B1 · Arena RNG 硬化 [SC | `ArenaEngine.sol` | 依赖无 | maps-to roadmap E0.1]
+#### A4 · score 降权：领地/建筑/声誉/答题准确率为主，ore sqrt/封顶 [SC | `GameEngine.sol`/World score adapter | 依赖 C1 | maps-to world-as-market §3.1]
 
 **功能点**
-- 玩家/用户可见：真实价值上来后，匹配和 roll 不再可由出块者/keeper 轻易 grind。
-- 技术交付物：替换 `block.prevrandao` seed 来源；候选方案为 VRF 或 commit-reveal；保持 `simulate(seed)` 可复算。
+- 用户可见：排行榜不再被免费 ore 线性支配；G 市场若用 score 结算，使用抗 ore faucet 污染的新公式。
+- 技术交付物：canonical score 迁到 World 或 ScoreModule；旧 `GameEngine.getScore` 走 adapter/兼容；MCP/FE scoreboard 切新公式。
 
 **现状 & 缺口**
-- 已有：roll seed 用 `block.prevrandao, agentId, block.timestamp, g.shopSeed`（`ArenaEngine.sol:398-400`）。
-- 已有：matchmaking seed 有 TODO 指出 prevrandao 可 grind（`:545-548`）。
-- 缺：无 commit/reveal 状态、无 VRF consumer、无 seed finalize 测试。
+- 已有：`getScore` 当前返回 `hCount * 100 + orePool[agentId] + totalBuildings * 50`（`contracts/src/GameEngine.sol:494-506`）。
+- 已有：MCP scoreboard 直接读旧 `gameEngine.getScore`（`mcp-server/src/chain.ts:458-469`）；前端直接读旧 `getScore`（`frontend/src/hooks/useGameEngine.ts:139-150`）；demo 也复制旧公式（`demo/index.html:163-164`、`demo/index.html:937-950`）。
+- 缺：无 reputation/accuracy score；ore 未 sqrt/封顶；无“score-based G market 前置”保护。
 
 **子任务拆分**
-1. 写一页方案选择（VRF vs commit-reveal）并确认外部依赖。
-2. 实现 seed 提交/揭示或 VRF fulfill，限定 seed 可用窗口。
-3. 让 `_createMatch`/`roll` 使用 finalized seed；保留 seed 写入 Match，回放仍 deterministic。
-4. 补 grind/重复 reveal/超时 fallback 测试。
-
-**验收标准**（方案无关；测试名按所选方案 a=commit-reveal / b=VRF 二选一）
-- [ ] 命令：`cd contracts && forge test --match-test test_ArenaRngSeedNotUsableBeforeFinalize -vv`（commit-reveal 命名 `...CannotSettleBeforeReveal`，VRF 命名 `...CannotSettleBeforeFulfill`） → 期望：在 reveal/VRF 回调前不可创建可结算 match seed；同块/可预测来源不可被 grind（同一区块内枚举 seed 不能改变可结算性）。
-- [ ] 命令：`cd contracts && forge test --match-test test_ArenaSimulationStillDeterministicAfterRngChange -vv` → 期望：相同 bench + finalized seed 的 `simulate`/`simulateWithTrace` 输出稳定。
-
-#### B2 · Combat trace 输出 AbilityEvent[] [SC | `ArenaCombat.sol`,`AbilityLib.sol` | 依赖无 | maps-to roadmap E4.1, US-E4]
-
-**功能点**
-- 玩家/用户可见：战斗回放能展示召唤、buff、伤害、死亡连锁，而不只是普攻。
-- 技术交付物：新增 `AbilityEvent` 结构；`simulateWithTrace` 返回 turns + ability events；不改变 `simulate` settlement 结果。
-
-**现状 & 缺口**
-- 已有：`Turn` 只记录攻击方/槽位/伤害/死亡（`ArenaCombat.sol:30-36`），`simulateWithTrace` 只返回 `Turn[]` + winner（`:54-67`）。
-- 已有：AbilityLib FIFO 队列只存 packed side/slot/trigger（`AbilityLib.sol:74-98`），`processAbility`/`_resolveOne`/`_applyEffect` 是内部/private 逻辑（`:105-190`）；实际效果在 `_applyToUnit`（`:192-264`）与 `dealCombatDamage`（`:270-290`）。
-- 缺：无可视化所需 effect/target/delta/summon/death 事件；MCP/FE ABI 也未支持。
-
-**子任务拆分**
-1. 定义 `AbilityEvent {step, trigger, effectType, sourceSide, sourceSlot, targetSide, targetSlot, deltaAtk, deltaHp, unitType, died}`。
-2. 重构 AbilityLib：保留 settlement pure 路径，给 trace 路径传入 bounded event buffer。
-3. 更新 `ArenaCombat.simulateWithTrace` 返回 `(Turn[], AbilityEvent[], winnerAgentId)` 或新增 V2 函数以保持旧 ABI。
-4. 补 Wraith summon、Crystalwarden buff、Stormcaller damage、death-chain 顺序测试。
-5. 向 D（D9 trace ABI/工具）与 F（F2 store/decode）提 ABI 更新请求。
+1. 定义 v1 公式：`territoryScore + buildingScore + reputationScore + accuracyScore + oreScore`，其中 `oreScore = min(200, floor(sqrt(orePool)*10))` 或 owner 拍板等价封顶。
+2. `reputationScore` 读 chronicle score（`contracts/src/GameEngine.sol:116-123`）；`accuracyScore` 读 World question answer 统计（C1/D3）。
+3. 在 World/ScoreModule 中提供 canonical `getScoreV2(agentId)`；旧 `GameEngine.getScore` 可保留 legacy 或迁到 adapter。
+4. D/F 切 scoreboard 读新 score；demo 文案同步。
+5. 加 guard：`create_question(kind=STATE,currency=G,score-based)` 在 score v2 未激活前 revert。
 
 **验收标准**
-- [ ] 命令：`cd contracts && forge test --match-test test_SimulateWithTraceEmitsAbilityEventsInOrder -vv` → 期望：Wraith death 后出现 `ON_DEATH -> SUMMON`，事件顺序与回合顺序稳定。
-- [ ] 命令：`cd contracts && forge test --match-test test_SimulateWinnerUnchangedByTraceInstrumentation -vv` → 期望：同 seed 的 `simulate` winner 与 trace winner 一致。
-- [ ] 命令：`cd contracts && forge build --sizes | rg -i 'ArenaCombat|AbilityLib'` 与 `cd contracts && forge test --gas-report --match-test test_SimulateWithTraceEmitsAbilityEventsInOrder` → 期望：ArenaCombat/AbilityLib 合约 size 仍在 EIP-170 24576 字节上限内；`simulateWithTrace` 的 gas-report 数值作为基线记录在 PR（后续回归不显著上涨）。
+- [ ] 命令：`cd contracts && forge test --match-test test_ScoreOreIsSqrtOrCapped -vv` → 期望：ore 从 0 到 1000 的 score 增量不超过 cap，领地/建筑仍主导。
+- [ ] 命令：`cd contracts && forge test --match-test test_ScoreBasedGMarketRequiresScoreV2 -vv` → 期望：未激活 score v2 时 score-based G question 创建失败；激活后使用新公式结算。
 
-#### B3 · CardLedger 叙事元数据与 mintStoryCard [SC | `CardLedger.sol` | 依赖无 | maps-to roadmap E3.1, US-E5]
+#### A5 · `legacyWritesFrozen` 冻结旧直写入口 [SC | `GameEngine.sol` | 依赖 A1,A2,A3,C5 | maps-to world-as-market §7 Phase 4]
 
 **功能点**
-- 玩家/用户可见：故事卡能展示 variant、edition、originAgent、achievementTag、铸造原因。
-- 技术交付物：扩展 `Card` struct；新增 `mintStoryCard(...) onlyOperator`；emit `StoryCardMinted`；二级市场行为不变。
+- 用户可见：所有正式入口统一走 World；旧工具名可用但只是 alias。
+- 技术交付物：`legacyWritesFrozen` flag；外部旧写入口 freeze 后 revert；World allowlist/adapter 不被挡；可读接口保持可用。
 
 **现状 & 缺口**
-- 已有：`Card` 仅 4 字段（`CardLedger.sol:17-22`）；普通 mint 只 emit `CardMinted`（`:75-85`）；二级市场用 `listCard/cancelListing/buyListed`（`:88-138`）。
-- 缺：无 variant/edition/origin/mintedReason；无成就 keeper 调用入口；无 story card 专用事件。
+- 已有：旧写入口仍公开：`harvest`（permissionless，`contracts/src/GameEngine.sol:288-290`）、`build`（`contracts/src/GameEngine.sol:344-367`）、`attack`（`contracts/src/GameEngine.sol:375-448`）、`spendOre`/`refundOre` hooks（`contracts/src/GameEngine.sol:471-487`）、`claimNeutral`（`contracts/src/GameEngine.sol:535-554`）、`inciteRebellion`（`contracts/src/GameEngine.sol:563-615`）、`raid`（`contracts/src/GameEngine.sol:622-695`）、debate lifecycle（`contracts/src/GameEngine.sol:710-911`）。
+- 已有：MCP `harvest/build/attack/raid` 直接调用（`mcp-server/src/tools.ts:131-192`、`mcp-server/src/chain.ts:415-490`），`claim_neutral/incite_rebellion` 也直接调用旧合约（`mcp-server/src/tools.ts:197-219`、`mcp-server/src/chain.ts:493-500`）；debate 工具直接调用（`mcp-server/src/tools.ts:401-470`、`mcp-server/src/chain.ts:620-664`）。
+- 缺：无 freeze flag；无 migration block number；无 World allowlist；无 D lane 切流验收；`harvest` 本身不走 `canControlAgent`，freeze 需要新增拦截 modifier，不能靠复用权限 gate。
 
 **子任务拆分**
-1. 设计字段类型，避免动态 string 过多上链；长故事可用 bytes32 tag + URI/hash。
-2. Append struct 字段并升级 getter ABI；旧 `getCard` 调用方需可解码。
-3. 新增 `mintStoryCard(ownerAgent, unitType, originAgent, achievementTag, variant, edition, reasonHashOrUri)`。
-4. emit `StoryCardMinted`，并保持普通 mint/market 事件不变。
-5. 回归 CardLedger/ArenaEngine/BenchInvariant 测试。
+1. Append `bool public legacyWritesFrozen; address public world;` 或从 Router 解析 world（storage layout 审慎）。
+2. 新增专用 freeze modifier（例如 `legacyWriteAllowed`）：freeze 后 `msg.sender != world` revert；只读接口不受影响；`harvest` 必须使用该新 modifier，不能改成 `canControlAgent`。
+3. 覆盖所有旧写入口：`harvest/build/attack/raid/claimNeutral/inciteRebellion/startDebate/voteOnDebate/resolveDebate/expireDebate/spendOre/refundOre`；hooks 被 side systems 调用时也必须只允许 World/allowlist 路径。
+4. Owner-only `setLegacyWritesFrozen(bool)`，emit `LegacyWritesFrozenSet(bool)`.
+5. freeze 前脚本检查 C5 checklist：D4 已先完成 MCP 工具 alias、agent-runner selfTools、旧 debate timer -> question keeper 切流。
+6. 编写 rollback 操作：短期可 unfreeze，长期由 owner 决策是否永久。
 
 **验收标准**
-- [ ] 命令：`cd contracts && forge test --match-test test_MintStoryCardStoresNarrativeMetadata -vv` → 期望：`getCard` 返回 story metadata，事件含 `cardId/ownerAgent/achievementTag`。
-- [ ] 命令：`cd contracts && forge test --match-test 'test_buy_listed_transfers_card_and_g|test_card_on_bench_cannot_be_listed' -vv` → 期望：二级市场转移/G 结算不受 metadata 扩展影响。
+- [ ] 命令：`cd contracts && forge test --match-test test_LegacyWritesFrozenBlocksDirectHarvestBuildAttackRaidClaimInciteOreHooksDebate -vv` → 期望：freeze 后 direct `harvest/build/attack/raid/claimNeutral/inciteRebellion/spendOre/refundOre/startDebate/voteOnDebate/resolveDebate` 均 revert，错误可读；World allowlist/adapter 调用通过。
+- [ ] 命令：`cd contracts && rg -n "legacyWriteAllowed|legacyWritesFrozen|function (harvest|build|attack|raid|claimNeutral|inciteRebellion|spendOre|refundOre|startDebate|voteOnDebate|resolveDebate)" src/GameEngine.sol` → 期望：所有旧写入口附近均有 freeze modifier/allowlist 覆盖；`harvest` 使用新增 freeze modifier，不新增 `canControlAgent`。
+- [ ] 命令：`cd mcp-server && npm run build && rg -n "chain\\.(harvest|build|attack|raid|claimNeutral|inciteRebellion|startDebate|voteOnDebate|resolveDebate)\\(" src` → 期望：只剩 legacy alias 内部兼容分支，默认路径调用 World。
 
-### Lane C · 预测市场（全新独立合约，注册/授权依赖 Lane P）
+---
 
-#### C1 · PredictionMarket interface 与设计稿 [SC/DOC | 新 interface/design | 依赖无 | maps-to roadmap E1.1, US-D1]
+### Lane B · 全局 RNG / Arena trace
+
+#### B1 · 全局 randomness service 覆盖 GameEngine + Arena [SC | `Randomness*.sol`,`ArenaEngine.sol`，A/C 接入 | 依赖 C1 | maps-to world-as-market §8.4]
 
 **功能点**
-- 玩家/用户可见：市场题目、outcomes、类型、resolveAt、货币、赔率语义被固定，前后端可并行。
-- 技术交付物：`IPredictionMarket`/设计稿；v1 currency=ORE，但结构保留 currency 参数；明确 P1/P2 授权需求、`MAX_ORE_POOL` 派彩处理、以及 `bet` 必须自校验 caller 控制权（见子任务 5）。
+- 用户可见：涉及 G stake、event prize、world combat、Arena prize 的随机不再靠可 grind 的 `prevrandao`。
+- 技术交付物：VRF 或 commit-reveal randomness service；World STATE question、旧 GameEngine 迁移路径、Arena roll/matchmaking 统一接入。
 
 **现状 & 缺口**
-- 已有：roadmap 描述解耦市场（`docs/roadmap.md:123-133`）；demo markets 有 SELF_RESOLVING/ORACLE（`demo/index.html:177-215`）和 rake 逻辑（`:236-244`）。
-- 已有：GameEngine debate 注池可参考（`GameEngine.sol:854-880`）。
-- 缺：无 interface 文件；无派彩 cap 决策；无事件签名。
+- 已有 `prevrandao` 使用：GameEngine attack（`contracts/src/GameEngine.sol:413-415`）、incite（`contracts/src/GameEngine.sol:575-579`）、raid（`contracts/src/GameEngine.sol:661-665`）；Arena roll（`contracts/src/ArenaEngine.sol:398-400`）；Arena matchmaking TODO（`contracts/src/ArenaEngine.sol:545-548`）。
+- 缺：无 request/fulfill/timeout/refund；无 entropy consumer interface；无 commit liveness；无 tests 证明高价值路径不读 `prevrandao`。
 
 **子任务拆分**
-1. 定义市场结构、状态机、outcome 编码、currency enum。
-2. 定义 self-resolving 条件最小集合：agent owns hex / hexCount / score / ownerId。
-3. 定义事件：`MarketCreated`、`BetPlaced`、`MarketResolved`、`MarketRefunded`、`Claimed`（如采用 claim 模式）。
-4. 写明 `GameEngine.spendOre/refundOre` 授权前置，向 Lane P 提注册/授权请求。
-5. **定义 bet 的 caller 控制权校验语义**：`GameEngine.spendOre/refundOre` 用 `onlyOperatorOrOwner`（`GameEngine.sol:471`、`:482`、`:168-170`），只校验 `msg.sender` 是全局 operator/owner，**不校验 bet 实际控制的是哪个 `agentId`**。一旦 P2 把 `PredictionMarket` `addOperator` 成全局 operator，它就能替任意 agent 花 ore——因此 `bet(agentId, ...)` 必须**自行复刻控制权校验**再调 `spendOre`。注意 `AgentRegistry.canControlAgent` 是一个**入参为 `agentId` 的 modifier**（`AgentRegistry.sol:45-48`：`_isOperator(msg.sender) || msg.sender == agentOwner[agentId]`），**不是**一个传 caller 地址、可外部调用的函数；不能写成 `registry.canControlAgent(msg.sender)`。`AgentRegistry` 可供外部读取的真实接口是：public mapping `agentOwner(uint256)`（`:22`）、`isOperator(address)`（`:69`）、public `operator`（`:19`）、public mapping `operators(address)`（`:24`）。因为市场合约本身就是全局 operator，若直接套用 modifier 语义会因 `_isOperator(market)` 恒真而放行任意 caller——故 `bet` 必须收紧为「**`msg.sender` 是该 `agentId` 的 owner（或在 Auth 路径 b 下是其 per-agent 委托者）**」，即 `require(msg.sender == registry.agentOwner(agentId), ...)`（路径 b 再补 `|| registry.isDelegate(agentId, msg.sender)`），而不是复用「任意全局 operator 即放行」的判断。设计稿须固定该前置。
-6. 与 D/E 对齐 MCP 工具入参与前端 UI 所需字段。
+1. Owner 拍板 VRF / commit-reveal / 分层策略；默认写接口使两者可替换。
+2. 新建 `IRandomnessService`：`requestEntropy(questionId, snapshotHash)`、`finalizeEntropy(requestId)`、`getEntropy(requestId)`、timeout/refund 状态。
+3. Arena `roll` 和 `runMatchmaking` 改用 service 或 staged seed；低价值 local demo 可用 mock service。
+4. C3 World combat lock 后请求 entropy；resolve 只读 finalized entropy。
+5. A2 legacy GameEngine money-staked combat 迁移不再直接读 prevrandao；未迁旧入口在 freeze 前标 legacy/unsafe。
 
 **验收标准**
-- [ ] 命令：`test -f docs/prediction-market-interface.md && rg -n "currency|SELF_RESOLVING|ORACLE|addOperator|MAX_ORE_POOL|agentOwner" docs/prediction-market-interface.md` → 期望：六类关键决策均有明确段落；其中 bet 控制权校验段落须写明用 `agentOwner(agentId)` 收紧，并说明 `canControlAgent` 是 `agentId`-入参 modifier、不可作为传 caller 的外部函数复用。
-- [ ] 命令：`test -f contracts/src/IPredictionMarket.sol && cd contracts && forge build` → 期望：interface 编译通过，未引入部署脚本变更。
+- [ ] 命令：`cd contracts && forge test --match-test test_GlobalRandomnessCoversWorldCombatAndArena -vv` → 期望：World combat、Arena roll、Arena matchmaking 都通过 randomness service/mock service 取 seed。
+- [ ] 命令：`cd contracts && rg -n "block\\.prevrandao" src/GameEngine.sol src/ArenaEngine.sol src/World*.sol` → 期望：只允许 legacy/demo 注释或 mock 分支；money-staked/production 路径无直接读取。
 
-#### C2 · 自结算 PredictionMarket 合约 [SC | `PredictionMarket.sol` | 依赖 C1,P1；集成依赖 P2 | maps-to roadmap E1.2, US-D1/D3/D4]
+#### B2 · Trace / replay 事件模型（阻塞 F2/F3，配合 D9） [SC | `ArenaCombat.sol`,`AbilityLib.sol`,World trace structs | 依赖 B1 | maps-to 新增]
 
 **功能点**
-- 玩家/用户可见：可以创建链上事实题、用 ore 下注、到期后任何人触发结算并看到派彩。
-- 技术交付物：`createMarket/bet/resolve/getMarket/listMarkets`；self-resolving oracle 读取 GameEngine；permissionless `resolve`；通过 `spendOre/refundOre` 动 ore；`bet` 自校验 caller 对 `agentId` 的控制权。
+- 用户可见：Arena 与 World staged combat 可回放，AgentMind/前端能展示“为什么赢/输/触发事件”。
+- 技术交付物：统一 `TraceEvent`/`AbilityEvent`/`QuestionTrace` 结构；Arena combat trace 扩展；World question resolve 输出 trace hash/事件。
 
 **现状 & 缺口**
-- 已有：`GameEngine.getScore` 可读分数（`GameEngine.sol:494-506`），`hexCount` 为 public，`getHex` 返回 owner（`:513-519`）。
-- 已有：`spendOre/refundOre` 需 operator（`:471`、`:482`），未授权会 revert；但 `onlyOperatorOrOwner` 只认 `msg.sender`，**不校验下注控制的是哪个 agent**（`:168-170`）。`AgentRegistry` 侧 `canControlAgent` 是 `agentId`-入参 modifier（`AgentRegistry.sol:45-48`），不可外部传 caller 调用；可外部读取的是 `agentOwner(uint256)`（`:22`）与 `isOperator(address)`（`:69`）。
-- 缺：无 `PredictionMarket.sol`；无 Router 槽位/部署授权（P1/P2）；无 market tests；无自行复刻的 bet 控制权校验（须用 `agentOwner(agentId)` 收紧）。
+- 已有：Arena `simulateWithTrace` 返回普攻 turn（`contracts/src/ArenaEngine.sol:614-624`），MCP `arena_simulate_match` 解码 turn（`mcp-server/src/tools.ts:931-939`、`mcp-server/src/chain.ts:993-1005`）。
+- 已有：ArenaCombat turn 只有攻击方/防守 slot/damage/death（可从 `simulateMatch` ABI 看到，`frontend/src/hooks/useArenaEngine.ts:29-33`）。
+- 缺：无 ability events、无 World question trace、无 D9 工具稳定 schema。
 
 **子任务拆分**
-1. 实现 UUPS/Ownable 初始化，持有 `GameEngine`/`AgentRegistry` 地址。
-2. 实现 market 创建与 bet：下注前先**自行复刻控制权校验**，要求 `msg.sender` 是该 `agentId` 的 owner——即读 `AgentRegistry` 的 public mapping `agentOwner(agentId)`（`AgentRegistry.sol:22`）并 `require(msg.sender == registry.agentOwner(agentId), ...)`（Auth 路径 b 再追加 `|| registry.isDelegate(agentId, msg.sender)`），通过后再 `spendOre(agentId, amount)`。**不可**写成 `registry.canControlAgent(msg.sender)`：`canControlAgent` 是入参为 `agentId` 的 modifier（`:45-48`）、不是传 caller 的外部函数；且其 `_isOperator` 分支对身为全局 operator 的市场合约恒真，直接复用会放行任意 caller 替他人下注。
-3. 实现到期 self-resolve，读链上事实算 winning outcome；`resolve` 不设 onlyOwner/operator。
-4. 实现退款/派彩策略，明确 cap：避免 `refundOre` 1000 cap 静默吞收益，或测试中显式断言 cap 行为。
-5. 补授权集成测试：未 `addOperator(market)` 时 bet revert，授权后成功。
-6. 补控制权测试：非控制者替他人 agent 下注必须 revert。
+1. 定义 trace schema：`questionId/matchId/stage/actor/target/effect/value/seedHash/snapshotHash`。
+2. Arena ability 触发点 emit 或 view trace 中返回 `AbilityEvent[]`；不破坏旧 `Turn[]` 消费。
+3. World C3 battle resolve 输出 trace events 或 trace hash，供 D9 拉取。
+4. D9 负责 MCP 工具 schema；F2/F3 只在 D9 可用后接 UI。
 
 **验收标准**
-- [ ] 命令：`cd contracts && forge test --match-test test_SelfResolvingMarketOwnsHexSettlesPermissionlessly -vv` → 期望：任意 caller 到期后 resolve，winning outcome 正确，事件 `MarketResolved` 发出。
-- [ ] 命令：`cd contracts && forge test --match-test test_MarketBetRequiresRegistryOperatorAuthorization -vv` → 期望：未授权 market 调 `spendOre` revert；`registry.addOperator(market)` 后下注扣 ore 成功。
-- [ ] 命令：`cd contracts && forge test --match-test test_MarketBetRejectsNonControllerBettingForOthersAgent -vv` → 期望：非 owner（既非该 `agentId` 的 `agentOwner` 也非其 per-agent 委托者）替他人 `agentId` 下注 revert，即使 market 已是全局 operator；owner 本人下注成功。
+- [ ] 命令：`cd contracts && forge test --match-test test_ArenaTraceIncludesAbilityEventsWithoutBreakingTurns -vv` → 期望：旧 turns 仍可解码，新 ability events 包含触发顺序。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldQuestionTraceAnchorsSnapshotAndEntropy -vv` → 期望：trace 包含 `questionId/stateSnapshotHash/entropyRequestId/outcome`。
 
-#### C3 · Oracle 市场、过期退款与 rake [SC | `PredictionMarket.sol` | 依赖 C2 | maps-to roadmap E1.3, US-D1]
+---
+
+### Lane C · World-as-Market Core（旧 Lane C 作废重建）
+
+#### C0 · 机制规格 + 不变量落库 [SC/DOC | `docs/world-as-market.md` 对齐 + `WorldSpec.t.sol` | 依赖无 | maps-to world-as-market §8.1 C0]
 
 **功能点**
-- 玩家/用户可见：主观市场可由 Oracle 裁定；过期未裁定可退款；Oracle 市场对 losing pool 抽成。
-- 技术交付物：ORACLE market type；resolver/oracle agent 配置；10% rake；timeout refund；`MarketRefunded` 事件。
+- 用户可见：产品、合约、MCP、前端对“万物皆答题 + 双币”使用同一套规则。
+- 技术交付物：`IWorldQuestion`/World spec 文档、invariant test skeleton、禁止 ore->G、G pool no cap、score 前置、freeze 前置全部写进测试或 CI 检查。
 
 **现状 & 缺口**
-- 已有：debate Oracle 由 operator 调 `outcomeOverride`（`GameEngine.sol:811-823`），10% tax 写死（`:862-868`）；demo 对齐 10% rake（`demo/index.html:236-244`）。
-- 缺：独立 market 无 Oracle resolver；无过期退款；无 rake 事件/会计测试。
+- 已有权威设计：`docs/world-as-market.md` 定义核心循环与统一原语（`docs/world-as-market.md:7-26`、`docs/world-as-market.md:27-101`），Lane 重构骨架在 §8（`docs/world-as-market.md:592-675`）。
+- 现状仍是分立 `GameEngine` + ledger + Arena，不存在 `World.sol`。
+- 缺：无可执行 invariant tests；旧 dev-breakdown 仍有 ore market/PredictionMarket 残留（本次重写移除）。
 
 **子任务拆分**
-1. 设计 oracle/resolver 角色：owner 设置、market creator 设置或 agent ID 映射。
-2. 实现 oracle resolve 权限与超时 refund。
-3. 实现 rake 入账目标（oracle agent ore 或 protocol pool）并测试 cap。
-4. 更新 C1 docs/D1 tools/E4 UI 字段。
+1. 新建 `contracts/src/IWorldQuestion.sol` interface 草案，与 `world-as-market` §6.1 字段/事件一致。
+2. 新建 `contracts/test/WorldInvariants.t.sol` skeleton：ore->G 禁止、G pool no cap、treasury accounting、score-based G market guard、legacy freeze guard。
+3. 写 `docs/world-core-spec.md` 或合约 NatSpec：明确 MATH/STATE/ORACLE、Currency、Status、fee/tax/payout 语义。
+4. CI/grep 检查禁止新增 `convertOreToG/burnOreForG/claimGFromOre` 等入口。
 
 **验收标准**
-- [ ] 命令：`cd contracts && forge test --match-test test_OracleMarketRakeAndPayoutAccounting -vv` → 期望：losing pool 10% 进入 Oracle，剩余按 winning stake 比例派发。
-- [ ] 命令：`cd contracts && forge test --match-test test_OracleMarketTimeoutRefundsAllBettors -vv` → 期望：超过 grace 后任何人可触发 refund，`MarketRefunded` 发出，重复 refund 不可二次领取。
+- [ ] 命令：`cd contracts && forge test --match-contract WorldInvariants -vv` → 期望：初始 skeleton 能编译并包含不变量断言。
+- [ ] 命令：`rg -n "convertOreToG|burnOreForG|claimGFromOre" contracts/src docs/dev-breakdown.md` → 期望：除“禁止项说明”外无实现入口。
 
-### Lane D · MCP / keeper / telemetry / autopilot
-
-#### D0 · 修 MCP 文案漂移 [MCP | `tools.ts` | 依赖无 | maps-to roadmap E5.5]
+#### C1 · `IWorldQuestion` 状态机：OPEN/LOCKED/RESOLVED/CANCELLED + `QuestionLocked` [SC | `IWorldQuestion.sol`,`World.sol` | 依赖 C0,A3 | maps-to world-as-market §8.1 C1]
 
 **功能点**
-- 玩家/用户可见：MCP 输出的民心加成和 chronicle cooldown 与链上一致。
-- 技术交付物：`post_to_location` 文案 `+10` 改 `+5`；`write_chronicle` 文案 10-minute 改 5-minute。
+- 用户可见：任何动作/市场都有清晰状态；高价值 question 会锁定状态后再结算。
+- 技术交付物：`Question` storage、`createQuestion/answer/bet/lock/resolve/claimPayout/getQuestion`；`QuestionCreated/Answered/Locked/Resolved/WorldEventTriggered` 事件。
 
 **现状 & 缺口**
-- 已有：`post_to_location` 返回 `happiness +10`（`mcp-server/src/tools.ts:316`），但合约 `POST_MORALE=5`（`GameEngine.sol:42`）。
-- 已有：`write_chronicle` 写 10-minute cooldown（`tools.ts:529-530`），但合约 `CHRONICLE_COOLDOWN=300`（`GameEngine.sol:58`）。
-- 缺：无文案一致性测试。
+- 已有：GameEngine 入口各自有独立状态，debate 只有 `resolved/expired`（`contracts/src/GameEngine.sol:90-112`、`contracts/src/GameEngine.sol:897-911`）。
+- 缺：无统一 status；无 `LOCKED`；无 `QuestionLocked(stateSnapshotHash,lockedAt)`；无 per-agent answer stats；无 scoped delegation 校验。
 
 **子任务拆分**
-1. 修改两处工具描述/返回文案。
-2. 增加轻量文本一致性测试或 `rg` 检查脚本。
-3. 跑 MCP build。
+1. 实现 `QuestionKind {MATH, STATE, ORACLE}`、`Currency {NONE, ORE, G}`、`QuestionStatus {OPEN, LOCKED, RESOLVED, CANCELLED}`。
+2. `createQuestion` 写 storage 与 metadata hash；`answer` 仅用于 MATH/STATE；`bet` 仅用于 G/market pool。
+3. `lock(questionId, lockData)`：OPEN -> LOCKED，写 `stateSnapshotHash`，emit `QuestionLocked`；MATH difficulty 0 可不 lock，money-staked STATE 必须 lock。
+4. `resolve`：只能从 OPEN（纯 MATH）或 LOCKED（STATE/RNG/ORACLE）进入 RESOLVED/CANCELLED。
+5. `claimPayout` 幂等；更新 answer accuracy counters，供 A4 score 使用。
+6. `answer/bet` 校验 agent owner/scoped delegate/permit，不复用全局 operator 恒真语义（见 A3）。
 
 **验收标准**
-- [ ] 命令：`cd mcp-server && npm run build` → 期望：TypeScript 编译通过。
-- [ ] 命令：`cd mcp-server && rg -n "happiness \\+10|10-minute cooldown" src/tools.ts` → 期望：无输出，退出码 1；对应文案出现 `+5` 与 `5-minute`。
+- [ ] 命令：`cd contracts && forge test --match-test test_QuestionStateMachineRejectsInvalidTransitions -vv` → 期望：OPEN/LOCKED/RESOLVED/CANCELLED 转换严格；重复 resolve/claim 不重复付款。
+- [ ] 命令：`cd contracts && forge test --match-test test_QuestionLockedEmitsSnapshotHash -vv` → 期望：money-staked STATE question 必须 lock，事件含非零 `stateSnapshotHash`。
 
-#### D0b · 修 `chain.ts` GameEngine 事件 ABI [MCP | `chain.ts` | 依赖无 | maps-to 新增，阻塞 D5]
+#### C2 · MATH/STATE faucet 包装 `harvest/build` [SC | `World.sol`,World action module | 依赖 C1,A1,A3 | maps-to world-as-market §8.1 C2]
 
 **功能点**
-- 玩家/用户可见：遥测和事件监听能正确识别 harvest、capture、rebellion。
-- 技术交付物：删不存在 `HexClaimed`；修 `Harvested(uint256,uint256)`；加 `HexCaptured`/`HexRebelled`。
+- 用户可见：Harvest/Build 仍是低摩擦动作，但链上记录为 difficulty 0/低难 question。
+- 技术交付物：`answer_question` 能跑通 harvest/build；ore reward 固定/无限参与层；不收或低收 G fee；不得触发 G credit。
 
 **现状 & 缺口**
-- 已有：`chain.ts` 里有不存在的 `HexClaimed`（`mcp-server/src/chain.ts:44`）。
-- 已有：`Harvested` ABI 写成 `bytes32 hexKey`（`:47`），真实为 `Harvested(uint256 indexed agentId, uint256 oreGained)`（`GameEngine.sol:142`）。
-- 缺：`chain.ts` 未声明真实 `HexCaptured/HexRebelled`（`GameEngine.sol:150-151`）。
+- 已有：harvest lazy 产 ore 并 clamp 到 `MAX_ORE_POOL`（`contracts/src/GameEngine.sol:293-306`）；build 扣 ore 加 mine/arsenal（`contracts/src/GameEngine.sol:344-367`）。
+- 缺：无 `Question` 包装、无 faucet rate 计数、无 answer accuracy、无 `msg.sender == agentOwner(agentId)` / delegate / permit 强校验。
 
 **子任务拆分**
-1. 更新 `GAME_ENGINE_ABI` 事件签名。
-2. 检查 log parse 代码里对 `Harvested` 的 arg 使用（`chain.ts:423`）是否仍正确。
-3. 给 D5 telemetry 增加事件源 smoke test。
+1. `createHarvestQuestion(agentId)` 或 implicit `answerHarvest(agentId)`：kind MATH/STATE、difficulty 0、currency ORE/NONE、feeG=0。
+2. `answerBuild(agentId,hexKey,buildingType)`：kind STATE、difficulty 50、currency ORE、sink=50/100 ore。
+3. 对真人直接 answer：默认要求 `msg.sender == registry.agentOwner(agentId)`；runner/relay 使用 A3 scoped delegate/permit。
+4. 记录 faucet rate：agent/window/oreReward/questionId；D3 遥测消费。
+5. 测试 ore mint/sink 后 `GTreasury.gBalance/totalOutstandingG/surplusG` 不变。
 
 **验收标准**
-- [ ] 命令：`cd mcp-server && rg -n "HexClaimed|Harvested\\(bytes32" src/chain.ts` → 期望：无输出，退出码 1。
-- [ ] 命令：`cd mcp-server && npm run build` → 期望：编译通过，`HexCaptured`/`HexRebelled` ABI 字符串存在。
+- [ ] 命令：`cd contracts && forge test --match-test test_HarvestBuildQuestionsDoNotChangeGAccounting -vv` → 期望：harvest/build 后 ore 变化正确，G balance/outstanding/surplus 不变。
+- [ ] 命令：`cd contracts && forge test --match-test test_AnswerQuestionRequiresAgentOwnerOrDelegate -vv` → 期望：非 owner/非 delegate 无法 answer 他人 agent；owner 与有效 delegate 成功。
 
-#### D1 · PredictionMarket MCP 工具 [MCP | `tools.ts`,`chain.ts` | 依赖 C1,P3a；e2e 依赖 C2,P2 | maps-to roadmap E1.4, US-D1/D3]
+#### C3 · combat 分阶段 RNG + 状态锁定快照 [SC | `World.sol`,combat module | 依赖 C1,B1,A2 | maps-to world-as-market §8.1 C3]
 
 **功能点**
-- 玩家/用户可见：LLM agent 可创建市场、下注、查询、触发结算。
-- 技术交付物：MCP 工具 `create_market/bet/resolve_market/list_markets/get_market`；`chain.ts` 增 PredictionMarket ABI；地址从 P3a resolver/Router V4 取。
+- 用户可见：Raid/Attack 的结果可解释、可回放；G stake/event prize 不受 state drift 和 RNG grind 影响。
+- 技术交付物：combat question open/answer -> lock snapshot -> finalize RNG -> resolve；snapshot 不读 live state 结算；stale owner refund。
 
 **现状 & 缺口**
-- 已有：MCP 工具注册入口 `registerTools`（`tools.ts:10-20`）和 ChainClient ready 解析 Router（`chain.ts:261-281`）。
-- 缺：无 PredictionMarket ABI/Contract；无 market 工具；P3a 未提供 market address；未授权 market 时下注会因 `spendOre` revert。
+- 已有：`attack`/`raid` 都在单 tx 内扣资源、读取 live owner、防御、`prevrandao` 并改 owner（`contracts/src/GameEngine.sol:388-447`、`contracts/src/GameEngine.sol:631-695`）。
+- 已有：`inciteRebellion` 使用 live happiness + 50% prevrandao（`contracts/src/GameEngine.sol:563-615`）。
+- 缺：无 `lock` 快照；无 entropy request；无 target owner 变化退款；无 G escrow battle fee；无 trace。
 
 **子任务拆分**
-1. 在 `chain.ts` 增 ABI 和 `requirePredictionMarket`。
-2. 在 `tools.ts` 注册五个工具，参数与 C1 interface 对齐。
-3. 新建/更新 `mcp-server/scripts/e2e-market-tools.mjs`，走 HTTP MCP 客户端调用。
-4. 本地 e2e 使用 anvil + P2 授权市场；测试未授权错误文案。
+1. `answerCombat` 保存 payload：target/source、arsenalSpend、oreSpend、optional feeG、resolveAt。
+2. `lockCombat` 快照 target/source owner、source arsenal、target defense/happiness、attacker location、cooldown、target owner、ore spend；emit `QuestionLocked`。
+3. 调 B1 `requestEntropy(questionId,snapshotHash)`；entropy 未 finalized 时 resolve revert。
+4. `resolveCombat` 只读 snapshot + entropy；若 live target owner != snapshot owner，则 CANCELLED/refund。
+5. 成功/失败写 legacy world state via A2 adapter；emit `QuestionResolved` + trace。
+6. incite 也进入 staged STATE question；低价值 comeback 可用 no-G mock entropy，但不能用于 G 市场。
 
 **验收标准**
-- [ ] 命令：`cd mcp-server && npm run build` → 期望：新增工具和 ABI 编译通过。
-- [ ] 命令：`cd mcp-server && node scripts/e2e-market-tools.mjs http://127.0.0.1:3005/mcp` → 期望：`create_market -> bet -> resolve_market -> get_market` 全链路通过；未授权/余额不足时返回可读错误。
+- [ ] 命令：`cd contracts && forge test --match-test test_CombatQuestionRefundsWhenTargetOwnerChangesAfterLock -vv` → 期望：lock 后目标易主，question cancel，G/ore escrow 退回，不改 owner。
+- [ ] 命令：`cd contracts && forge test --match-test test_CombatQuestionUsesSnapshotForTullock -vv` → 期望：resolve 用 lock 时 arsenal/defense/location/cooldown 快照，不受之后 live build/move 影响。
 
-#### D1b · Arena shop MCP 工具 roll/freeze/move [MCP | `tools.ts`,`chain.ts`,e2e script | 依赖无 | maps-to demo Shop/Roll]
+#### C4 · treasury + G 会计不变量（escrow/tax/burn/event pool） [SC | `World.sol`,`GTreasury.sol` | 依赖 C1 | maps-to world-as-market §8.1 C4]
 
 **功能点**
-- 玩家/用户可见：agent 可通过 MCP 真实 roll shop、freeze shop slot、移动 bench。
-- 技术交付物：`arena_roll`、`arena_freeze`、`arena_move` 工具；`ARENA_ENGINE_ABI` 增 `roll/freeze/move`；修**两个**旧 e2e 脚本（`e2e-arena-tools.mjs` 与 `e2e-arena-full.mjs`）使其工具名与现工具名一致、交付后无残留坏调用。
+- 用户可见：G stake、refund、payout、tax/burn/event pool 可见且不会被 owner surplus 提走。
+- 技术交付物：G escrow/release/payout/refund 会计原语、protocolBurnG、eventPrizePoolG、World treasury view/events；`surplusG` 排除 escrow/event pool；parimutuel 规则本身落 C6。
 
 **现状 & 缺口**
-- 已有：链上 `move/freeze/roll` 已在 `ArenaEngine`（`contracts/src/ArenaEngine.sol:347-403`）。
-- 已有：`tools.ts` Arena 工具从 `arena_list_units` 到 `arena_submit`，无三项 shop 工具（`mcp-server/src/tools.ts:610-773`）。
-- 已有：旧 `e2e-arena-tools.mjs` 已调用缺失工具 `arena_move/arena_freeze/arena_roll`（`mcp-server/scripts/e2e-arena-tools.mjs:51-58`），还含过时的 `arena_sell`（`:60`，`tools.ts` 无此工具）。
-- 已有：`e2e-arena-full.mjs` 同样调用缺失的 `arena_move/arena_freeze/arena_roll`（`mcp-server/scripts/e2e-arena-full.mjs:64-71`），并调用**不存在的过时工具名** `arena_get_g_balance`/`arena_fund_g`（`:78`、`:83`）——`tools.ts` 现工具名是 `arena_deposit_g`（`tools.ts:644`）/`arena_withdraw_g`（`:657`），G 余额读取走 `arena_get_state`（`:620`），无独立 `arena_get_g_balance`/`arena_fund_g`。
-- 缺：chain ABI 和 ChainClient method。
+- 已有：`depositG`（`contracts/src/GTreasury.sol:100-107`）、`spendG`（`contracts/src/GTreasury.sol:117-122`）、`creditG`（`contracts/src/GTreasury.sol:126-130`）、`surplusG`（`contracts/src/GTreasury.sol:165-169`）。
+- 已有风险：`surplusG = balance - totalOutstandingG` 未排除 future escrow/event pool（`contracts/src/GTreasury.sol:165-169`）；`withdrawSurplus` 同样只排 outstanding（`contracts/src/GTreasury.sol:151-159`）。
+- 已有反例：demo G/market 目前是 ore-native clamp（`demo/index.html:575-584`）；GameEngine debate ore payout clamp 到 `MAX_ORE_POOL`（`contracts/src/GameEngine.sol:867-881`）。
+- 缺：无 `escrowG/eventPrizePoolG/protocolBurnG`；无 World-only escrow/release/payout/refund 入口；无 `WorldTreasuryUpdated/EventPrizePoolFunded/ProtocolBurnAccounted` 事件；无 G pool no cap tests。
 
 **子任务拆分**
-1. `chain.ts` ABI 增 `move/freeze/roll`，实现 `arenaMove/arenaFreeze/arenaRoll`。
-2. `tools.ts` 注册三个工具，返回 tx hash、冻结态、new seed。
-3. 修 `e2e-arena-tools.mjs`：补上新增的 `arena_move/arena_freeze/arena_roll` 调用，移除/更新不存在的 `arena_sell` 和旧参数。
-4. 修 `e2e-arena-full.mjs`：同样接通 `arena_move/arena_freeze/arena_roll`，并把过时工具名更新为现工具名——`arena_fund_g` → `arena_deposit_g`（`tools.ts:644`），`arena_get_g_balance` → 用 `arena_get_state`（`tools.ts:620`）读 G 余额（或 `arena_withdraw_g`，`:657`，按脚本语义选其一）。
-5. 跑本地 anvil MCP e2e，确保两个脚本都无残留坏调用。
+1. 在 GTreasury append accounting：`escrowGTotal`、`eventPrizePoolG`、`protocolBurnG` 或等价拆账。
+2. 增加 World-only `escrowG/releaseEscrowG/refundEscrowG/payoutG/fundEventPoolG` entrypoints；module 不直接 custody G。
+3. `surplusG`/`withdrawSurplus` 改为排除 `escrowG + eventPrizePoolG + protocolBurnPending`。
+4. C6/C7 只能通过 C4 会计原语移动 G；不得直接用 `creditG` 裸发 payout/refund。
+5. tax/rake 拆分：protocol surplus、burn、event prize pool，emit 明细事件。
+6. 收紧 `creditG` reason/caller：允许 deposit/faucet 既有路径、保留 CardLedger `market_sale` 守恒，World payout/refund/event reward 必须来自 escrow/funded pool。
 
 **验收标准**
-- [ ] 命令：`cd mcp-server && npm run build` → 期望：ABI/method/tool 编译通过。
-- [ ] 命令：`cd mcp-server && rg -n "arena_sell|arena_get_g_balance|arena_fund_g" scripts/e2e-arena-tools.mjs scripts/e2e-arena-full.mjs` → 期望：无输出、退出码 1（两个脚本已无过时/不存在工具名）。
-- [ ] 命令：`cd mcp-server && node scripts/e2e-arena-tools.mjs http://127.0.0.1:3005/mcp` → 期望：`arena_move` 显示 swapped，`arena_freeze` 显示 frozen/unfrozen，`arena_roll` 扣 1 G 并返回新 seed。
-- [ ] 命令：`cd mcp-server && node scripts/e2e-arena-full.mjs http://127.0.0.1:3005/mcp` → 期望：`arena_move/arena_freeze/arena_roll` 与 `arena_deposit_g` 全链路通过，G 余额经 `arena_get_state` 可读，无 unknown-tool 报错。
+- [ ] 命令：`cd contracts && forge test --match-test test_TreasuryEscrowReleasePayoutConservesG -vv` → 期望：escrow/release/payout/refund 后 `nativeBalance >= outstanding + escrow + eventPool + burnPending`，无裸增发。
+- [ ] 命令：`cd contracts && forge test --match-test test_TreasurySurplusExcludesEscrowAndEventPool -vv` → 期望：escrow/event pool 不可被 `withdrawSurplus` 提走，会计满足 `nativeBalance >= outstanding + escrow + eventPool + burnPending`。
+- [ ] 命令：`cd contracts && forge test --match-test test_OrePathsNeverCreditG -vv` → 期望：harvest/build/attack/debate/incite ore 变化不增加任何 agent G。
 
-#### D2 · 市场结算 keeper [INFRA | `keeper-market.mjs` | 依赖 C2,P3a | maps-to roadmap E1.6, US-D4]
+#### C5 · legacy 冻结迁移与兼容 alias checklist [SC/DOC | `World.sol`,migration tests | 依赖 D4,C2,C3,C4 | maps-to world-as-market §8.1 C5]
 
 **功能点**
-- 玩家/用户可见：到期自结算市场无需人工点击，会自动开奖。
-- 技术交付物：新 `mcp-server/scripts/keeper-market.mjs`；读取 P3a resolver；扫描到期 market；调用 permissionless `resolve`；ONCE 和 loop 两种模式。
+- 用户可见：旧入口名可继续用一段时间，但所有真实状态变更都走 World。
+- 技术交付物：migration checklist、compatibility alias、freeze order、indexer/事件兼容、回滚策略；C5 只产出 freeze 前置清单，不打开 freeze。
 
 **现状 & 缺口**
-- 已有：Arena keeper 模式可参考：env 配置、ONCE、tick、Router 解析、permissionless 调用（`mcp-server/scripts/keeper.mjs:15-33`、`:152-168`）。
-- 缺：无 market keeper；无 list due markets API（D1/C2 需提供）；无 `just keeper-market-*` recipe。
+- 已有破坏面：MCP 旧动作直调 `GameEngine`（`mcp-server/src/tools.ts:131-219`）；旧 debate 工具是 ore 市场（`mcp-server/src/tools.ts:401-470`）；agent-runner selfTools 注入旧主世界动作（`agent-runner/src/mcp.ts:118-122`）。
+- 缺：无迁移开关；无 alias 测试；无 “D4 已先切流，再允许 A5 freeze” gate。
 
 **子任务拆分**
-1. 实现 keeper-market env：`NETWORK/RPC_URL/ROUTER_ADDRESS/KEEPER_KEY/TICK_SECONDS/ONCE`。
-2. 调 D1/C2 提供的 due market 读取接口，逐个 `resolve`。
-3. 处理已结算/未到期/resolve revert 的日志与重试。
-4. 增加 justfile recipe 和 README。
+1. 定义阶段：Phase 0 skeleton、Phase 1 harvest/build、Phase 2 combat、Phase 3 debate/ORACLE、Phase 4 freeze。
+2. alias 行为：`harvest/build/attack/raid/claim_neutral/incite_rebellion/start_debate/vote_debate/resolve_debate` 旧名在 D 层映射到 World question。
+3. 事件兼容：indexer 可同时读 `QuestionResolved` 和 legacy `Built/AttackResult/DebateResolved`。
+4. `legacyWritesFrozen` 打开前跑 checklist：P2/P3a、A3、C2/C3/C4、C6/C7 如涉及 G market/ORACLE、D1/D4、F7 通过；A5 只消费该 checklist。
+5. 回滚：短期保留 owner unfreeze；长期 owner 可决定永久 freeze。
 
 **验收标准**
-- [ ] 命令：`cd mcp-server && NETWORK=localhost KEEPER_KEY=0xac0974... ONCE=1 node scripts/keeper-market.mjs` → 期望：到期 SELF_RESOLVING market 在一 tick 内 resolved，日志含 marketId 和 tx hash。
-- [ ] 命令：`cd mcp-server && node scripts/e2e-market-keeper.mjs` → 期望：创建短到期市场、下注、等待/warp、keeper ONCE、`get_market` 返回 `resolved=true` 且派彩/退款可观测。
+- [ ] 命令：`cd contracts && forge test --match-test test_LegacyMigrationChecklistBlocksFreezeWhenD4AliasesMissing -vv` → 期望：D4 alias/runner 切流或 World 入口缺失时不能启用 A5 freeze。
+- [ ] 命令：`cd mcp-server && node scripts/e2e-world-legacy-alias.mjs http://127.0.0.1:3005/mcp` → 期望：旧工具名 `harvest/build/attack/raid/claim_neutral/incite_rebellion/start_debate` 返回 questionId/tx，链上默认路径为 World。
 
-#### D3 · 成就铸卡 keeper（exactly-once） [INFRA | `keeper-achievement.mjs` | 依赖 A2,B3,P4 | maps-to roadmap E3.3, US-E5]
+#### C6 · G parimutuel 通用市场模块（含 market type） [SC | `World.sol`,market module | 依赖 C1,C4,A3 | maps-to world-as-market §8.1 C6]
 
 **功能点**
-- 玩家/用户可见：达成成就后自动得到故事卡，重复事件不重复铸。
-- 技术交付物：监听 `AchievementUnlocked`；按 `(agentId, achievementTag)` 持久去重；调用 `mintStoryCard`；支持重启恢复。
+- 用户可见：任意 World Question 可开 G 计价市场，支持不同 market type，下注/结算/领取用统一流程。
+- 技术交付物：`createQuestion` market config、`betG`/`resolveMarket`/`claimPayout`、market type enum、per-outcome pool/position、G parimutuel payout，无 ore cap。
 
 **现状 & 缺口**
-- 已有：无 `AchievementUnlocked`（A2 补）；无 `mintStoryCard`（B3 补）。
-- 已有：`CardLedger.onlyOperator` 需要 P4 授权（`CardLedger.sol:61-63`）。
-- 缺：无 keeper-achievement；无 seen-set 存储；无撤权测试。
+- 已有：旧 debate 下注扣 ore 并记录 support/oppose 池（`contracts/src/GameEngine.sol:746-798`），resolve 按 ore parimutuel 分配且 payout clamp 到 `MAX_ORE_POOL`（`contracts/src/GameEngine.sol:854-891`）。
+- 已有：demo market payout 仍是 ore-native clamp（`demo/index.html:575-584`）。
+- 已有：GTreasury 只有通用 `spendG/creditG`（`contracts/src/GTreasury.sol:117-130`），没有 question escrow/position。
+- 缺：无 G market type、无 G escrow pool、无 per-outcome shares、无 idempotent `claimPayout`、无 score-based market guard。
 
 **子任务拆分**
-1. 设计 seen-set 存储（json/sqlite/kv），key=`chainId:agentId:achievementTag`。
-2. 实现事件扫描 + live polling；支持 `FROM_BLOCK`/`ONCE`。
-3. 调 `mintStoryCard`，记录 tx hash 和失败重试策略。
-4. 写 e2e：重启 keeper 或重复扫描不二次 mint。
+1. 定义 `MarketType`：至少覆盖 `BINARY`、`MULTI_OUTCOME`、`SCALAR` 或 owner 拍板的等价集合；写进 `Question.marketType`。
+2. `createQuestion` 写 market config：currency 必须为 G、outcome schema、closeAt/resolveAt、resolver、metadataHash。
+3. `betG(questionId,outcome,amountG)`：通过 C4 escrow 进入 question pool，记录 agent position，总池/分 outcome 池可查。
+4. `resolveMarket(questionId,outcome)`：只读 resolved outcome 和 pool；扣 tax/rake 后按 parimutuel 计算可领 G，绝不套用 `MAX_ORE_POOL`/`ORE_POOL_CAP`。
+5. `claimPayout` 幂等：重复 claim 不重复付款；输家 position 保留可索引但 payout 为 0。
+6. score-based G market guard：A4 score v2 未激活时禁止创建 score-resolved G market。
 
 **验收标准**
-- [ ] 命令：`cd mcp-server && NETWORK=localhost KEEPER_KEY=0x... ONCE=1 node scripts/keeper-achievement.mjs` → 期望：监听到 A2 事件后铸出一张带 B3 metadata 的故事卡。
-- [ ] 命令：`cd mcp-server && node scripts/e2e-achievement-keeper.mjs --replay` → 期望：重复扫描同一区块/重启 keeper 后卡数不变；`removeOperator(keeper)` 后铸卡失败并有明确日志。
+- [ ] 命令：`cd contracts && forge test --match-test test_GParimutuelMarketCreateBetResolveClaim -vv` → 期望：创建、下注、resolve、claim 全流程守恒，赢家按 G pool 比例领取。
+- [ ] 命令：`cd contracts && forge test --match-test test_GParimutuelSupportsMarketTypesAndRejectsOreStake -vv` → 期望：不同 `MarketType` 配置可读；G market 不接受 ore stake。
+- [ ] 命令：`cd contracts && forge test --match-test test_GMarketPayoutHasNoOreCapClamp -vv` → 期望：大额 G pool 派彩完整到账，不受 1000 ore cap 影响。
 
-#### D4 · MCP 背包返回卡元数据 [MCP | `tools.ts`,`chain.ts` | 依赖 B3 | maps-to roadmap E3.4, US-E5]
+#### C7 · ORACLE resolver + 超时退款 + 争议 [SC | `World.sol`,oracle module | 依赖 C1,C4,C6,A3 | maps-to world-as-market §8.1 C7]
 
 **功能点**
-- 玩家/用户可见：LLM agent/MCP 客户端能读卡的来历和故事标签。
-- 技术交付物：CardLedger ABI decode B3 字段；`arena_list_inventory`/`arena_list_market`/`arena_get_card` 返回 metadata。
+- 用户可见：外部事实类问题有指定 resolver、超时退款和争议窗口；旧 oracle debate 迁到 G question。
+- 技术交付物：ORACLE question fields、resolver role、resolve proof、timeout refund、dispute hook/status、keeper 可结算/退款。
 
 **现状 & 缺口**
-- 已有：`arenaListInventory` 只 decode base card + onBench/listed（`mcp-server/src/chain.ts:920-934`）；`decodeCard` 当前按旧 4-字段 struct（`chain.ts:793-806`）。
-- 已有：tools 暴露 inventory/market/listing（`tools.ts:697-748`），`arena_get_card` 已存在（`tools.ts:954`、chain `arenaGetCard` 在 `chain.ts:1064`）。
-- 缺：无 story fields；前端 F5 走 direct RPC，不依赖 D4。
+- 已有：oracle debate 由 `oracleAgentId` 决定时长（`contracts/src/GameEngine.sol:723-724`），投票要求 ore bet 且 oracle 不能投（`contracts/src/GameEngine.sol:763-767`），resolve 只有 operator 可传 outcome（`contracts/src/GameEngine.sol:801-814`）。
+- 已有：`expireDebate` 超时退款只适用于旧 oracle debate（`contracts/src/GameEngine.sol:897-911`）。
+- 已有：MCP `start_debate/vote_debate/resolve_debate` 文案和参数仍围绕 ore betting（`mcp-server/src/tools.ts:401-470`）。
+- 缺：无 G escrow oracle market；无 resolver proof/dispute fields；无 timeout refund 与 dispute 对 C6 G pool 的统一状态机；无 keeper question flow。
 
 **子任务拆分**
-1. 更新 `CARD_LEDGER_ABI.getCard` tuple（`chain.ts:166-167`）。
-2. 更新 `decodeCard`（`chain.ts:793`）与 `arenaGetCard`（`chain.ts:1064`），保留旧合约 fallback。
-3. **扩展既有** `arena_get_card`（`tools.ts:954`）返回 metadata，并补 inventory/market metadata 输出。
-4. 补 e2e 覆盖普通卡 metadata 为空、故事卡非空。
+1. 扩展 ORACLE metadata：resolver、resolveDeadline、gracePeriod、disputeWindow、outcomeSchema、proofURI/hash。
+2. `resolveOracle(questionId,outcome,proof)`：只能 resolver/keeper policy 允许者调用；resolve 后进入 C6 payout。
+3. `timeoutRefund(questionId)`：deadline + grace 后任何人/keeper 可触发 CANCELLED，所有 G escrow 全额退款。
+4. `openDispute/questionDisputed`：争议期内暂停 payout；owner/dao/resolver policy 决定维持、改判或退款。
+5. D2 keeper 集成：due ORACLE 自动 resolve/refund；旧 `start_debate/vote_debate/resolve_debate` 只作为 alias。
 
 **验收标准**
-- [ ] 命令：`cd mcp-server && npm run build` → 期望：新 tuple 类型编译通过，旧字段调用不报错。
-- [ ] 命令：`cd mcp-server && node scripts/e2e-arena-card-flow.mjs` → 期望：`arena_list_inventory` 返回 `variant/edition/originAgent/achievementTag/mintedReason`，普通卡字段为空但结构存在。
+- [ ] 命令：`cd contracts && forge test --match-test test_OracleResolverCanResolveGQuestionWithProof -vv` → 期望：合法 resolver 可带 proof resolve，非法 resolver revert。
+- [ ] 命令：`cd contracts && forge test --match-test test_OracleTimeoutRefundsAllGAfterGrace -vv` → 期望：超时后 question 取消，所有 G escrow 原路退款，不能再 claim payout。
+- [ ] 命令：`cd contracts && forge test --match-test test_OracleDisputePausesPayoutAndCanRefund -vv` → 期望：争议期间 claim revert，争议退款后所有 position 可退。
 
-#### D5 · 链上遥测与健康指标 [INFRA | `telemetry/` | 依赖 D0b | maps-to roadmap E2.2]
+#### C8 · World event registry 注册式扩展 [SC | `World.sol`,`WorldExtensionRegistry.sol` | 依赖 C1,C4 | maps-to world-as-market §8.1 C8]
 
 **功能点**
-- 玩家/用户可见：运营能看到策略分布、财富集中、复活率、领地周转，支撑调参。
-- 技术交付物：事件扫描脚本/CSV/dashboard；指标公式写清；读取修正后的事件 ABI。
+- 用户可见：矿潮、boss、treasury threshold 等世界事件可被注册、触发、查询，并能把 G 奖池接到问题流。
+- 技术交付物：event type registry、trigger policy、active event storage、`WorldEventTriggered`、`get_world_events` 数据模型、module allowlist。
 
 **现状 & 缺口**
-- 已有：GameEngine 真实事件源：`AttackResult`、`HexCaptured`、`HexRebelled`、`DebateResolved`、`Harvested`（`GameEngine.sol:142-155`）。
-- 缺：`chain.ts` 事件 ABI 未修前无法稳定解析（D0b）；无 telemetry 目录；无指标输出。
+- 已有：MCP `get_world` 只返回当前世界/hex 状态（`mcp-server/src/tools.ts:80-82`），`arena_get_treasury` 只读 Arena treasury（`mcp-server/src/tools.ts:822-830`）。
+- 已有：Router 当前没有 `world` slot，storage 止于 `cardLedger`（`contracts/src/Router.sol:10-21`）。
+- 缺：无 World event registry；无 treasury threshold -> event trigger；无 event prize pool 与 question linkage；无 `get_world_events` 稳定 schema。
 
 **子任务拆分**
-1. 新建 `telemetry/`，实现 event backfill：block range + RPC + router。
-2. 计算：基尼、复活率、captures/hour、ore harvested/hour、attack success rate。
-3. 输出 CSV 和可选 HTML/dashboard。
-4. 加 sample fixture 或 local chain smoke。
+1. 新建 `WorldExtensionRegistry` 或 World 内 registry：`registerEventType(typeId,module,triggerPolicy,metadataHash)`。
+2. `triggerWorldEvent(typeId,sourceQuestionId,prizePoolG,payloadHash)`：只允许 owner/registered module/treasury keeper policy；emit `WorldEventTriggered`。
+3. active events storage/view：`getWorldEvent(eventId)`、`listWorldEvents(status,count)`，供 D1/F8 使用。
+4. 与 C4 eventPrizePool 对接：触发事件时只从 funded event pool 分配，不得动 agent outstanding/escrow。
+5. 样例事件：矿潮（faucet rate modifier）、boss/world raid（G prize seed）各做最小实现或 fixture。
 
 **验收标准**
-- [ ] 命令：`cd telemetry && NETWORK=localhost node collect.mjs --from-block 0 --to-block latest --out out.csv` → 期望：生成列 `metric,window,value,computedAt`，至少含 `ore_gini,captures_per_hour,revival_rate`。
-- [ ] 命令：`cd telemetry && node test/formulas.test.mjs` → 期望：固定 fixture 的基尼/复活率/领地周转结果与手算值一致。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldEventRegistryRegistersAndTriggersTreasuryEvent -vv` → 期望：注册事件类型后，treasury threshold 可触发 `WorldEventTriggered` 并被 view 查询。
+- [ ] 命令：`cd contracts && forge test --match-test test_WorldEventPrizePoolAccountingCannotDrainEscrow -vv` → 期望：事件奖池只来自 funded pool，不能提走 agent G balance、question escrow 或 outstanding。
+- [ ] 命令：`cd mcp-server && node scripts/e2e-world-events.mjs http://127.0.0.1:3005/mcp` → 期望：`get_world_events` 返回稳定 JSON schema，至少含 `eventId/type/status/sourceQuestionId/prizePoolG`。
 
-#### D6 · autopilot 计费/gas/operator-relay 决策稿 [DOC/INFRA | 决策文档 | 依赖无 | maps-to roadmap E7.1]
+---
+
+### Lane D · MCP / keeper / runner / telemetry
+
+#### D1 · World question MCP 工具与旧 market/debate alias [MCP | `tools.ts`,`chain.ts` | 依赖 P3a,C1,C2,C4,C6,C7,C8 | maps-to world-as-market §8.5]
 
 **功能点**
-- 玩家/用户可见：后续 onboarding 和 autopilot 不再基于错误授权假设。
-- 技术交付物：一页决策稿，覆盖 LLM 计费、gas payer、relay 风控、Auth 选 (a)/(b)、后端 owner。
+- 用户可见：AI/用户用 `answer_question`、`bet_question`、`resolve_question`、`get_treasury`、`get_world_events` 操作世界；旧 `start_debate/vote_debate/resolve_debate` 不直接打旧合约。
+- 技术交付物：World ABI、Router V4 resolver、question tools、G treasury tools、legacy alias、清晰错误。
 
 **现状 & 缺口**
-- 已有：roadmap 认为 operator-relay 是关键（`docs/roadmap.md:62-63`、`:79-83`），但也有“用户可收回 operator”的 false premise（`:36-38`、`:264-266`）。
-- 已有：代码事实是全局 operator，无 per-agent delegation（`AgentRegistry.sol:19-24`、`:66-69`）。
-- 缺：relay endpoint 落点未定；免费档/限流/计费未定。
+- 已有：`tools.ts` 注册工具入口（`mcp-server/src/tools.ts:10-20`），主世界旧工具（`mcp-server/src/tools.ts:131-192`），debate ore market 工具（`mcp-server/src/tools.ts:401-470`），Arena treasury 工具（`mcp-server/src/tools.ts:822-830`）。
+- 已有：`chain.ts` Router ABI 只到 V3/V2/V1（`mcp-server/src/chain.ts:90-97`、`mcp-server/src/chain.ts:260-298`）。
+- 缺：无 World ABI/contract；无 `answer_question/bet_question/resolve_question/claim_payout/get_treasury/get_world_events`；旧 `create_market/bet/resolve_market` 不应作为新主 API。
 
 **子任务拆分**
-1. 写 `docs/autopilot-relay-decision.md`，列 (a)/(b) 取舍。
-2. 明确 relay 后端目录归属：mcp-server(D) 或新服务(E/INFRA)，并同步 §2.1。
-3. 明确用户级暂停与平台级撤权的差别。
-4. 评审通过后更新 E1b/E3/E7/D7 DoD。
+1. `chain.ts` 增 `WORLD_ABI` 与 `requireWorld()`；Router resolver 优先 V4 world。
+2. 注册工具：`create_question`、`answer_question`、`bet_question`、`resolve_question`、`claim_payout`、`get_question`、`list_questions`、`get_treasury`、`get_world_events`。
+3. 旧别名：`create_market`/`bet`/`resolve_market` 若保留，仅转成 `create_question(kind=STATE|ORACLE,currency=G)`、`bet_question`、`resolve_question`；返回 deprecated warning。
+4. `start_debate/vote_debate/resolve_debate` 保留同名 alias，但内部转 World ORACLE/STATE question；明确旧 ore betting 为 legacy，不扩展。
+5. 错误处理：World 未部署、余额不足、未授权、question locked/resolved、G pool no cap。
 
 **验收标准**
-- [ ] 命令：`test -f docs/autopilot-relay-decision.md && rg -n "per-agent|global operator|rate limit|gas payer|owner" docs/autopilot-relay-decision.md` → 期望：关键决策全部出现。
-- [ ] 命令：`rg -n "用户.*addOperator|owner→operator 委托开关\\（开/关 autopilot；可收回\\）" docs` → 期望：旧 false premise 已被修正或标注为不成立。
+- [ ] 命令：`cd mcp-server && npm run build` → 期望：World ABI/tools 编译通过。
+- [ ] 命令：`cd mcp-server && node scripts/e2e-world-question-tools.mjs http://127.0.0.1:3005/mcp` → 期望：`create_question -> answer_question -> resolve_question -> claim_payout -> get_treasury` 全链路通过；旧 `start_debate` 返回 questionId 且不直调 `GameEngine.startDebate`。
 
-#### D7 · agent-runner 多租户化 [INFRA | `agent-runner/*` | 依赖 D6,Auth 决策 | maps-to roadmap E7.2, US-C1/C2]
+#### D2 · question / treasury keeper [INFRA | `keeper-question.mjs`,`keeper-treasury.mjs` | 依赖 D1,C1,C4,C7,C8,P3a | maps-to world-as-market §8.5]
 
 **功能点**
-- 玩家/用户可见：新创建的用户 agent 能进入 autopilot，不需要手改 `accounts.json` 或重启全部 runner。
-- 技术交付物：动态加载 tenant agent；per-tenant heartbeat/配额；目标更新；暂停/恢复；隔离 MCP signer/relay。
+- 用户可见：到期问题会被结算；treasury 达阈值会触发世界事件/奖池 seed。
+- 技术交付物：替代旧 market keeper 的 question keeper；新增 treasury keeper；ONCE/loop 两种模式；可观测日志。
 
 **现状 & 缺口**
-- 已有：启动时加载 accounts，一次性 start enabled（`agent-runner/src/index.ts:10-25`、`orchestrator.ts:76-83`）；heartbeat 来自 account 或全局 config（`role-runner.ts:63-109`）。
-- 已有：固定 26 accounts，25 个 5s、Oracle 60s（`agent-runner/accounts.json:13-14`、`:349-367`）。
-- 缺：无动态注册；无 tenant store；无 per-user limit；无目标 API。
+- 已有：Arena keeper 独立脚本、env、ONCE、tick 模式（`mcp-server/scripts/keeper.mjs:1-33`、`mcp-server/scripts/keeper.mjs:47-104`、`mcp-server/scripts/keeper.mjs:106-140`）。
+- 缺：无 question keeper；无 due questions list；无 treasury threshold scanner；旧 `predictionTimer` 还围绕 oracle debate（`agent-runner/src/orchestrator.ts:125-158`）。
 
 **子任务拆分**
-1. 设计 tenant registry（文件/DB/API），字段含 owner、agentId、enabled、heartbeat、quota、goal。
-2. Orchestrator 支持 add/update/remove runner，不重启主进程。
-3. RoleRunner 支持外部 goal 更新和暂停 flag。
-4. 加并发/隔离测试，防止 tenant 串 MCP credentials。
-5. 新建 `agent-runner/scripts/e2e-multitenant-runner.mjs`（当前 `agent-runner/` 无 `scripts/` 目录），并在 `agent-runner/package.json` 加对应 script（如 `"e2e:multitenant"`），使验收命令自洽。
+1. `keeper-question.mjs`：扫描 OPEN/LOCKED due questions，按 kind 调 resolve/lock/finalize；ORACLE 超时走 refund。
+2. `keeper-treasury.mjs`：读取 `get_treasury`，当 `eventPrizePoolG >= threshold` 触发 `WorldEventTriggered` 或 seed 新 question。
+3. Env 与 Arena keeper 对齐：`NETWORK/RPC_URL/ROUTER_ADDRESS/KEEPER_KEY/TICK_SECONDS/ONCE`。
+4. agent-runner 删除/替换旧 prediction timer：从 active oracle debate 改 active questions/world events。
 
 **验收标准**
-- [ ] 命令：`cd agent-runner && npm run build` → 期望：多租户类型与 orchestrator 编译通过。
-- [ ] 命令：`cd agent-runner && node scripts/e2e-multitenant-runner.mjs --agents 3 --duration 60`（需先按子任务 5 新建该脚本） → 期望：3 个动态 agent 各完成至少 1 cycle；暂停其中 1 个后只停该 tenant，其余继续。
+- [ ] 命令：`cd mcp-server && NETWORK=localhost KEEPER_KEY=0xac0974... ONCE=1 node scripts/keeper-question.mjs` → 期望：到期 MATH/STATE/ORACLE question 被结算或退款，日志含 questionId/tx。
+- [ ] 命令：`cd mcp-server && NETWORK=localhost KEEPER_KEY=0xac0974... ONCE=1 node scripts/keeper-treasury.mjs` → 期望：达到阈值时触发 World event，未达阈值不发 tx。
 
-#### D8 · gas/LLM 计量与配额 [INFRA | `agent-runner/*`,keeper/relay | 依赖 D6,D7 | maps-to roadmap E7.4]
+#### D3 · World telemetry：答题准确率 / G 税 / 金库 / faucet rate [INFRA | `telemetry/` | 依赖 D1,C1,C4,C6,A4 | maps-to world-as-market §8.5]
 
 **功能点**
-- 玩家/用户可见：超额停跑、充值续跑、免费档限流明确可解释。
-- 技术交付物：记录 LLM token/gas/tx 次数；quota enforcement；超额状态暴露给 E7/E8。
+- 用户可见：运营能看世界是否健康：答题准确率、G rake/burn/event pool、faucet rate、score 污染风险。
+- 技术交付物：event backfill、CSV/JSON 输出、固定公式测试。
 
 **现状 & 缺口**
-- 已有：RoleRunner 有 max rounds/history/context 参数（`agent-runner/src/role-runner.ts:94`、`:325`），但不是计费系统。
-- 缺：无 token/gas 计量、无 user quota、无充值联动、无超额停跑状态。
+- 已有：仓库根无 `telemetry/` 目录（`find . -maxdepth 1 -type d -name telemetry` 无输出）；`arena_get_treasury` 只读 surplus/outstanding/mode（`mcp-server/src/chain.ts:1099-1115`）。
+- 缺：无 question accuracy、G tax/burn/event pool、faucet rate、G pool no cap alert、score-v2 adoption 指标。
 
 **子任务拆分**
-1. 定义 usage ledger：tenant、cycle、tool calls、estimated tokens、tx hashes、gas used。
-2. 在 runner/relay/keeper 写 usage 事件。
-3. 实现 quota check，超额禁用 autopilot 但保留用户自签动作。
-4. 对接 E8 通知和 E7 状态。
-5. 新建 `agent-runner/scripts/e2e-quota.mjs`（`agent-runner/scripts/` 由 D7 子任务 5 新建）并在 `agent-runner/package.json` 加对应 script（如 `"e2e:quota"`），使验收命令自洽。
+1. 新建 `telemetry/collect.mjs`：按 block range 读取 `QuestionAnswered/Resolved/WorldEventTriggered/G*` 事件。
+2. 指标：`answer_accuracy_by_agent`、`question_resolution_latency`、`g_tax_collected`、`protocol_burn_g`、`event_prize_pool_g`、`faucet_ore_per_hour`、`score_ore_share`。
+3. 告警：G pool payout 被 cap/截断应为 impossible；surplus 小于 escrow/event pool invariant 失败报警。
+4. 输出 CSV/JSON；D/F 可读用于 dashboard。
 
 **验收标准**
-- [ ] 命令：`cd agent-runner && node scripts/e2e-quota.mjs --quota-cycles 1`（需先按子任务 5 新建该脚本） → 期望：第 1 cycle 后 usage 递增，第 2 cycle 被拒并输出 `quota_exceeded`。
-- [ ] 命令：`cd agent-runner && rg -n "gasUsed|token|quota_exceeded|tenantId" src scripts` → 期望：runner/relay 计量路径和超额事件均有实现。
+- [ ] 命令：`cd telemetry && NETWORK=localhost node collect.mjs --from-block 0 --to-block latest --out out.csv` → 期望：生成列 `metric,window,value,computedAt`，至少含 `answer_accuracy,g_tax,event_prize_pool_g,faucet_ore_per_hour`。
+- [ ] 命令：`cd telemetry && node test/formulas.test.mjs` → 期望：固定 fixture 的准确率、G 税、金库余额、faucet rate 与手算一致。
 
-#### D9 · MCP 暴露 trace/AbilityEvent ABI 与 simulate-with-trace 工具 [MCP | `tools.ts`,`chain.ts` | 依赖 B2,D1b | maps-to 新增，阻塞 F2/F3]
+#### D4 · agent-runner 切到 World aliases，freeze 前不中断自主循环 [INFRA | `agent-runner/*`,`tools.ts` | 依赖 D1,C2,C3,C4,C6,C7,C8 | maps-to 新增]
 
 **功能点**
-- 玩家/用户可见：LLM agent/MCP 客户端能读到含能力事件（summon/buff/damage/death-chain）的对局 trace，而不只是普攻 turn。
-- 技术交付物：`chain.ts` 的 `ARENA_ENGINE_ABI`（含 `simulateMatch`，`chain.ts:114`、`:136`）simulate 解码升级到 B2 的 `(Turn[], AbilityEvent[], winnerAgentId)`；新增/扩展 MCP 工具暴露 trace（如 `arena_simulate_with_trace`）；保留旧 `Turn[]` 解码兼容旧合约。
+- 用户可见：AI 仍能自主 harvest/build/raid/debate，但底层走 World；freeze 旧直写不会让 runner 停摆。
+- 技术交付物：runner prompt/tools 默认注入切换；active oracle debate -> active questions；旧工具名 alias 过渡；D4 是 C5 checklist 与 A5 freeze 的前置，不反向依赖它们。
 
 **现状 & 缺口**
-- 已有：`chain.ts` 的 `simulateMatch` ABI 仍是旧 `Turn[]` 普攻签名（`mcp-server/src/chain.ts:136`），decode 在 `:995`，无 `AbilityEvent`。
-- 已有：B2 将让 `ArenaCombat.simulateWithTrace` 返回 `AbilityEvent[]`（B2 子任务 1-3）。
-- 缺：MCP 侧无 `AbilityEvent` ABI/decode；无暴露 trace 的工具；F2/F3 没有 MCP 侧 trace 来源（F2 走 direct RPC 也需对齐同一 ABI tuple）。
-- 注意：旧 `e2e-arena-tools.mjs` 当前会先调用尚不存在的 `arena_move/arena_freeze/arena_roll`（`mcp-server/scripts/e2e-arena-tools.mjs:51-58`）而中途失败，故 D9 验收不能直接依赖该脚本现状；本任务依赖 D1b（D1b 补齐这三个工具并修复脚本），且 D9 自带 trace 断言（见子任务 4 / 验收）。
+- 已有：runner 每轮收集 `get_my_hexes/get_active_oracle_debate/arena_get_state`（`agent-runner/src/mcp.ts:86-99`）。
+- 已有：selfTools 默认注入旧 `harvest/build/attack/raid/incite_rebellion/claim_neutral`（`agent-runner/src/mcp.ts:118-122`），旧 `start_debate/vote_debate` 紧随其后（`agent-runner/src/mcp.ts:123`）。
+- 已有：orchestrator 启动旧 prediction timer 与 oracle designation（`agent-runner/src/orchestrator.ts:125-158`）。
+- 缺：无 active questions/world events；无 World alias prompt；freeze 前无 smoke。
 
 **子任务拆分**
-1. 在 `chain.ts` 增 `AbilityEvent` tuple 与 simulate-with-trace ABI/method，保留旧 `Turn[]` fallback。
-2. 在 `tools.ts` 新增/扩展工具返回 turns + ability events + winner。
-3. 与 F2/F3 对齐 tuple 字段名（`step/trigger/effectType/sourceSide/...`），避免前后端 decode 漂移。
-4. 新建 `mcp-server/scripts/e2e-arena-trace.mjs`（不复用尚需 D1b 修复的旧脚本），构造含 Wraith summon/death-chain 的对局，调 simulate-with-trace 工具，**断言** trace 含 `ON_DEATH`→`SUMMON` 等 ability events 且顺序稳定；旧合约无事件时退回普攻 turns 不崩。在 `mcp-server/package.json` 加对应 script（如 `"e2e:arena-trace"`）使验收自洽。
+1. `collectContext` 加 `list_questions/get_world_events/get_treasury`，替换/降级 `get_active_oracle_debate`。
+2. `selfTools` 增 `answer_question/bet_question/resolve_question/claim_payout`；旧动作保留 alias 但描述为 legacy names。
+3. Orchestrator prediction timer 改 question/event timer；Oracle role 逻辑改为 World resolver role。
+4. Freeze 前跑 runner smoke：一轮可 harvest/build/raid/bet question，不出现 direct GameEngine revert。
 
 **验收标准**
-- [ ] 命令：`cd mcp-server && npm run build` → 期望：新 `AbilityEvent` ABI/tuple 与工具编译通过，旧 `Turn[]` decode 仍可用。
-- [ ] 命令：`cd mcp-server && node scripts/e2e-arena-trace.mjs http://127.0.0.1:3005/mcp`（本任务子任务 4 新建；不依赖尚需 D1b 修复的 `e2e-arena-tools.mjs`） → 期望：simulate-with-trace 工具返回含 `ON_DEATH`→`SUMMON` 等 ability events 的 trace，脚本对事件存在与顺序做断言（缺失/乱序则非零退出）；旧合约无事件时退回普攻 turns 不崩。
+- [ ] 命令：`cd agent-runner && npm run build` → 期望：runner 编译通过，tool definitions 包含 World 工具。
+- [ ] 命令：`cd agent-runner && npm run dev -- --config config/localhost.toml --once` → 期望：至少一个 enabled agent 能通过 World alias 完成一个 low-difficulty action；freeze 后不因旧直写 revert 停摆。
 
-### Lane E · 前端写链路 + 真人 UI（新子树，不碰既有只读 hook/页面）
-
-#### E1 · 钱包连接与写链路基座 [FE | wallet 新子树 | 依赖无 | maps-to roadmap E6.1, US-A4/B1]
-
-> **范围裁剪（owner 2026-06-17）**：**不做 login by email / 社交登录**。登录入口只做「钱包连接」（外部钱包或嵌入式钱包），provider 选型排除 Privy/Dynamic 类邮箱登录路径。
+#### D5 · MCP 文案/ABI 漂移清理（顺手前置） [MCP | `tools.ts`,`chain.ts` | 依赖无 | maps-to hygiene]
 
 **功能点**
-- 玩家/用户可见：用户能连接钱包（外部或嵌入式，**非 email/社交登录**），并看到真实交易 pending/confirmed/failed 三态。
-- 技术交付物：新增 wallet provider/hooks/lib/components；支持嵌入式钱包或外部钱包；write client 可调 `build`/`raid` 等受控动作；链错/未连接错误态。
+- 用户可见：工具说明与合约事实一致，减少 AI 做错动作。
+- 技术交付物：修旧文案与 ABI 漂移，避免 World 迁移时继承错误。
 
 **现状 & 缺口**
-- 已有：前端依赖只有 `ethers` 等只读栈（`frontend/package.json:11-19`）；hook 使用 `JsonRpcProvider` 无 signer（`useGameEngine.ts:92-115`、`useArenaEngine.ts:154-158`）。
-- 缺：无 wagmi/viem/Privy/RainbowKit/sendTransaction；无 tx 状态组件；无 wallet 子树。
+- 已有漂移：`chain.ts` 仍声明不存在的 `HexClaimed`（`mcp-server/src/chain.ts:44`）与错误 `Harvested(bytes32,...)`（`mcp-server/src/chain.ts:47`），真实事件是 `Harvested(uint256,uint256)`、`HexCaptured/HexRebelled`（`contracts/src/GameEngine.sol:142`、`contracts/src/GameEngine.sol:150-151`）。
+- 旧 debate 文案写 ore betting（`mcp-server/src/tools.ts:401-459`），迁移后应指向 G question/legacy。
+- 缺：无 event ABI smoke。
 
 **子任务拆分**
-1. 选 wallet provider 并增加依赖/Provider（**仅钱包连接，不接 email/社交登录**）。
-2. 新建 `useWalletAccount/useTxState/writeContract` 基础 API。
-3. 实现 `TxButton`/`TxStatus`，统一 pending/confirmed/failed。
-4. 用 `build` 或 `raid` 做最小真实写入验收；不以 `harvest` 作为授权验收。
+1. 修 GameEngine ABI 事件签名：去掉 `HexClaimed`，修 `Harvested`，补 `HexCaptured/HexRebelled`。
+2. 更新 debate 工具说明：legacy alias；新市场用 G `bet_question`。
+3. 增加 ABI parse smoke：从本地 receipt 解析 Harvested/HexCaptured/Question*。
 
 **验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：wallet provider 和写链 hooks 编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：在 `http://127.0.0.1:3000/onboard` 或测试页连接钱包后，点击受控 `build`/`raid` demo 按钮可看到 pending→confirmed；断网/链错显示 failed/error。
+- [ ] 命令：`cd mcp-server && rg -n "HexClaimed|Harvested\\(bytes32|Bet ore with vote_debate" src` → 期望：无输出或仅 legacy/deprecated 注释。
+- [ ] 命令：`cd mcp-server && npm run build` → 期望：ABI 与 tools 编译通过。
 
-#### E1b-a · operator-relay skeleton [FE（前端 client）/INFRA（后端归 D6 owner） | `lib/wallet/relay-client` + relay 后端骨架 | 依赖无 | maps-to roadmap E7.1/E7.2]
-
-> **文件域**：E 只拥有前端侧 `frontend/src/lib/wallet/relay-client`。`POST /relay` 后端 + auth/限流中间件落点是 D6 决策门：定下前不在任何未授权文件域（如 `mcp-server/src/http.ts` 当前只有 `/mcp` handler，`mcp-server/src/http.ts:46-48`）里直接建后端；定下后该后端归单一 owner（放 `mcp-server` 则归 D，独立服务则归该服务 owner）。E1b-a 阶段先交付前端 client + 接口形状，后端 stub 由该 owner 实现。
+#### D9 · trace 工具：question / Arena replay [MCP | `tools.ts`,`chain.ts` | 依赖 B2,D1 | maps-to world-as-market §8.5]
 
 **功能点**
-- 玩家/用户可见：暂无真实代发，但前端和后端接口形状稳定。
-- 技术交付物：`lib/wallet/relay-client`（E 拥有）、relay endpoint skeleton 与鉴权/限流中间件挂载点（由 D6 拍板的后端 owner 拥有）、stub response。
+- 用户可见：前端和 AI 可以解释每次 World combat/Arena match 的关键状态、RNG、能力触发。
+- 技术交付物：`get_question_trace`、`arena_simulate_match` 扩展、`get_world_events` trace links；稳定 JSON schema。
 
 **现状 & 缺口**
-- 已有：`mcp-server/src/http.ts` 有 HTTP 服务范式，但只暴露 `/mcp` handler，无 `/relay`（`mcp-server/src/http.ts:46-48`、`:78`）。
-- 缺：relay 后端目录/owner 未定（D6/§7）；无 client API；无鉴权/限流骨架。
+- 已有：`arena_simulate_match` 返回普攻 turns（`mcp-server/src/tools.ts:931-939`、`mcp-server/src/chain.ts:993-1005`）。
+- 缺：无 World question trace 工具；无 ability events；F2/F3 无可靠 replay 数据源。
 
 **子任务拆分**
-1. 根据 D6 前的临时约定创建 relay client interface（`lib/wallet/relay-client`，E 拥有），不绑定具体 signer。
-2. 待 D6 拍板后端 owner 后，由该 owner 在其文件域建 stub endpoint：`POST /relay` 返回 deterministic stub tx id；E 阶段先 mock 该响应。
-3. 后端 owner 挂载 auth/rate-limit placeholder。
-4. 写前端单元或 smoke，确保 E2/E3 可先接桩。
+1. `chain.ts` 增 World trace ABI：`getQuestionTrace(questionId)` 或 event backfill。
+2. `tools.ts` 增 `get_question_trace`；扩展 `arena_simulate_match` 输出 `abilityEvents` 时兼容旧合约。
+3. 新建 `scripts/e2e-world-trace.mjs` 与 `scripts/e2e-arena-trace.mjs`。
+4. 输出 schema 文档：字段稳定，前端 F2/F3 依赖此 schema。
 
 **验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：relay client 类型可被 E2/E3 import，未实现真实 signer 不阻塞构建。
-- [ ] 命令（后端 owner 落点定下并实现 stub 后）：`curl -sS -X POST <relay-base>/relay -H 'content-type: application/json' -d '{"action":"stub"}'` → 期望：返回 JSON `{status:"stub"}` 或明确 501，且 auth/rate-limit middleware 日志可见。
+- [ ] 命令：`cd mcp-server && node scripts/e2e-world-trace.mjs http://127.0.0.1:3005/mcp` → 期望：返回含 `questionId/stateSnapshotHash/outcome/events` 的 trace。
+- [ ] 命令：`cd mcp-server && node scripts/e2e-arena-trace.mjs http://127.0.0.1:3005/mcp` → 期望：旧 turns 与新 ability events 均可解析；旧合约无 ability events 时不崩。
 
-#### E1b-b · operator-relay 真实代发 [FE（前端 client）/INFRA（后端归 D6 owner） | `relay-client` + relay 后端 endpoint | 依赖 D6,Auth 决策,P5 | maps-to roadmap E7.1/E7.2]
+---
 
-> **文件域**：relay 后端 endpoint/中间件归 D6 拍板的单一 owner（放 `mcp-server` 则归 D，独立服务则归该服务 owner）；E 只拥有前端 `relay-client`。下方验收命令的 `npm run test:e2e:relay` 在当前 `mcp-server/package.json` scripts 不存在（只有 `build/start/dev/http`），需作为本任务子任务新建该 script + e2e 脚本文件，落在后端 owner 的包里。
+### Lane E · 真人写链路 / G 下注 UI
+
+#### E1 · 钱包连接与写链路基座（不做 email 登录） [FE | wallet 新子树 | 依赖无 | maps-to roadmap E6.1]
 
 **功能点**
-- 玩家/用户可见：gasless create/build/raid 等动作由平台代发；用户暂停后 relay 拒发。
-- 技术交付物：relay signer、签名/会话鉴权、限流、用户级 off-chain flag、平台级撤权检查、e2e relay 测试脚本 + npm script。
+- 用户可见：真人用钱包连接，选择自己拥有的 agent，发起 deposit/bet/answer。
+- 技术交付物：wallet provider/hooks/tx state；外部钱包优先；明确不接 email/社交登录。
 
 **现状 & 缺口**
-- 已有：默认 (a) 只能通过全局 operator 代发；`build`/`raid` 是授权验收动作（`GameEngine.sol:345`、`:624`）。
-- 缺：relay 后端 owner/落点未定（D6）；无 relay signer 授权（P5）；无用户级 off-chain flag；无 429/401/403 行为；无 `test:e2e:relay` script（`mcp-server/package.json:12-19` 只有 `build/start/dev/http`）与 e2e 脚本文件。
+- 已有：真实前端只读；`frontend/package.json` 依赖不含 wagmi/viem/Privy/RainbowKit（`frontend/package.json:11-19`）。
+- 缺：无 wallet provider、account state、send tx、chain mismatch UI、owned agents selector。
 
 **子任务拆分**
-1. 接入 D6 决策的后端落点和鉴权模型；relay 后端只在该 owner 文件域内实现。
-2. 实现 relay action allowlist，禁止任意 calldata。
-3. 对受控动作执行前检查用户 agent ownership/off-chain enabled flag/quota。
-4. 实现限流和撤权：用户 flag 拒发；平台 `removeOperator` 后链上 revert。
-5. 新建 relay e2e 脚本（如后端落 `mcp-server` 则 `mcp-server/scripts/e2e-relay.mjs`），并在对应 `package.json` 加 `"test:e2e:relay"` script 指向它，使下方验收命令可跑。
+1. 选择 wallet provider（外部钱包或轻量 ethers signer）；只做钱包连接，不做 email 登录/embedded social login。
+2. 新建 `useWalletAccount/useTxState/writeContract`。
+3. 读取 `AgentRegistry.agentOwner`/owned agents，下注/answer 前要求选择自己拥有的 agent。
+4. 错误态：未连接、链错误、非 agent owner、余额不足、question resolved/locked。
 
 **验收标准**
-- [ ] 命令：`cd mcp-server && npm run test:e2e:relay -- --grep relay-build`（需先按子任务 5 新建该 script + 脚本文件） → 期望：授权 relay signer 代发 `build` 成功；撤销全局 operator 后同请求链上 revert。
-- [ ] 命令：`cd mcp-server && npm run test:e2e:relay -- --grep relay-rate-limit`（同上） → 期望：并发 20 请求命中 429；用户暂停 flag 后返回 401/403 且不发链上交易。
+- [ ] 命令：`cd frontend && npm run build` → 期望：wallet provider 和 tx hooks 编译通过。
+- [ ] 命令：`cd frontend && rg -n "email|Privy|social login|magic link" src` → 期望：无 email/social login 实现；若出现只在“非目标”文案中。
 
-#### E2 · Agent 创建 / onboarding 流 [FE/MCP | `app/onboard/*` | 依赖 E1；gasless 依赖 E1b-b | maps-to roadmap E6.2, US-B1]
-
-> **范围裁剪（owner 2026-06-17）**：onboarding 第 1 步是「钱包连接」，**不做 email 登录**。
+#### E2 · 写链/relay 裁剪：只保留钱包/tx 三态，不承诺 gasless 全栈 [FE | wallet components/relay-client | 依赖 E1,A3 | maps-to roadmap E7 裁剪]
 
 **功能点**
-- 玩家/用户可见：4 步 onboarding：**钱包连接（非 email 登录）**、定义 agent、确认、成功进入 `/me`，真实创建 7 格 + 200 ore。
-- 技术交付物：`/onboard` 路由；调用 `GameEngine.createAgent` 或 relay；重复访问已有 agent 显示去 dashboard。
+- 用户可见：按钮有 pending/confirmed/failed；若未来 relay 存在可切换，但当前不承诺完整 gasless 后端。
+- 技术交付物：前端 relay client interface + self-send path；不在 E 中新建后端。
 
 **现状 & 缺口**
-- 已有：demo onboarding 4 步写在 `docs/demo-user-stories.md:122-127`，真实代码无 `/onboard`（`frontend/src/app` 仅 `/` 与 `/arena`）。
-- 已有：合约 `createAgent` 自动 7 格 + 200 ore（`GameEngine.sol:232-264`）。
-- 缺：真实 FE 路由、表单、tx 状态、错误态。
+- 已有：demo 文案声称 relay/no gas（`demo/index.html:1357`、`demo/index.html:1905-1908`），真实前端无写链。
+- 缺：无 tx state UI；无 relay backend owner；无 A3 scoped delegation。
 
 **子任务拆分**
-1. 新建 `frontend/src/app/onboard/page.tsx` 和 step components。
-2. 接 E1 wallet 与 E1b relay，支持自签/代发两种模式。
-3. 创建成功后回读 `get_my_agents`/链上 agent owner，跳 `/me`。
-4. 处理 duplicate name、tx failed、链错、已有 agent。
-5. **新建 `frontend/scripts/i18n-key-diff.mjs`**（i18n 完整性校验脚本的共用落点放在 E2，作为最早消费 i18n 的写链路任务）：加载 `frontend/src/i18n` 的 zh/en keyset，对称差集非空则非零退出。原因：缺键只在 dev `console.warn`（`frontend/src/i18n/index.ts:46-49`），生产 build 不失败，必须靠脚本观测。E9 直接复用该脚本，不重复新建。
+1. `TxButton`/`TxToast`：pending/confirmed/failed/receipt link。
+2. relay client 只定义接口；后端若落 `mcp-server` 归 D，若独立服务归新 owner。
+3. 默认使用用户钱包直接调用；runner/relay 路径必须依赖 A3 scope/permit。
+4. 文案去掉“no gas”承诺，除非实际 relay 可用。
 
 **验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：`/onboard` 编译通过。
-- [ ] 命令：`cd frontend && node scripts/i18n-key-diff.mjs`（脚本由本任务子任务 5 新建、E9 复用；比对 zh/en keyset，缺键非零退出；生产 build 不会报缺键，故 i18n 完整性单独校验） → 期望：`/onboard` 新增 key 在 zh/en 两侧齐全，退出码 0。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：375x812 视口打开 `/onboard`，4 步可前进/后退；点击 Spawn 显示 pending→confirmed，成功页展示 `CLAIMED 7 hexes` 和 `STARTING ORE 200`。
+- [ ] 命令：`cd frontend && npm run build` → 期望：tx state components 编译通过。
+- [ ] 命令：`cd frontend && rg -n "no gas|gasless|email login" src` → 期望：无未实现承诺；如保留需有 feature flag 或 disabled 文案。
 
-#### E3 · Autopilot 开关语义与 UI [FE | `components/wallet/AutopilotToggle` | 依赖 E1,Auth 决策；b 依赖 A3 | maps-to roadmap E6.3, US-C2]
-
-**功能点**
-- 玩家/用户可见：用户可开启/暂停 agent autopilot，并清楚知道这是平台代发/AI 执行状态。
-- 技术交付物：(a) off-chain flag UI + relay/runner 同步；(b) per-agent delegate tx UI。
-
-**现状 & 缺口**
-- 已有：demo `/me` AUTOPILOT 区块（`demo/index.html:1310-1337`）。
-- 缺：真实 `/me` 不存在；当前合约无用户级 `addOperator/removeOperator`（`AgentRegistry.sol:67-68`，owner-only）；无 off-chain flag API。
-
-**子任务拆分**
-1. 在 D6/Auth 决策后固定 UI 文案：默认 (a) 不声称链上用户撤权。
-2. 实现 toggle：读取/写入 autopilot flag；同步 relay/runner 状态。
-3. 如果走 (b)，接 `delegate/undelegate` tx 三态。
-4. 与 E7 暂停/恢复控制联动（共享同一 autopilot flag）。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：AutopilotToggle 编译通过，未 import A3 ABI 除非 Auth 选 (b)。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/me` 375x812 下 toggle 可点；(a) 切换后 UI/relay flag 变更且无链上 `addOperator` 文案；(b) 显示 tx pending/confirmed/failed。
-
-#### E4 · 预测市场前端 UX [FE | `app/markets/*` | 依赖 E1,D1,C2；Oracle 依赖 C3 | maps-to roadmap E6.4, US-D1-D4]
-
-> **范围确认（owner 2026-06-17）**：下注币种 = **ore**（v1，`currency` 可插拔）。agent 自营下注 + **真人也可下注**两条路都走本任务；**真人下注 = 用自己拥有的 agent 在 ore 池下注**——C2 要求 `msg.sender == registry.agentOwner(agentId)`，故下注弹层须带上「以哪个我的 agent 下注」的选择，且不能替非自有 agent 下注。
+#### E4 · Prediction Markets UI 改为 G Question betting [FE | `app/markets/*` | 依赖 E1,D1,C4,C6,C7,A3,F7 | maps-to world-as-market §8.6]
 
 **功能点**
-- 玩家/用户可见：浏览市场、看详情、用 **ore** 下注（**真人用自己拥有的 agent 下注**）、看持仓、开奖凭证；SELF_RESOLVING 与 ORACLE 两型。
-- 技术交付物：`/markets`、`/markets/[id]`；下注弹层（含「选择我的 agent」+ ore 余额校验）；positions；settlement receipt；tx 三态。
+- 用户可见：`/markets` 可保留名称，但详情是 `Question`；真人用自己拥有的 agent 在 G pool 下注。
+- 技术交付物：Question list/detail、G stake panel、World fee/tax/burn/event pool 可见、positions/receipts、agent owner 校验。
 
 **现状 & 缺口**
-- 已有：demo markets 入口和体验（`demo/index.html:1711-2000`）；user stories D1-D4（`docs/demo-user-stories.md:182-208`）。
-- 缺：真实 `/markets` 不存在；D1/C2/P2 前置未完成；无 wallet write path。
+- 已有 demo：Markets 文案是 “Bet your agent's ore”（`demo/index.html:1721-1727`）；下注校验 ore/min/max（`demo/index.html:1767-1789`）；pool/payout/按钮全用 ore（`demo/index.html:1850-1908`）。
+- 缺：真实 `/markets` 不存在；无 G question API；无 owned agent/G balance check；无 G pool no cap UI；无 World Treasury fee display。
 
 **子任务拆分**
-1. 新建 markets routes 与 read client，接 D1 或 direct RPC（由 E/D 决策）。
-2. 实现 market card/list/detail，显示 pools、odds、resolveAt、AI brief/context。
-3. 实现 bet modal：**选择「以哪个我的自有 agent 下注」（非自有 agent 不可选）**、ore 金额/余额校验、parimutuel 预估、tx 三态、未登录跳 onboarding。
-4. 实现 positions 和 settlement receipt。
-5. Oracle slice 在 C3 后启用。
+1. 新建 `/markets` 和 `/markets/[id]`，数据源为 D1 `list_questions/get_question` 或 direct RPC。
+2. Detail 抽象为 `QuestionModal`：kind/difficulty/currency/status/resolveAt/resolver/poolId。
+3. `currency=G` 时 stake 显示 G；调用 `bet_question(agentId, questionId, outcome, amountG)`；余额读 `GTreasury.gBalance`。
+4. 权限：只允许当前钱包拥有的 agent；若用 delegate/permit，UI 显示 scope/expiry。
+5. G fee/tax/burn/event pool 明细显示；**不得做 G payout cap clamp**。
+6. `currency=ORE/NONE` 的 MATH/STATE 题显示 fixed ore reward / ore sink / difficulty，不用 G betting panel。
 
 **验收标准**
 - [ ] 命令：`cd frontend && npm run build` → 期望：`/markets` 与 `/markets/[id]` 编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：桌面 1440x900 打开 `/markets`，点击市场卡进详情；下注按钮显示 pending→confirmed；余额不足/未登录/市场已结算有明确错误态；`/markets/[id]` 结算后显示链上 fact receipt。
+- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：桌面 1440x900 和移动 375x812 可打开 question detail；G 下注 pending→confirmed；非 owner agent、G 不足、resolved question 均有明确错误。
 
-#### E5 · 卡牌画廊与二级市场 UI [FE | `app/arena/market/*`,wallet components | 依赖 E1,E6；provenance 依赖 B3/F5 | maps-to roadmap E6.5, US-E3/E5]
-
-**功能点**
-- 玩家/用户可见：浏览/买/卖/取消卡牌挂单，查看故事卡 provenance。
-- 技术交付物：新 `app/arena/market/*` 子路由；list/buy/cancel tx 三态；G 不足错误态；不改 F 的 `/arena/page.tsx`。
-
-**现状 & 缺口**
-- 已有：CardLedger 二级市场合约可用（`CardLedger.sol:88-138`）；MCP listing 工具已存在（`tools.ts:721-748`）。
-- 已有：真实 Arena `InventoryPanel` 只读 source tx（`frontend/src/components/arena/InventoryPanel.tsx:12-16`、`:47-100`）。
-- 缺：人类卡市 UI 不存在；`app/arena/market` 不存在；provenance metadata 缺 B3/F5。
-
-**子任务拆分**
-1. 新建卡市路由和 cards/listings read model。
-2. 实现 buy/list/cancel 三个动作，接 E1 wallet tx state。
-3. 显示 G balance 与不足错误。卡市入口链接由 F 在其独占的 `app/arena/page.tsx` 加（见 F5 子任务 5），E 不改该文件；E 侧只在自己拥有的 `app/arena/market/*` 子壳内做内部导航/返回链接。
-4. 在 F5 metadata 可用后展示 story fields。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：`/arena/market` 编译通过，未修改 `frontend/src/app/arena/page.tsx`。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/arena/market` 1440x900 下可 list/buy/cancel，按钮有 pending/confirmed/failed；G 不足显示错误且不发交易。
-
-#### E6 · G 充值与余额展示 [FE（MCP 工具已就绪，仅缺前端写链 UI）| wallet DepositG | 依赖 E1 | maps-to roadmap E6.6, US-E1]
+#### E6 · G 充值 + 余额展示 [FE | DepositG UI | 依赖 E1,F7 | maps-to roadmap E6.6]
 
 **功能点**
-- 玩家/用户可见：能向 agent 充值 G，看到 G/ore 余额和 G 模式说明。
-- 技术交付物：`DepositG` 组件；调用 `GTreasury.depositG` payable；读 `gBalance`/`orePool`；tx 三态。
+- 用户可见：用户可以给自己 agent 充值 G，并看到可用于 World betting/Arena 的余额。
+- 技术交付物：DepositG form、balance card、withdraw mode 提示、treasury mode badge。
 
 **现状 & 缺口**
-- 已有：MCP `arena_deposit_g`/`arena_withdraw_g`（`tools.ts:644-665`）；chain method `arenaDepositG`（`chain.ts:841-847`）。
-- 缺：前端无钱包 signer/payable UI；demo deposit 是本地加数（`demo/index.html:2060`）。
+- 已有：MCP 有 `arena_deposit_g`/`arena_withdraw_g` 工具（`mcp-server/src/tools.ts:643-667`），chain 用 `GTreasury.depositG/withdraw`（`mcp-server/src/chain.ts:841-857`）；合约 deposit 要求 `msg.sender == agentOwner(agentId)`（`contracts/src/GTreasury.sol:100-107`）。
+- 缺：真实前端无 deposit/withdraw UI；G 余额只在 Arena read hook 间接显示。
 
 **子任务拆分**
-1. 新建 DepositG component，支持 +20/+100/+1000 和自定义。
-2. 用 signer 发 payable tx；处理 withdraw/faucet 模式说明。
-3. 回读余额，更新 `/me` 和 `/arena/market` 展示。
-4. 错误态：非 owner、withdraw disabled、余额/链错。
+1. G balance hook：读 `GTreasury.gBalance(agentId)`、`faucetEnabled/withdrawEnabled/surplusG`。
+2. Deposit form：输入 G 数量，调用 `depositG(agentId)` with value；只允许 owner agent。
+3. Withdraw form（若 withdraw mode）：调用 `withdraw(agentId, amount)`；faucet mode 显示不可提。
+4. 在 `/markets`、`/me`、Arena topbar 共用 G balance badge。
 
 **验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：DepositG 编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/me` 或 `/arena/market` 375x812 下点击 `+20 G` 显示 pending→confirmed，G balance 增加；失败时显示 revert reason。
+- [ ] 命令：`cd frontend && npm run build` → 期望：DepositG/Balance components 编译通过。
+- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：连接钱包后可充值 G，余额刷新；非 owner agent 按钮 disabled 或交易前报错。
 
-#### E7 · 喂目标 / 暂停控制面 [FE/MCP | `AgentControls` | 依赖 E3,D7 | maps-to roadmap E7.3, US-C2]
-
-> **范围裁剪（owner 2026-06-17）**：**不做「手动操作事件」**——去掉「手动接管一回合」与 `QUICK ACTIONS`（手动 harvest/build/raid）及对应 **US-C3**。E7 收敛为「**喂高层目标（SET GOAL）+ 暂停 autopilot**」；逐步手动操作不在范围内，故本任务不再依赖 relay 代发动作（E1b-b/P5）。
+#### E7 · 手动操作事件 / US-C3 裁剪保留 [FE/DOC | docs/UI 文案 | 依赖 E2 | maps-to 裁剪]
 
 **功能点**
-- 玩家/用户可见：用户能给 agent 设置高层目标（SET GOAL）、暂停/恢复 autopilot；**无逐步手动操作/接管**。
-- 技术交付物：goal input + tx/写入态；接 D7 runner goal API；暂停态与 E3 autopilot flag 联动。
+- 用户可见：本轮不承诺“每个手动操作都上链成专用 UX 事件/US-C3”；手动动作只是 question/action receipt。
+- 技术交付物：裁剪文档与 UI 文案，避免把 demo mock 的手动事件误认为链上已支持。
 
 **现状 & 缺口**
-- 已有：demo `SET GOAL / STRATEGY`（`demo/index.html:1337-1365`），autopilot 开关（`demo/index.html:1310-1337`）。
-- 缺：真实 `/me`、runner goal API、goal 写入态、暂停联动。
-- 裁剪：demo 的 `QUICK ACTIONS` 手动动作不再实现（owner 决定）。
+- 已有 demo quick actions 是 mock/relay 文案（`demo/index.html:1344-1357`）。
+- 缺：真实前端无手动操作事件流；World 会有 `QuestionAnswered/Resolved`，但不等于单独 US-C3 事件系统。
 
 **子任务拆分**
-1. 实现 Goal input，调用 D7 API 写 tenant goal。
-2. 暂停/恢复与 E3 autopilot flag 联动（暂停即停 runner/relay 代发）。
-3. AgentMind/F9 记录 owner goal 更新。
+1. 文案统一：手动 Harvest/Build/Raid 显示 question receipt，不新增“manual operation event”。
+2. 若要通知，复用 D1/D9 的 question/world events。
+3. 在 roadmap/dev docs 标明 US-C3 暂不做，避免 F/E 误建重复事件系统。
 
 **验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：AgentControls 编译通过；不含 quick-actions/手动动作组件。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/me` 1440x900 下 push goal 后 D7 runner goal 可查；暂停后 autopilot flag 关闭、runner 停发；页面**无** QUICK ACTIONS/手动接管控件。
-
-#### E8 · 通知中心 [FE/INFRA | `Notifications` | 依赖 C2,C3,B3,CardLedger events | maps-to roadmap E6.7]
-
-**功能点**
-- 玩家/用户可见：市场结算/退款、被买单、成就铸卡、派彩到账有 toast 和通知列表。
-- 技术交付物：事件源清单；订阅/轮询；toast + persistent list；点击跳转。
-
-**现状 & 缺口**
-- 已有：CardLedger 买卖事件（`CardLedger.sol:44-47`）；Arena hook 已有事件扫描模式（`useArenaEngine.ts:73-105`）。
-- 缺：C2/C3/B3 命名事件尚未存在；无通知组件；无 wallet user filter。
-
-**子任务拆分**
-1. 定义事件源清单：`MarketResolved`、`MarketRefunded`、`StoryCardMinted`、`ListedCardBought`。
-2. 实现按用户 agent/card/position 过滤。
-3. toast + list + read/unread 状态。
-4. 点击跳转 `/markets/[id]` 或 `/arena/market/card/[id]`。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：Notifications 编译通过，事件源注释存在。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：触发 market resolve/story mint/listed buy 后 toast 出现；通知点击跳到对应详情页。
-
-#### E9 · 移动端响应式与 i18n 收口 [FE | E 新路由 + i18n | 依赖 E2-E8 | maps-to roadmap E6.9]
-
-**功能点**
-- 玩家/用户可见：核心新路由在手机上可完整使用，中文/英文无缺键。
-- 技术交付物：`/onboard`、`/markets`、`/me`、`/arena/market` 响应式；i18n keys。
-
-**现状 & 缺口**
-- 已有：项目有 i18n store/files（`frontend/src/i18n`），但 E 新路由不存在。
-- 缺：新写链页面移动布局、长文案溢出检查、i18n keys。
-
-**子任务拆分**
-1. 为 E2-E8 新组件补 i18n keys。
-2. 审查 375x812、390x844、768x1024、1440x900。
-3. 修按钮/卡片文字溢出、横向滚动、弹层高度。
-4. 补移动验收截图或 QA checklist。
-5. 复用 E2 子任务 5 新建的 `frontend/scripts/i18n-key-diff.mjs`（加载 `frontend/src/i18n` 的 zh/en keyset，对称差集非空则非零退出；缺键只在 dev `console.warn`（`frontend/src/i18n/index.ts:46-49`），生产 build 不失败，必须靠脚本观测）；E9 不重复新建，只在此做 E2-E8 全量收口校验（若因 lane 顺序该脚本尚未由 E2 落地，则在此补建）。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：无 i18n import/build 错误（注意：build 不会因缺键失败）。
-- [ ] 命令：`cd frontend && node scripts/i18n-key-diff.mjs` → 期望：zh/en keyset 对称差集为空，退出码 0；故意删一个 key 后退出码非零并打印缺失 key 列表。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：375x812 视口访问 `/onboard`、`/markets`、`/me`、`/arena/market`，无横向滚动，关键按钮可点击，弹层可关闭。
-
-### Lane F · 前端只读可视化 + 账本/Lore 页
-
-#### F1 · 删除死代码 `frontend/src/chain/*` [FE | `frontend/src/chain` | 依赖无 | maps-to roadmap E5.6]
-
-**功能点**
-- 玩家/用户可见：无直接功能变化，减少维护误导。
-- 技术交付物：删除 dead `chain` 子树或迁移仍有价值的 ABI；构建不受影响。
-
-**现状 & 缺口**
-- 已有：`frontend/src/chain/abis.ts` 等五文件存在（`frontend/src/chain/abis.ts:1-56`、`contracts.ts:1-31`、`events.ts:1-80`、`index.ts:1-4`、`sync.ts:1-80`）。
-- 已有：真实页面直接在 hooks 内部建 Contract（`useGameEngine.ts:92-115`、`useArenaEngine.ts:171-218`）。
-- 缺：`rg "from .*chain|@/chain"` 无引用；`frontend/src/chain/contracts.ts:21-22` 仍按旧 5-return Router 解码，已过时。
-
-**子任务拆分**
-1. 再跑 `rg` 确认无引用。
-2. 删除 `frontend/src/chain` 五文件。
-3. 跑 build，若有引用则迁移到 F-owned hooks。
-
-**验收标准**
-- [ ] 命令：`rg -n "from ['\\\"].*chain|from ['\\\"]@/chain" frontend/src` → 期望：无输出，退出码 1。
-- [ ] 命令：`cd frontend && npm run build` → 期望：删除 `frontend/src/chain` 后构建通过。
-
-#### F2 · 能力事件回放动画 [FE | `components/arena/*`,`useArenaEngine.ts` | 依赖 B2,D9（trace ABI/tool） | maps-to roadmap E4.2, US-E4]
-
-**功能点**
-- 玩家/用户可见：回放中可看见 summon/buff/death-chain 等能力事件穿插在攻击步之间。
-- 技术交付物：Arena store 扩展 `AbilityEvent`；`ReplayCanvas` 动画；`BattleLog` 展示能力行；读取 B2 trace。
-
-**现状 & 缺口**
-- 已有：store 只有 `ArenaTurn`（`frontend/src/store/useArenaStore.ts:42-49`）；simulation 只有 `turns/winner/initial`（`:69-76`）。
-- 已有：`ReplayCanvas` 只按 attack turn 更新 HP/ATK（`frontend/src/components/arena/ReplayCanvas.tsx:47-81`），`BattleLog` 只渲染 damage/KO（`BattleLog.tsx:31-85`）。
-- 缺：无 AbilityEvent 类型、动画状态、ABI decode。
-
-**子任务拆分**
-1. 扩展 store 与 `useArenaEngine` ABI decode B2 trace。
-2. 在 `ReplayCanvas` 插入事件 timeline，支持 summon enter、buff pulse、death-chain highlight。
-3. `BattleLog` 增能力事件行和筛选/样式。
-4. 兼容旧合约：无 ability events 时仍回放普攻。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：AbilityEvent 类型和 ABI 编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/arena` 1440x900 点击 Play，Wraith death 后出现 summon 动画，BattleLog 有 `ON_DEATH/SUMMON` 行；旧 trace 无事件时不崩。
-
-#### F3 · BattleLog 能力旁白 [FE | `BattleLog.tsx` | 依赖 B2,F2 | maps-to roadmap E4.3, US-E4]
-
-**功能点**
-- 玩家/用户可见：能力事件以可读短句解释，而不是只显示枚举。
-- 技术交付物：trigger/effect/target 文案映射；i18n；按事件顺序滚动高亮。
-
-**现状 & 缺口**
-- 已有：`BattleLog` 只生成攻击行（`BattleLog.tsx:31-51`）。
-- 缺：无 ability narration、无 i18n keys、无 target/delta 文案。
-
-**子任务拆分**
-1. 定义 narration helper：`Wraith triggers ON_DEATH: summons 3/3 token`。
-2. 补 zh/en i18n。
-3. BattleLog 合并 turn 和 ability event timeline。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：旁白 helper/i18n 编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/arena` 回放日志中能力行可读，当前行随 scrub/play 自动滚动高亮。
-
-#### F4 · 战斗回放分享链接 / 导出 [FE | Arena components | 依赖回放就绪 | maps-to roadmap E6.8, US-E4]
-
-**功能点**
-- 玩家/用户可见：一场 match 可复制分享链接或导出短片/片段。
-- 技术交付物：URL state 包含 matchId/turn range；Share button；导出截图/GIF/clip（先可 PNG/JSON，再扩视频）。
-
-**现状 & 缺口**
-- 已有：demo Share 是 mock toast（`demo/index.html:2513-2515`）。
-- 已有：真实 Arena 有 selected match/store（`useArenaStore.ts:101-108`、`:157-158`）。
-- 缺：无分享 URL、无导出、无 route param hydration。
-
-**子任务拆分**
-1. 定义 `/arena?match=<id>&t=<turn>` 或 hash 参数。
-2. Share 复制真实 URL，加载时选中 match/turn。
-3. 导出当前帧 PNG 或 replay JSON；后续再做视频。
-4. 增加错误态：match 不存在/未结算。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：share/export 功能编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/arena` 点击 Share 复制含 matchId 的 URL；新标签打开该 URL 后聚焦同一 match 和 turn；导出按钮生成可下载文件。
-
-#### F5 · 卡详情展示真实 metadata [FE | `UnitCard`/详情弹窗/`useArenaEngine.ts`/store/`app/arena/page.tsx`（卡市入口链接） | 依赖 B3 | maps-to roadmap E3.4, US-E5]
-
-**功能点**
-- 玩家/用户可见：背包/卡详情展示真实 provenance，不再显示 mock 警告。
-- 技术交付物：扩展 CardLedger ABI 和 ArenaCard 类型；详情弹窗显示 B3 fields；普通卡显示 standard metadata。
-
-**现状 & 缺口**
-- 已有：前端 CardLedger ABI 只读旧 tuple（`useArenaEngine.ts:53-63`）；store `ArenaCard` 仅 `id/unitType/mintedAt/listed/lastTx`（`useArenaStore.ts:51-59`）。
-- 已有：InventoryPanel 展示基础卡与 source tx（`InventoryPanel.tsx:47-100`）。
-- 缺：无卡详情弹窗；无 story metadata fields；前端不经 D4，需 direct RPC 自读。
-
-**子任务拆分**
-1. 扩展 `CARDLEDGER_ABI.getCard` 与 `ArenaCard` 类型。
-2. 更新 `fetchCardLastTx` 与 inventory mapping，兼容旧合约。
-3. 新增卡详情弹窗，展示 variant/edition/originAgent/achievementTag/reason。
-4. 与 E5 卡市 provenance UI 对齐字段名。
-5. 在 F 独占的 `frontend/src/app/arena/page.tsx` 加一个跳 `/arena/market` 的入口链接（该文件 F 独占，E 不改），让 E5 卡市可从 Arena 页进入。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：新 Card 类型和详情组件编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/arena` Inventory 点击故事卡显示真实 B3 metadata；普通卡显示 Standard，无 mock provenance 警告。
-
-#### F6 · My-Agent / Lore / 账本只读页组件 [FE | `app/lore/*`,`components/ledger/*` | 依赖现有 direct RPC | maps-to US-F1-F5]
-
-**功能点**
-- 玩家/用户可见：能阅读 memory、inbox、location board、chronicle、world bible。
-- 技术交付物：`/lore` 路由；`components/ledger/*` 只读组件；E 的 `/me` 主壳可 import。
-
-**现状 & 缺口**
-- 已有：`useGameEngine` 已读 memories/location/inbox/chronicle/evaluations/world bible（`useGameEngine.ts:192-247`）；store 有相应状态（`useGameStore.ts:83-102`）。
-- 已有：arena `AgentMindPanel` 已合并 memories/evaluations（`AgentMindPanel.tsx:51-62`）。
-- 缺：无 `/lore` 路由；无通用 ledger 组件；无 `/me` 账本子组件。
-
-**子任务拆分**
-1. 新建 `components/ledger/MemoryList/InboxList/ChronicleList/WorldBiblePanel`。
-2. 新建 `/lore`，展示 world bible + chronicle leaderboard。
-3. 导出 `/me` 可嵌入的 agent ledger bundle。
-4. 空态/加载态/容量 ring buffer 显示。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：`/lore` 和 ledger 组件编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/lore` 显示 World Bible 条目；E 的 `/me` 壳 import ledger bundle 后可显示该 agent memories/inbox/evaluations。
-
-#### F7 · 前端 Router V4 resolver [FE | `useArenaEngine.ts`,`useArenaStore.ts` | 依赖 P1 | maps-to 新增]
-
-**功能点**
-- 玩家/用户可见：前端可发现 PredictionMarket 地址，同时旧 Router 不崩。
-- 技术交付物：在 F-owned `useArenaEngine.ts` 的 resolver 顶部探测 `getAddressesV4()`；回落 V3/V2/V1。
-
-**现状 & 缺口**
-- 已有：Router ABI 只有 V3/V2/V1 和 `arenaEngine/gTreasury`（`frontend/src/hooks/useArenaEngine.ts:12-21`）。
-- 已有：resolveContracts 只探 V3→V2→V1（`:171-218`）。
-- 已有：`ArenaState` 只有 `arenaEngineAddress`（`frontend/src/store/useArenaStore.ts:87-89`），无 market address 字段。
-- 缺：无 V4 ABI/tuple decode；无 `predictionMarket` store/config。
-
-**子任务拆分**
-1. 在 `ROUTER_ABI` 添加 V4 签名。
-2. 在 resolveContracts 先尝试 V4，解出 market address，旧 Router catch 回落。
-3. 增加 staticConfig 或 market address store（若 F8/E4 需要）。
-4. 本地旧 Router fallback smoke。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：V4 resolver 编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：连接旧 Router（无 V4）时 `/arena` 不报错；升级后 console/store 能看到 `predictionMarket` 地址。
-
-#### F8 · World 观众态落地页 [FE | `app/page.tsx`,`components/spectator/*` | 依赖现有 direct RPC；市场卡依赖 D1/C2 | maps-to US-A1-A3]
-
-**功能点**
-- 玩家/用户可见：无需钱包落地即可看到 live drama、scoreboard、featured markets、AgentMind、CTA。
-- 技术交付物：重构 `/` 页面观众层；复用 Phaser/Sidebar/HUD 或改为观众首屏；市场卡未就绪时占位。
-
-**现状 & 缺口**
-- 已有：真实 `/` 只是 full-screen PhaserMap + Sidebar + HUD（`frontend/src/app/page.tsx:11-23`）。
-- 已有：demo/user story 要求 `SPECTATOR MODE`、LIVE DRAMA、SCOREBOARD、FEATURED MARKETS、AGENTMIND（`docs/demo-user-stories.md:76-87`；demo anchors `demo/index.html:924-970`）。
-- 缺：无观众转化层组件；无 featured market data；无 CTA 到 `/onboard`。
-
-**子任务拆分**
-1. 设计 `/` 信息架构：地图与观众内容如何共存，避免遮挡。
-2. 新建 `components/spectator/*`：Hero、DramaTicker、Scoreboard、FeaturedMarkets、AgentMindLog。
-3. 复用 `useGameStore` agents/chronicles/memories；market 未就绪显示 disabled/placeholder。
-4. CTA 跳 `/onboard`，See-how-AI-thinks 平滑滚动到 AgentMind。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：spectator components 编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/` 1440x900 和 375x812 均显示 `SPECTATOR MODE · no wallet needed`、drama、scoreboard、AgentMind；CTA 可跳 `/onboard`。
-
-#### F9 · `/me` 实时 AgentMind / status 只读面板 [FE | `components/ledger/AgentMindLive` | 依赖现有 direct RPC；E 主壳 import | maps-to US-C1]
-
-**功能点**
-- 玩家/用户可见：进入 My Agent 即看到自己的思考流、ore/G、建筑数、状态联动。
-- 技术交付物：F-owned 只读 `AgentMindLive`；读取 `useGameStore` memories/evaluations/agentHexes/agents；E 的 `/me/page.tsx` import。
-
-**现状 & 缺口**
-- 已有：AgentMindPanel 已在 Arena 合并 memory/evaluation（`AgentMindPanel.tsx:21-30`、`:51-62`）。
-- 已有：store 有 agents、agentHexes、memories、evaluations、worldBible（`useGameStore.ts:78-102`）。
-- 缺：无 `/me` 主壳；无通用 AgentMindLive；无 G balance 汇总（需要 E6/F5 或 Arena state）。
-
-**子任务拆分**
-1. 新建 `components/ledger/AgentMindLive.tsx`，props 接 `agentId`。
-2. 合并 memories/evaluations，按 timestamp 排序；显示空态和 loading。
-3. 显示 ORE/territory/buildings；G balance 从 E6/F-owned store 接入。
-4. 暴露纯组件给 E `/me` import，不写链。
-
-**验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：AgentMindLive 编译通过，不依赖 E 写链子树。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/me` 中导入该组件后，选中 agent 显示非空 memories/evaluations；新 memory 写入后 5s 轮询内刷新。
+- [ ] 命令：`cd frontend && rg -n "manual operation event|US-C3|manual event" src docs` → 期望：无未实现承诺；若出现仅在裁剪说明。
+- [ ] 命令：`cd frontend && npm run build` → 期望：裁剪后无路由/组件断链。
 
 ---
 
-## 3. 并行计划（lane × milestone 矩阵，零文件域碰撞）
+### Lane F · 只读前端 / 观众态 / replay
 
-| Lane \ 里程碑 | **M0 · 解锁** | **M1 · 第一批竖切** | **M2 · 闭环/打磨** |
+#### F2 · Arena/World 能力回放视图（依赖 B2+D9） [FE | `components/arena/*`,`components/world/*` | 依赖 B2,D9 | maps-to replay]
+
+**功能点**
+- 用户可见：能看到 Arena match / World combat 的逐步回放、能力触发、结果原因。
+- 技术交付物：Replay timeline component，消费 D9 trace schema。
+
+**现状 & 缺口**
+- 已有：Arena 页使用 `useArenaEngine` 拉 matches/simulations（`frontend/src/hooks/useArenaEngine.ts:118-230`）；`arena_simulate_match` 当前只有 turns。
+- 缺：无 ability events；无 question trace；无 World replay component。
+
+**子任务拆分**
+1. 在 `ReplayCanvas/StagePanel` 等组件接入 D9 输出的 turns + abilityEvents。
+2. 新建 World question trace panel，显示 snapshot、entropy、outcome、payout。
+3. 无 D9 时 graceful fallback：显示基础 result，不渲染能力事件。
+
+**验收标准**
+- [ ] 命令：`cd frontend && npm run build` → 期望：Replay components 编译通过。
+- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/arena` 可展示旧 turns；有 D9 fixture 时展示 ability events；World question trace 可打开。
+
+#### F3 · AgentMind / 决策回放接 World question trace [FE | `components/ledger/*`,`components/world/*` | 依赖 B2,D9,D4 | maps-to AgentMind]
+
+**功能点**
+- 用户可见：AgentMind 不只是文字流，还能引用具体 question/trace/treasury event。
+- 技术交付物：AgentMind entry 支持 `questionId/traceId/worldEventId` 链接；从 D4 runner context 读取 active questions/events。
+
+**现状 & 缺口**
+- 已有：Arena 页复用 `useGameEngine` 给 AgentMind panel（`frontend/src/app/arena/page.tsx:15-18`、`frontend/src/components/arena/AgentMindPanel.tsx` 在现有组件树中）。
+- 缺：无 question trace link；无 World event ticker；runner context 仍是旧 active oracle debate。
+
+**子任务拆分**
+1. 扩展 store entry shape：可选 `questionId/worldEventId/traceId`。
+2. AgentMind UI 点击后打开 F2 trace panel 或 World event detail。
+3. 兼容旧 ledger entries：无 trace 字段时仍按文本显示。
+
+**验收标准**
+- [ ] 命令：`cd frontend && npm run build` → 期望：AgentMind trace links 编译通过。
+- [ ] 命令：`cd frontend && npm run test -- --runInBand AgentMindTrace` → 期望：旧 entry 与带 questionId 的 entry 都能渲染。
+
+#### F7 · 前端 Router resolver 支持 V4 `world` [FE | `frontend/src/hooks/*`,`frontend/src/chain/*` | 依赖 P1 | maps-to world-as-market §8.2]
+
+**功能点**
+- 用户可见：前端无需手填 World 地址；旧 Router 未升级时不崩。
+- 技术交付物：前端 resolver 统一解析 V4/V3/V2/V1；返回 world/gTreasury/cardLedger/arena/game。
+
+**现状 & 缺口**
+- 已有：`useGameEngine` 只用 V1 `getAddresses`（`frontend/src/hooks/useGameEngine.ts:13-15`、`frontend/src/hooks/useGameEngine.ts:104-114`）。
+- 已有：`useArenaEngine` 有 V3/V2/V1 fallback，但没有 V4/world（`frontend/src/hooks/useArenaEngine.ts:12-21`、`frontend/src/hooks/useArenaEngine.ts:171-213`）。
+- 已有：`frontend/src/chain/abis.ts` 的 Router ABI 甚至只有 5 个 address，与当前 Router V1 6-tuple 不一致（`frontend/src/chain/abis.ts:6-8`），`frontend/src/chain/contracts.ts` 解 5 项（`frontend/src/chain/contracts.ts:20-29`），且当前无 import 使用。
+- 缺：无 shared resolver；无 world contract instance；无 V4 tuple 类型。
+
+**子任务拆分**
+1. 新建/重构 `frontend/src/chain/resolve.ts`：V4 -> V3 -> V2 -> V1 fallback。
+2. 更新 `useGameEngine` 与 `useArenaEngine` 共用 resolver，避免重复 ABI。
+3. 输出 `world` contract 与 `World` ABI read fragments：question/treasury/events/scoreV2。
+4. 老 Router 未升级时 `world=null`，UI 隐藏 World-only panels 并提示 unavailable。
+
+**验收标准**
+- [ ] 命令：`cd frontend && npm run build` → 期望：resolver 类型编译通过。
+- [ ] 命令：`cd frontend && npm run test -- RouterResolverV4` → 期望：V4 返回 world；V3/V2/V1 fallback 不 throw；旧 `frontend/src/chain/abis.ts` tuple 长度漂移被测试覆盖。
+
+#### F8 · Featured Prediction Markets 改为问题流 + World Treasury meter [FE | `app/page.tsx`,`components/spectator/*` | 依赖 F7,D1,D3 | maps-to world-as-market §8.6]
+
+**功能点**
+- 用户可见：落地页展示 Featured Questions、World Treasury、World Events，而不是旧 ore prediction markets。
+- 技术交付物：首页/观众态 question feed、treasury meter、events ticker、score v2 badge。
+
+**现状 & 缺口**
+- 已有：demo landing 展示 `FEATURED PREDICTION MARKETS`（`demo/index.html:955-965`）；scoreboard 文案仍是旧公式（`demo/index.html:937-950`）。
+- 真实 `/` 当前是 hex map + Sidebar/HUD（`frontend/src/app/page.tsx:11-23`），没有 featured questions/treasury。
+- 缺：无 World treasury meter、无 world events ticker、无 score v2 indicator。
+
+**子任务拆分**
+1. 新建 spectator band/panel：Featured Questions（open/locked/resolved）、World Treasury meter（surplus/eventPool/burn）、World Events ticker。
+2. score 展示从旧 `getScore` 切 A4 score v2；若未激活，标 legacy，且隐藏 score-based G question CTA。
+3. 移除/改写 “prediction markets” 文案为 “World Questions / World Markets”，但 `/markets` 路由名可保留。
+4. 响应式：桌面与移动不遮挡地图/主 HUD。
+
+**验收标准**
+- [ ] 命令：`cd frontend && npm run build` → 期望：Featured Questions/Treasury meter 编译通过。
+- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：1440x900 与 375x812 首页能看到 Featured Questions、World Treasury meter、World Events ticker；旧 featured prediction market 文案不再出现。
+
+---
+
+## 3. 并行矩阵 + 关键路径
+
+### 3.1 并行矩阵
+
+| 阶段 | 可并行 lane | 阻塞/串行点 | 退出条件 |
 |---|---|---|---|
-| **P** | P5（relay signer gate，依 Auth 决策）、P1（Router V4） | P2（部署+market 授权）、P3a（地址解析/config） | P4（achievement keeper 授权） |
-| **A** | A1（参数 storage 化，先 land） | A2（成就事件） | A3（仅 Auth 选 b） |
-| **B** | B1（RNG 方案/实现）、B2（AbilityEvent trace） | B3（Card metadata + mintStoryCard） | — |
-| **C** | C1（interface/设计稿） | C2（自结算市场） | C3（Oracle/rake/refund） |
-| **D** | D0、D0b、D1b、D5（依 D0b）、D6 | D1（市场工具）、D4（卡元数据）、D7（多租户）、D9（trace ABI/tool，依 B2,D1b） | D2（market keeper）、D3（achievement keeper）、D8（配额） |
-| **E** | E1、E1b-a | E2、E3、E1b-b、E4 | E5、E6、E7、E8、E9 |
-| **F** | F1、F6、F8、F9 | F2、F4、F7 | F3、F5 |
+| Phase 0 · Skeleton | C0/C1、P1、A3、B1 interface、F7 resolver skeleton、D5 hygiene | P2 需 P1+C1；C2/C3 需 A3 | `World` interface 编译、Router V4 测试、delegation 测试、resolver fallback 测试通过 |
+| Phase 1 · Faucet/Build | A1、C2、D1 基础 tools、E1/E2、E6 | A1 adapter 先于 C2；`build` World 接管必须等 A3；D1 需 P3a world 地址 | `answer_question` 可 harvest/build，G 会计不变，前端可充值 G |
+| Phase 2 · Combat/RNG | B1、A2、C3、D9、F2 | A2 adapter 先于 C3；C3 必须 lock+entropy | World raid staged resolve；Arena/World money-staked 路径无 `prevrandao` |
+| Phase 3 · G Markets/Oracle/Events | C4、C6、C7、C8、D1/D2、E4、F8、D3 | C4 treasury 原语先于 C6/C7；score-based G market 必须等 A4；ORACLE dispute/timeout 需 owner 拍板 | G pool 无 cap；treasury meter/events 可见；question keeper 可 resolve/refund |
+| Phase 4 · Freeze | D4、C5、A5、P4 | 串行 D4 -> C5 -> A5；freeze 前必须 D4 runner 切流、D1 alias、F7 resolver、C2/C3/C4/C6/C7 全过 | legacy direct write revert；World adapter/alias 正常 |
 
-### 关键路径
+### 3.2 关键路径（最短可上线顺序）
 
-```text
-市场竖切：
-  C1 -> P1 -> C2 -> P2(addOperator market) -> P3a -> D1 -> E4
-                      \
-                       -> D2 keeper（C2 resolve permissionless，只需 gas）
-
-Auth / relay：
-  D6 + Auth 决策 -> P5 -> E1b-b -> E2/E3/D7
-  若选 (b)：Auth 决策 -> A3 -> E3/E1b-b/D7
-  （E7 已裁剪手动接管/代发，仅依 E3,D7，不再走 E1b-b/P5）
-
-成就故事卡：
-  A2 + B3 -> P4 -> D3 -> E8/F5/E5
-
-能力回放：
-  B2 + D1b -> D9（MCP trace ABI/tool） -> F2 -> F3/F4
-```
-
-- **最长链是市场竖切**：不能跳过 P1/P2/P3a。没有 Router 槽位，D/E 找不到市场；没有 `addOperator(market)`，`spendOre/refundOre` 会 revert。
-- **E1 是所有真人写操作地基**：E2-E8 都依赖 wallet/tx 三态；gasless 体验再依 E1b-b/P5/D6。
-- **Auth 决策是 M0 gate**：默认 (a) 可先走全局 relay + off-chain flag；若产品/安全要求用户链上可撤权，则必须开 A3。
-- **D0b 是 D5 硬前置**：事件 ABI 不修，遥测 capture/rebellion/harvest 指标会错。
-- **F 与 E 的边界不变**：E 新建写链路和路由；F 维护既有只读 hooks、Arena 页、观众/lore/ledger 只读组件。
+1. **P1 + C0/C1 + A3**：Router 有 world slot，World 有 question 状态机，agent 授权不再依赖全局 operator。
+2. **P2/P3a + F7 + D1**：部署 World，MCP/前端能解析 world 并读/写 question。
+3. **A1 -> C2 + E6**：基础 harvest/build adapter 先准备，再作为 difficulty 0/低难 question 跑通，G 充值可用。
+4. **C4 -> C6/C7/C8 + E4 + D2/D3**：treasury accounting 先落地，再上线 G parimutuel、ORACLE refund/dispute、World events、keeper、遥测；G pool 无 cap。
+5. **A4**：score 降权上线。**任何 score-based G 市场必须排在此之后**。
+6. **B1 + A2 -> C3 + D9 + F2/F3**：GameEngine combat adapter 先准备，再接 World combat/RNG/trace 全链路。
+7. **D4 -> C5 -> A5**：MCP/runner 完成 alias 切流，C5 checklist 通过后，A5 freeze legacy direct writes。
 
 ---
 
-## 4. Make-the-demo-real 映射（诚实标注合约/部署前置）
+## 4. make-demo-real（World-as-Market 版）
 
-| demo 预览功能 | demo / story 锚点 | 让它变真的任务 | 阻塞依赖 / 诚实说明 |
-|---|---|---|---|
-| World 观众落地页（Hero、LIVE DRAMA、SCOREBOARD、FEATURED MARKETS、AgentMind） | US-A1-A3（`docs/demo-user-stories.md:76-98`）；demo `demo/index.html:924-970` | F8；FEATURED MARKETS 真数据再接 D1/C2 | 真实 `/` 当前仅地图壳（`frontend/src/app/page.tsx:14-23`）；不需要钱包；市场卡可先占位 |
-| 钱包 onboarding / gasless | US-B1（`docs/demo-user-stories.md:114-127`） | E1 -> E1b-a/b -> E2 | `createAgent` 无 canControl gate，但 gasless relay/后续 autopilot 仍受 Auth 决策和 P5；不能声称用户可链上 `addOperator` |
-| `/me` autopilot / goal / 实时 AgentMind | US-C1/C2（`docs/demo-user-stories.md:139-170`）；demo `demo/index.html:1191-1457` | E3、E7、D7、F9、F6 | 默认 (a) 为 off-chain flag；若要用户链上委托需 A3；F9 是只读组件，E 主壳 import；**quick actions / 手动接管（US-C3）已裁剪** |
-| 预测市场下注/赔率/持仓/结算凭证 | US-D1-D4（`docs/demo-user-stories.md:182-208`）；demo `demo/index.html:1711-2000` | C1->P1->C2->P2->P3a->D1->E4；Oracle 再加 C3 | 现仅 debate 内 Oracle 雏形（`GameEngine.sol:710-880`）；独立市场、Router、授权都缺 |
-| 账本视图（memory/inbox/location/chronicle/bible） | US-F1-F5；demo `/me`/`#/lore` | F6 | 后端读路径已在 `useGameEngine.ts:192-247`；主要是页面和组件 |
-| Arena shop roll/freeze/move | demo `#/arena`，capability matrix #75-77（`docs/capability-matrix.md:114-117`） | D1b；E5/E6 做人类 UI | 链上已有 `move/freeze/roll`（`ArenaEngine.sol:347-403`）；MCP 缺工具 |
-| Arena 收藏/买卖/卡市 | US-E0-E3/E5；demo `demo/index.html:2120-2446` | E5、E6、F5；D4 给 MCP/agent 侧 | 合约 + MCP listing 已有（`CardLedger.sol:88-138`、`tools.ts:721-748`）；人类 UI 缺 |
-| 能力连锁回放 | US-E4；demo 固定脚本（`demo/index.html:2474-2534`） | B2 -> F2 -> F3/F4 | 现 `Turn` 只记普攻（`ArenaCombat.sol:30-36`）；必须先 B2 |
-| story/provenance card | demo mock warning（`demo/index.html:2250-2295`） | B3 -> D3/D4/F5/E5/E8 | `Card` struct 无 metadata（`CardLedger.sol:17-22`）；真实 metadata 需要合约先做 |
-| 战斗分享 | demo Share mock（`demo/index.html:2513-2515`） | F4 | 纯前端；真实数据来自 current match/route state |
+1. **保留真人语义，替换链上原语**：demo 的 Harvest/Build/Raid/Bet 按钮可保留，但真实链路必须是 `answer_question` / `bet_question`。demo quick actions 现位于 `demo/index.html:1344-1357`；真实前端落 E/F，不直接复用 demo。
+2. **Markets -> Questions**：demo `/markets` 现在是 ore parimutuel（`demo/index.html:1708-1908`）。真实 `/markets` 可保留路由名，但数据结构改为 `Question`，G market 只显示 G stake/payout，移除 ore cap clamp。
+3. **World Treasury 可见**：首页/markets/my agent 都应能看到 `surplusG/eventPrizePoolG/protocolBurnG`；现真实前端没有该面板（`frontend/src/app/page.tsx:11-23`）。
+4. **AgentMind 读 trace**：D9 + F2/F3 提供 question trace 后，AgentMind 的“为什么”从纯文本变成可点击证据。
+5. **score 文案同步**：demo 和真实前端都不能再展示 `hexes×100 + ore + buildings×50` 作为正式公式；旧公式只可标 legacy（demo 当前 `demo/index.html:937-950`）。
+6. **不新增 email login/gasless 后端承诺**：E1/E2 只做钱包连接、tx 三态和可选 relay client interface；完整 relay 后端需另设 owner。
 
 ---
 
-## 5. 风险 / 待决（review 时拍板）
+## 5. 风险
 
-1. **部署目标 config 漂移（router/RPC 链 mismatch）**：`just gravity-upgrade` 用 `grep -o '0x...' frontend/config/gravity.json | head -1` 取 `ROUTER_ADDRESS`，命中的是 mainnet router `0x13860c...`（`frontend/config/gravity.json:1-7`），但 `--rpc-url` 硬编码为 testnet RPC（`justfile:47-53`）；而 `agent-runner/config/gravity.toml` 又指向 testnet router（`:13-16`）。真实风险是用 mainnet router 地址在 testnet RPC 上跑升级的链/地址 mismatch，不是“升级到 mainnet”。P2/P3a 前必须拍板 `gravity` 命名、router 与 RPC 的链对齐。
-2. **Auth/Delegation false premise**：当前只有全局 operator 集合和 agent owner（`AgentRegistry.sol:19-24`、`:45-48`、`:66-69`）。默认 (a) 可落地，但用户级链上撤权不存在；若产品必须要，开 A3。
-3. **PredictionMarket 授权是硬前置**：C2 下注会调用 `GameEngine.spendOre`（`GameEngine.sol:471-475`），market 合约未被 `AgentRegistry.addOperator` 授权必 revert。
-4. **`MAX_ORE_POOL=1000` 派彩 cap**：`refundOre` 会 cap 到 1000（`GameEngine.sol:478-486`）。C1/C2 必须决定市场派彩是否接受 cap、拆 claim、或改 ore accounting。
-5. **RNG 完整性**：`ArenaEngine` 明确 TODO prevrandao 可 grind（`ArenaEngine.sol:545-548`）；真实价值/G 经济扩大前 B1 是安全 gate。
-6. **成就 exactly-once**：A2 不加状态位，D3 必须持久去重 `(agentId, achievementTag)`；否则重放事件可重复铸卡。
-7. **relay 后端 owner 未定**：若放 `mcp-server`，归 D；若新服务，需在 §2.1 新增唯一 owner。E1b-a 只能先做 client/skeleton。
-8. **单位扩容与 ERC-721 外部流通后置**：当前 `UnitCatalog` 只有 12 单位（`UnitCatalog.sol:12-139`）。story card 体感有限；但扩 60 单位/外部 NFT 流通不塞入 B3。
-
----
-
-## 6. 与 roadmap WBS 的偏差（本文据当前代码校准）
-
-- **新增 Lane P**：roadmap 没有单列 Router/Deploy/operator/config owner。本文把 P1-P5 抽成唯一基础设施 lane，防止 C/D/E 同改 Router、脚本、config。
-- **Auth 事实修正**：roadmap 曾写 owner/operator 机制支持用户可收回（`docs/roadmap.md:36-38`、`:264-266`），但代码事实是全局 owner-only operator，无 per-agent 委托（`AgentRegistry.sol:19-24`、`:66-69`）。本文新增 Auth 决策门与条件 A3。
-- **AgentRegistry 行号和模型已校正**：旧稿简化为 global mapping；当前代码还有单一 `operator`（`AgentRegistry.sol:19`）和 mapping（`:24`），`_isOperator` 同时认可二者和 owner（`:36-38`）。
-- **部署 config 风险新增**：旧稿未指出 `frontend/config/gravity.json` 指向 mainnet、`agent-runner/config/gravity.toml` 指向 testnet、`just gravity-upgrade` 读前者的冲突；本文列为 P2/P3a 风险。
-- **MCP 事件 ABI 漂移列为 D0b**：`chain.ts:44` 的 `HexClaimed` 不存在，`chain.ts:47` 的 `Harvested` 签名错误，且缺 `HexCaptured/HexRebelled`。
-- **Arena shop 工具列为 D1b**：链上 `move/freeze/roll` 已有（`ArenaEngine.sol:347-403`），MCP 工具缺；旧 e2e 脚本已期待这些工具（`e2e-arena-tools.mjs:51-58`）。
-- **F6 改为页面/组件工作，不是接 MCP**：前端已经 direct RPC 读取全部账本（`useGameEngine.ts:192-247`），所以 F6 不做后端接入。
-- **前端 lane 重切**：E 只建新写链路和路由；F 独占既有 `useArenaEngine.ts`、`app/arena/page.tsx`、只读 store/arena 组件，避免同文件碰撞。
-- **新增/保留任务**：保留 P1-P5、A1-A3、B1-B3、C1-C3、D0/D0b/D1/D1b/D2-D9、E1/E1b-a/E1b-b/E2-E9、F1-F9；未删除旧编号。F7/F8/F9、D0b、D1b、D9（MCP trace ABI/tool）、P lane 是本文明确化的遗漏任务。
-- **旧行号漂移修正**：`writeWorldBible` 现为 `GameEngine.sol:1038-1059`；`writeChronicle` emit 在 `:987`；`ArenaCombat.eloUpdate` 精确行为号为 `contracts/src/ArenaCombat.sol:93-115`；`useArenaEngine` V3 fallback 在 `frontend/src/hooks/useArenaEngine.ts:171-218`。
+1. **World 成为超级 operator 的风险**：当前 `_isOperator` 包含 contract owner，且 global operator 可控制任意 agent（`contracts/src/AgentRegistry.sol:36-48`）。若 World/keeper 复用该语义，任何 caller 都可能经 World 替他人花 G。A3 是硬前置。
+2. **G 会计被 surplus 提走**：`surplusG` 当前未排 escrow/event pool（`contracts/src/GTreasury.sol:165-169`）。C4 未完成前，不能上线 G escrow market。
+3. **G payout 被 ore cap 静默吞掉**：旧 debate/demo 都有 cap/clamp 行为（`contracts/src/GameEngine.sol:867-881`、`demo/index.html:575-584`）。C6/E4 必须断言 G pool 无 cap。
+4. **state drift / RNG grind**：旧 attack/raid/incite/Arena 仍读 `prevrandao` 并 live 改状态。B1+C3 未完成前，不能把 G stake/event prize 绑到这些随机路径。
+5. **freeze 破坏 agent-runner**：runner 默认工具仍含旧动作（`agent-runner/src/mcp.ts:118-122`），旧 debate 动作紧随其后（`agent-runner/src/mcp.ts:123`）。D4 未完成前打开 A5 会让自主循环停摆。
+6. **score 污染 G 市场**：旧 score 线性吃 ore（`contracts/src/GameEngine.sol:494-506`）。A4 未完成前，scoreboard top 这类 G market 必须禁用。
+7. **部署链/地址错配**：`just gravity-upgrade` 当前从 mainnet config 取 router 却打 testnet RPC（`justfile:47-53`、`frontend/config/gravity.json:1-7`）。P2/P3a 必须先修。
 
 ---
 
-## 7. 无法核实 / 留待确认
+## 6. 与旧计划的偏差（明确作废/改写）
 
-- **目标网络命名**：仓库 AGENTS 背景强调 Gravity Testnet；当前 `frontend/config/gravity.json` 是 mainnet，`agent-runner/config/gravity.toml` 是 testnet，`frontend/config/gravity-testnet.example.json` 又是另一个 testnet router。P2 前需人工确认 `gravity` 应指哪条链。
-- **Auth 选 (a) 还是 (b)**：本文默认 (a) 全局 relay + off-chain flag；若要求用户链上可撤权，必须接受 A3 合约改动和 storage layout 风险。
-- **relay 后端落点**：代码中尚无 relay 服务目录。D6 必须拍板归属，否则 E1b-b/D7 容易撞文件域。
-- **PredictionMarket 派彩 cap 策略**：`MAX_ORE_POOL` 是否适用于市场派彩需产品/经济决策；C1/C2 不应擅自隐式吞派彩。
-- **VRF vs commit-reveal**：B1 需要安全/成本决策；当前只确认 `prevrandao` 不足以承载真实价值。
+| 旧计划 | 新状态 |
+|---|---|
+| Lane C = 新建独立 `PredictionMarket.sol`，用 ore 下注 | **作废**。Lane C = `World` Core：C0..C8；G market 归 World；ore 只做 engagement/faucet/sink |
+| Router `predictionMarket` 槽位 | **改为 `world` 槽位**；getter 定名 `getAddressesV4()`，返回 V3 九项 + world |
+| A lane 重点是 GameEngine 参数 storage 化 | **改为 World 接管入口 + legacy freeze + score 降权**；参数 storage 化不是本次主线 |
+| A3 per-agent delegation 是条件任务 | **强制前置**，否则 World/keeper 授权模型不安全 |
+| B lane 只修 Arena RNG | **升级为全局 RNG**，覆盖 GameEngine attack/raid/incite + Arena roll/matchmaking + World combat |
+| D1 `create_market/bet/resolve_market` | **改为 question tools**：`create_question/answer_question/bet_question/resolve_question/claim_payout/get_treasury/get_world_events`；旧名只可 alias |
+| keeper-market | **改为 question keeper + treasury keeper** |
+| E4 market 下注用 ore | **改为 G**；真人用自己拥有的 agent 在 G pool 下注；G pool 无 cap |
+| F8 featured prediction markets | **改为 Featured Questions + World Treasury meter + World Events ticker** |
+| score = hex*100 + ore + buildings*50 | **降权 ore**：领地/建筑/声誉/答题准确率为主，ore sqrt/封顶；score-based G market 等 A4 |
+| E7 手动操作事件/US-C3 | **继续裁剪**，不做单独事件系统；用 Question receipt/trace 替代 |
+
+---
+
+## 7. 待确认（OPEN 给 owner）
+
+1. **RNG 策略**：VRF、commit-reveal、keeper-seeded entropy，还是分层策略？B1 会先抽象接口，但 C3 上线前要定生产路径。
+2. **G fee 分配比例**：World fee 中 protocol surplus / burn / eventPrizePool 的默认比例与可调权限。
+3. **ORACLE 裁决模型**：单 resolver、多签、争议窗口、dispute bond、超时 grace；世界杯等旗舰 G market 上线前必须定。
+4. **G escrow 放置**：GTreasury 内部 escrow 还是 World 内部账本 + GTreasury 受限 entrypoints。本文默认 C4 在 GTreasury 补账。
+5. **score v2 落点**：World canonical score、GameEngine adapter，还是独立 ScoreModule。本文建议 World/ScoreModule canonical，GameEngine legacy 只读兼容。
+6. **legacy freeze 时间**：C2/C3/C4/C6/C7、D1/D4、C5、F7、E4 达到什么稳定度后在 testnet/mainnet 开 A5。
+7. **基础 ore loop 是否完全免费**：本文按 difficulty 0/Harvest feeG=0 写；若 owner 改成低额 G fee，需要同步 C2/E4/D3。
+8. **`/markets` 命名**：路由是否继续叫 `/markets`。本文建议保留路由，内部文案改 “World Questions / World Markets”。
