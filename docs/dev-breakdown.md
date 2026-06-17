@@ -628,8 +628,10 @@
 
 #### E1 · 钱包连接与写链路基座 [FE | wallet 新子树 | 依赖无 | maps-to roadmap E6.1, US-A4/B1]
 
+> **范围裁剪（owner 2026-06-17）**：**不做 login by email / 社交登录**。登录入口只做「钱包连接」（外部钱包或嵌入式钱包），provider 选型排除 Privy/Dynamic 类邮箱登录路径。
+
 **功能点**
-- 玩家/用户可见：用户能登录/连接钱包，并看到真实交易 pending/confirmed/failed 三态。
+- 玩家/用户可见：用户能连接钱包（外部或嵌入式，**非 email/社交登录**），并看到真实交易 pending/confirmed/failed 三态。
 - 技术交付物：新增 wallet provider/hooks/lib/components；支持嵌入式钱包或外部钱包；write client 可调 `build`/`raid` 等受控动作；链错/未连接错误态。
 
 **现状 & 缺口**
@@ -637,7 +639,7 @@
 - 缺：无 wagmi/viem/Privy/RainbowKit/sendTransaction；无 tx 状态组件；无 wallet 子树。
 
 **子任务拆分**
-1. 选 wallet provider 并增加依赖/Provider。
+1. 选 wallet provider 并增加依赖/Provider（**仅钱包连接，不接 email/社交登录**）。
 2. 新建 `useWalletAccount/useTxState/writeContract` 基础 API。
 3. 实现 `TxButton`/`TxStatus`，统一 pending/confirmed/failed。
 4. 用 `build` 或 `raid` 做最小真实写入验收；不以 `harvest` 作为授权验收。
@@ -693,8 +695,10 @@
 
 #### E2 · Agent 创建 / onboarding 流 [FE/MCP | `app/onboard/*` | 依赖 E1；gasless 依赖 E1b-b | maps-to roadmap E6.2, US-B1]
 
+> **范围裁剪（owner 2026-06-17）**：onboarding 第 1 步是「钱包连接」，**不做 email 登录**。
+
 **功能点**
-- 玩家/用户可见：4 步 onboarding：登录、定义 agent、确认、成功进入 `/me`，真实创建 7 格 + 200 ore。
+- 玩家/用户可见：4 步 onboarding：**钱包连接（非 email 登录）**、定义 agent、确认、成功进入 `/me`，真实创建 7 格 + 200 ore。
 - 技术交付物：`/onboard` 路由；调用 `GameEngine.createAgent` 或 relay；重复访问已有 agent 显示去 dashboard。
 
 **现状 & 缺口**
@@ -728,7 +732,7 @@
 1. 在 D6/Auth 决策后固定 UI 文案：默认 (a) 不声称链上用户撤权。
 2. 实现 toggle：读取/写入 autopilot flag；同步 relay/runner 状态。
 3. 如果走 (b)，接 `delegate/undelegate` tx 三态。
-4. 与 E7 手动动作禁用态联动。
+4. 与 E7 暂停/恢复控制联动（共享同一 autopilot flag）。
 
 **验收标准**
 - [ ] 命令：`cd frontend && npm run build` → 期望：AutopilotToggle 编译通过，未 import A3 ABI 除非 Auth 选 (b)。
@@ -736,9 +740,11 @@
 
 #### E4 · 预测市场前端 UX [FE | `app/markets/*` | 依赖 E1,D1,C2；Oracle 依赖 C3 | maps-to roadmap E6.4, US-D1-D4]
 
+> **范围确认（owner 2026-06-17）**：下注币种 = **ore**（v1，`currency` 可插拔）。agent 自营下注 + **真人也可下注**两条路都走本任务；**真人下注 = 用自己拥有的 agent 在 ore 池下注**——C2 要求 `msg.sender == registry.agentOwner(agentId)`，故下注弹层须带上「以哪个我的 agent 下注」的选择，且不能替非自有 agent 下注。
+
 **功能点**
-- 玩家/用户可见：浏览市场、看详情、下注、看持仓、开奖凭证；SELF_RESOLVING 与 ORACLE 两型。
-- 技术交付物：`/markets`、`/markets/[id]`；下注弹层；positions；settlement receipt；tx 三态。
+- 玩家/用户可见：浏览市场、看详情、用 **ore** 下注（**真人用自己拥有的 agent 下注**）、看持仓、开奖凭证；SELF_RESOLVING 与 ORACLE 两型。
+- 技术交付物：`/markets`、`/markets/[id]`；下注弹层（含「选择我的 agent」+ ore 余额校验）；positions；settlement receipt；tx 三态。
 
 **现状 & 缺口**
 - 已有：demo markets 入口和体验（`demo/index.html:1711-2000`）；user stories D1-D4（`docs/demo-user-stories.md:182-208`）。
@@ -747,7 +753,7 @@
 **子任务拆分**
 1. 新建 markets routes 与 read client，接 D1 或 direct RPC（由 E/D 决策）。
 2. 实现 market card/list/detail，显示 pools、odds、resolveAt、AI brief/context。
-3. 实现 bet modal：金额校验、parimutuel 预估、tx 三态、未登录跳 onboarding。
+3. 实现 bet modal：**选择「以哪个我的自有 agent 下注」（非自有 agent 不可选）**、ore 金额/余额校验、parimutuel 预估、tx 三态、未登录跳 onboarding。
 4. 实现 positions 和 settlement receipt。
 5. Oracle slice 在 C3 后启用。
 
@@ -796,25 +802,27 @@
 - [ ] 命令：`cd frontend && npm run build` → 期望：DepositG 编译通过。
 - [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/me` 或 `/arena/market` 375x812 下点击 `+20 G` 显示 pending→confirmed，G balance 增加；失败时显示 revert reason。
 
-#### E7 · 喂目标 / 接管 / 暂停控制面 [FE/MCP | `AgentControls` | 依赖 E3,D7,E1b-b/P5 | maps-to roadmap E7.3, US-C2/C3]
+#### E7 · 喂目标 / 暂停控制面 [FE/MCP | `AgentControls` | 依赖 E3,D7 | maps-to roadmap E7.3, US-C2]
+
+> **范围裁剪（owner 2026-06-17）**：**不做「手动操作事件」**——去掉「手动接管一回合」与 `QUICK ACTIONS`（手动 harvest/build/raid）及对应 **US-C3**。E7 收敛为「**喂高层目标（SET GOAL）+ 暂停 autopilot**」；逐步手动操作不在范围内，故本任务不再依赖 relay 代发动作（E1b-b/P5）。
 
 **功能点**
-- 玩家/用户可见：用户能设置高层目标、暂停 autopilot、手动接管一回合。
-- 技术交付物：goal input、quick actions、manual action tx state；接 D7 runner goal API 和 relay。
+- 玩家/用户可见：用户能给 agent 设置高层目标（SET GOAL）、暂停/恢复 autopilot；**无逐步手动操作/接管**。
+- 技术交付物：goal input + tx/写入态；接 D7 runner goal API；暂停态与 E3 autopilot flag 联动。
 
 **现状 & 缺口**
-- 已有：demo `SET GOAL / STRATEGY` 与 `QUICK ACTIONS`（`demo/index.html:1337-1365`），autopilot 开时禁用手动动作（`docs/demo-user-stories.md:154-170`）。
-- 缺：真实 `/me`、runner goal API、relay 实现、状态联动。
+- 已有：demo `SET GOAL / STRATEGY`（`demo/index.html:1337-1365`），autopilot 开关（`demo/index.html:1310-1337`）。
+- 缺：真实 `/me`、runner goal API、goal 写入态、暂停联动。
+- 裁剪：demo 的 `QUICK ACTIONS` 手动动作不再实现（owner 决定）。
 
 **子任务拆分**
 1. 实现 Goal input，调用 D7 API 写 tenant goal。
-2. 实现 quick actions：harvest/build/raid/bet link；受 autopilot flag 控制。
-3. 手动动作走 self-sign 或 relay allowlist；展示 tx 三态。
-4. AgentMind/F9 记录 owner goal 更新。
+2. 暂停/恢复与 E3 autopilot flag 联动（暂停即停 runner/relay 代发）。
+3. AgentMind/F9 记录 owner goal 更新。
 
 **验收标准**
-- [ ] 命令：`cd frontend && npm run build` → 期望：AgentControls 编译通过。
-- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/me` 1440x900 下 push goal 后 D7 runner goal 可查；autopilot ON 时手动 `Build/Raid` 禁用，OFF 后按钮可发 tx 并有三态。
+- [ ] 命令：`cd frontend && npm run build` → 期望：AgentControls 编译通过；不含 quick-actions/手动动作组件。
+- [ ] 命令：`cd frontend && APP_CONFIG=localhost npm run dev -- -H 127.0.0.1 -p 3000` → 期望：`/me` 1440x900 下 push goal 后 D7 runner goal 可查；暂停后 autopilot flag 关闭、runner 停发；页面**无** QUICK ACTIONS/手动接管控件。
 
 #### E8 · 通知中心 [FE/INFRA | `Notifications` | 依赖 C2,C3,B3,CardLedger events | maps-to roadmap E6.7]
 
@@ -1071,8 +1079,9 @@
                        -> D2 keeper（C2 resolve permissionless，只需 gas）
 
 Auth / relay：
-  D6 + Auth 决策 -> P5 -> E1b-b -> E2/E3/E7/D7
-  若选 (b)：Auth 决策 -> A3 -> E3/E1b-b/E7/D7
+  D6 + Auth 决策 -> P5 -> E1b-b -> E2/E3/D7
+  若选 (b)：Auth 决策 -> A3 -> E3/E1b-b/D7
+  （E7 已裁剪手动接管/代发，仅依 E3,D7，不再走 E1b-b/P5）
 
 成就故事卡：
   A2 + B3 -> P4 -> D3 -> E8/F5/E5
@@ -1095,7 +1104,7 @@ Auth / relay：
 |---|---|---|---|
 | World 观众落地页（Hero、LIVE DRAMA、SCOREBOARD、FEATURED MARKETS、AgentMind） | US-A1-A3（`docs/demo-user-stories.md:76-98`）；demo `demo/index.html:924-970` | F8；FEATURED MARKETS 真数据再接 D1/C2 | 真实 `/` 当前仅地图壳（`frontend/src/app/page.tsx:14-23`）；不需要钱包；市场卡可先占位 |
 | 钱包 onboarding / gasless | US-B1（`docs/demo-user-stories.md:114-127`） | E1 -> E1b-a/b -> E2 | `createAgent` 无 canControl gate，但 gasless relay/后续 autopilot 仍受 Auth 决策和 P5；不能声称用户可链上 `addOperator` |
-| `/me` autopilot / goal / quick actions / 实时 AgentMind | US-C1-C3（`docs/demo-user-stories.md:139-170`）；demo `demo/index.html:1191-1457` | E3、E7、D7、F9、F6 | 默认 (a) 为 off-chain flag；若要用户链上委托需 A3；F9 是只读组件，E 主壳 import |
+| `/me` autopilot / goal / 实时 AgentMind | US-C1/C2（`docs/demo-user-stories.md:139-170`）；demo `demo/index.html:1191-1457` | E3、E7、D7、F9、F6 | 默认 (a) 为 off-chain flag；若要用户链上委托需 A3；F9 是只读组件，E 主壳 import；**quick actions / 手动接管（US-C3）已裁剪** |
 | 预测市场下注/赔率/持仓/结算凭证 | US-D1-D4（`docs/demo-user-stories.md:182-208`）；demo `demo/index.html:1711-2000` | C1->P1->C2->P2->P3a->D1->E4；Oracle 再加 C3 | 现仅 debate 内 Oracle 雏形（`GameEngine.sol:710-880`）；独立市场、Router、授权都缺 |
 | 账本视图（memory/inbox/location/chronicle/bible） | US-F1-F5；demo `/me`/`#/lore` | F6 | 后端读路径已在 `useGameEngine.ts:192-247`；主要是页面和组件 |
 | Arena shop roll/freeze/move | demo `#/arena`，capability matrix #75-77（`docs/capability-matrix.md:114-117`） | D1b；E5/E6 做人类 UI | 链上已有 `move/freeze/roll`（`ArenaEngine.sol:347-403`）；MCP 缺工具 |
