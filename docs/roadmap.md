@@ -3,6 +3,7 @@
 > 目的：把四条主线拆成**可分派给单人**的任务，并给出一套任务管理方案，供团队 review。
 > 状态：**梳理稿**。待拍板的决策用 🔵 标出；我的倾向用 ✅ 标出。Review 通过后再落成 GitHub issue。
 > 一切机制描述**以合约代码为准**，已标注 `file:line`。
+> ⚠️ **方向更新（owner 已拍板）**：旧的 ore-based 独立预测市场计划已正式演进为 **World-as-Market Core**：统一 `Question`/答题原语，预测市场用 **G** 计价，ore 作为无限软币/基础参与层并在计分中降权，中心金库由 G 税供养并触发世界事件。权威机制源见 `docs/world-as-market.md`；执行车道见 `docs/dev-breakdown.md` 的 Lane C（C0-C8）。本文保留旧条目作历史上下文，凡写“预测市场用 ore / 独立 PredictionMarket”处均以本段为准。
 
 ---
 
@@ -27,7 +28,7 @@
 | 角色 | 来干嘛 | 现状 |
 |---|---|---|
 | **Agent 主理人**（核心） | 拥有并驾驭自己的 AI agent 入世界 | 零（前端只读、无钱包、无创建流） |
-| 预言家/赌徒（=主理人的一种玩法） | 用 agent 的 ore 在预测市场下注 | 零 |
+| 预言家/赌徒（=主理人的一种玩法） | 旧口径：用 agent 的 ore 在预测市场下注；目标方向：用 G 押 World Question | 零 |
 | 收藏家/牌商（=主理人的一种玩法） | 用 G 收/卖卡（尤其故事 NFT） | 零（市场只有合约，无真人 UI） |
 | 观众（最轻） | 看戏、看 agent「怎么想」 | 部分（hex 地图 + Arena 回放 + AgentMind 面板） |
 
@@ -40,6 +41,7 @@
 ### 货币（因「human-as-agent」确认，非反转）
 
 真人通过**自己的 agent**玩，agent 占格就产 ore。故：**预测市场 → ore**（赌 agent 挣的 ore，自洽，保留 2.1 推荐）；**卡牌/Arena → G**（真人充原生代币 → GTreasury，现成）。**ore = 时间/技巧挣的（赌世界）；G = 真金白银（Arena 经济）。**
+> ⚠️ 方向变更：上面是旧 ore 计划口径。owner 已拍板改为 World-as-Market：预测市场/高价值 Question 用 **G**，ore 保留为免费参与层与旧兼容。
 
 ### ✅ 用户 agent = autopilot 还是手动？→ 决议：owner 战略家 / AI 执行者
 
@@ -62,9 +64,9 @@
 **Phase 1 · 上手（转化最难）**：① 连钱包——建议**嵌入式钱包 + 社交登录**（Privy/Dynamic 类），别用 MetaMask 劝退非 crypto 用户；② gas——L1 每个动作都要原生代币，**#1 UX 杀手**；③ `createAgent(name, personality, …)` 自动给 7 格 + 200 ore，**性格即 autopilot 的 LLM 系统提示**，平台可代发（合约无访问控制）。
 > ⚠️ **关键洞察：operator-relay 同时解决 gasless 和 autopilot。** 平台 operator 替 agent 发所有交易、垫 gas → 用户钱包退化成纯「所有权钥匙」，几乎不签名/不用 gas（只有提现 G / 转移 agent 才需自签）。复用现成 `AgentRegistry` operator 机制，合约不大改。代价：平台被信任执行 + 垫 gas（靠 G 抽成回收，= E7.1）。
 
-**Phase 2 · 第一次会话（啊哈）**：落到「我的 agent」面板 → **看自己 agent 自主决策 + 读它的 LLM 推理**（魔法瞬间：「我拥有一个替我打世界的 AI」）→ 「用 200 ore 下个注？」一键 skin-in-the-game（下注门槛 10-500 ore）→ 首次输赢推送 → 回流。**free-to-play 漏斗天然成立**：世界 + ore 下注全程不要钱，只有 Arena 买卡（G）是付费闸。
+**Phase 2 · 第一次会话（啊哈）**：落到「我的 agent」面板 → **看自己 agent 自主决策 + 读它的 LLM 推理**（魔法瞬间：「我拥有一个替我打世界的 AI」）→ 「用 200 ore 下个注？」一键 skin-in-the-game（下注门槛 10-500 ore）→ 首次输赢推送 → 回流。**free-to-play 漏斗天然成立**：世界 + ore 下注全程不要钱，只有 Arena 买卡（G）是付费闸。⚠️ 这是旧 demo/旧规划漏斗；目标方向下下注资产改为 **G**。
 
-**Phase 3 · 持续循环**（详见下「各主线的外部 UX 流」）：看 / 喂目标 / **赌（ore，核心高频）** / 爬塔 Arena（G，付费）/ 收藏故事卡 / 社交外交。
+**Phase 3 · 持续循环**（详见下「各主线的外部 UX 流」）：看 / 喂目标 / **赌（ore，核心高频）** / 爬塔 Arena（G，付费）/ 收藏故事卡 / 社交外交。⚠️ 旧口径；目标方向为 **G Question betting**。
 
 **Phase 4 · 留存**：agent 累积 领地 + 声望(chronicle) + 卡收藏 + ELO + 一部链上传记；进阶 = 圣典作者 / 登顶 / 稀有收藏。**黏性 = 你养大的「活物」有持续链上身份，离开 = 抛弃投资。**
 
@@ -80,7 +82,7 @@
 1. ✅ autopilot 分工：**用户 = owner = 战略家**（低频高杠杆）/ **AI = operator = 执行者**（高频琐事）。
 2. **operator-relay** 清零 gas/上手摩擦（见 Phase 1 ⚠️），是 E6 地基 + E7.1 的一部分。
 3. autopilot **规模/成本是真天花板**：现 runner 固定 26 角色 + 全局 5min 限流，N 用户 agent 线性增长 → E7.2 多租户 + E7.1 计费是承重墙。
-4. **两货币 UX 讲清**：ore = 游戏里挣的（赌世界，免费入口）/ G = 真钱买的（Arena，付费）。
+4. **两货币 UX 讲清**：旧口径是 ore = 游戏里挣的（赌世界，免费入口）/ G = 真钱买的（Arena，付费）；目标方向是 ore = 无限软币/基础参与层，G = 预测市场、Arena、金库与世界事件的稀缺价值层。
 
 ### 核心 UX 闭环（看戏 → 看懂 → 押注 → 输赢 → 更上头）
 
@@ -90,7 +92,7 @@
 我的 agent     状态卡:领地/ore/G/ELO/当前在干嘛 + autopilot 开关 + 喂目标输入
 发现市场       信息流,每个市场绑世界叙事 +赔率(池占比)+池子+倒计时+涉及 agent 头像/迷你地图
 看懂           点开 → 相关世界状态 + 相关 agent 链上发言/记忆 + 一句 AI 摘要(差异化:市场背后是可读意图)
-下注           用我的 agent 的 ore 选边/输额 → 派彩预估 + 「parimutuel:你的注会移动赔率」→ 签名
+下注           旧口径：用我的 agent 的 ore 选边/输额；目标方向：用 G 押 World Question → 派彩预估 + 「parimutuel:你的注会移动赔率」→ 签名
 跟踪/结算      「我的持仓」+ 结算通知 + 凭证(展示是什么链上事实裁定了它)
 ```
 
@@ -103,13 +105,15 @@
 
 ### 功能需求（FR）
 
-钱包连接(wagmi/viem/RainbowKit，前端首次具备写能力) · Agent 创建/onboarding(取名/性格/目标，非 crypto 用户引导) · owner→operator 委托开关(开/关 autopilot) · G 充值 on-ramp + 余额(G/ore)展示 · 手动动作 UI(若支持手动) · 预测市场完整 UX · 通知(结算/派彩/被超价/成就铸卡) · 战斗回放分享/导出 · 移动端响应式 + i18n(已有 zh/en)。
+钱包连接(wagmi/viem/RainbowKit，前端首次具备写能力) · Agent 创建/onboarding(取名/性格/目标，非 crypto 用户引导) · owner→operator 委托开关(开/关 autopilot) · G 充值 on-ramp + 余额(G/ore)展示 · 手动动作 UI(若支持手动；独立 US-C3 事件系统已裁剪) · 预测市场完整 UX（目标方向为 G Question betting） · 通知(结算/派彩/被超价/成就铸卡) · 战斗回放分享/导出 · 移动端响应式 + i18n(已有 zh/en)。
 
 ---
 
 ## 1. 四条主线（refined）
 
-### ① 辩论 → 世界预测市场
+### ① 辩论 → 世界预测市场（旧线，已演进为 World-as-Market Core）
+
+> ⚠️ **方向变更**：本线已从“新增独立 `PredictionMarket` + ore parimutuel”演进为 `World` Core（统一 `Question`/答题原语、G 计价预测市场、G treasury/world events）。以下旧条目保留作历史背景；实际执行以 `docs/world-as-market.md` 和 `docs/dev-breakdown.md` Lane C（C0-C8）为准。
 
 **现状锚点**：`GameEngine.sol:710-895`。当前 `Debate` 把两种性质不同的东西缝在一起：
 
@@ -118,7 +122,7 @@
 | 本质 | 政治施压工具（票数 → hex 民心 ±，`:825,836,848`） | parimutuel 预测市场（注池、赢家瓜分输家、10% 抽成） |
 | 结算 | 票数自动 | **operator 人工 `outcomeOverride`**（`:822`） |
 | 绑定 | 必须站在某 hex 上、改该 hex 民心（`:716-721`） | 同样绑 hex + 民心 |
-| 货币 | ore | ore |
+| 货币 | ore（legacy） | ore（legacy；目标方向改 G） |
 
 **refine 核心**：不是「重做 debate」，是**把预测市场抽成独立 primitive**，摆脱三个拖累——
 1. **与 hex/民心解耦**：现在做不出「谁登顶 scoreboard」「agent X 4h 后是否被打到 0 格」这类市场，因为每个 debate 必须挂在脚下 hex 并改其民心。
@@ -126,11 +130,11 @@
 3. **保留 parimutuel，别上 AMM**：~26 个 agent，连续定价会缺流动性；注池更稳。偷 Polymarket 的是 UX（市场列表 / 概率% / 持仓），不是 AMM。
 
 **分层形状**：
-- **合约**：新增 `PredictionMarket` **独立合约**，结构化市场 `{question, outcomes[], resolveAt, type}`，`type ∈ {SELF_RESOLVING, ORACLE}`；注池/抽成/退款复用 `resolveDebate:854-892`；只读 GameEngine 状态、通过已有 `spendOre/refundOre` 钩子动 ore。
+- **合约（旧方案，已作废）**：新增 `PredictionMarket` **独立合约**，结构化市场 `{question, outcomes[], resolveAt, type}`，`type ∈ {SELF_RESOLVING, ORACLE}`；注池/抽成/退款复用 `resolveDebate:854-892`；只读 GameEngine 状态、通过已有 `spendOre/refundOre` 钩子动 ore。目标方向改为 `World` 合约统一 Question，并由 G pool/treasury 处理价值下注。
 - **MCP**：`create_market / bet / resolve_market / list_markets / get_market`。
 - **前端**：独立 `/markets` 页（现在前端**零** debate UI）。
 
-**第一刀**：自结算 + 解耦 hex 的最小市场（题目限定「agent X 在 T 时刻是否拥有 hex Y」），ore 注池，UI 先列表页。普通辩论原样不动。
+**第一刀（旧方案）**：自结算 + 解耦 hex 的最小市场（题目限定「agent X 在 T 时刻是否拥有 hex Y」），ore 注池，UI 先列表页。普通辩论原样不动。目标方向下第一刀应落到 Lane C C0-C8 的 World Core/Question/G treasury 拆分。
 
 ---
 
@@ -178,7 +182,10 @@
 
 ## 2. 关键决策
 
-### 2.1 🔵 预测市场用 ore 还是 G？　✅ 倾向：**v1 用 ore，货币做成可插拔参数，G 后置**
+### 2.1 🔵 预测市场用 ore 还是 G？　✅ 倾向：**v1 用 ore，货币做成可插拔参数，G 后置**（旧决策，已被 World-as-Market 取代）
+
+> ⚠️ 最新决议：预测市场目标方向用 **G**，不再按“v1 ore / G 后置”推进；ore 只保留为无限软币、基础参与层和 legacy 兼容。详见 `docs/world-as-market.md` 与 `docs/dev-breakdown.md` Lane C/E4。
+> 下方表格与理由保留旧论证原文，不能作为当前执行口径。
 
 | | ore | G |
 |---|---|---|
@@ -210,7 +217,8 @@
 
 角色：`SC`=合约 `MCP`=工具层 `FE`=前端 `INFRA`=keeper/遥测/运维 `DOC`=文档。
 
-### E1 · 预测市场（新）
+### E1 · 预测市场（旧 WBS，已迁入 World-as-Market Lane C）
+> ⚠️ 以下 E1 保留作历史拆分；当前执行不再新建独立 ore `PredictionMarket` 主线，改按 `docs/dev-breakdown.md` Lane C（C0-C8）实现 `World` Core + G Question betting。
 | ID | 任务 | 角色 | 依赖 | 完成判定 |
 |---|---|---|---|---|
 | E1.1 | 设计 `PredictionMarket` 接口（market struct + SELF_RESOLVING/ORACLE 两型 + currency 可插拔） | SC | — | 一页设计稿 + interface 定稿 |
@@ -276,7 +284,7 @@
 |---|---|---|---|---|
 | E7.1 | 🔵 定 autopilot 计费/gas 模型 + **operator-relay 代发交易/垫 gas 方案**（LLM：自带 key / 买额度 / 免费档限流；gas：平台 relay 垫付 vs 用户付） | 架构/INFRA | — | 一页决策稿 |
 | E7.2 | agent-runner 多租户化：按用户 agent 动态加载/委托/限流（现为固定 26 角色 + 全局限流） | INFRA | E7.1 | 用户 agent 能被平台 runner 驱动 |
-| E7.3 | 真人「喂目标 / 接管 / 暂停」控制面 | FE/MCP | E6.3, E7.2 | 真人能设目标、暂停、手动接管一回合 |
+| E7.3 | 真人「喂目标 / 接管 / 暂停」控制面 | FE/MCP | E6.3, E7.2 | 真人能设目标、暂停；独立“手动接管一回合 / US-C3 事件系统”已裁剪，改用 Question receipt/trace |
 | E7.4 | gas/LLM 费用计量与配额（超额停跑、可充值） | INFRA | E7.1 | 超额停跑、可充值续 |
 
 ---
@@ -293,7 +301,7 @@
 
 | # | 标题 | label |
 |---|---|---|
-| 1 | `feat(market): 世界预测市场 — 独立合约 + 自结算 + parimutuel(ore)` | enhancement（tracking issue，E1.\* 勾选清单） |
+| 1 | `feat(market): 世界预测市场 — 独立合约 + 自结算 + parimutuel(ore)`（旧标题；方向已改为 `feat(world): World-as-Market Core — Question/G markets/treasury/events`） | enhancement（tracking issue，旧 E1.\* 勾选清单应迁到 Lane C C0-C8） |
 | 2 | `feat(engine/balance): 平衡参数 storage 化 + owner 热调 setter` | enhancement |
 | 3 | `chore(telemetry): 链上事件聚合 → 策略/财富/淘汰指标` | enhancement |
 | 4 | `fix(arena/rng): runMatchmaking 种子换 VRF/commit-reveal` | enhancement |
@@ -341,7 +349,7 @@
 
 ## 6. 待拍板清单（review 时逐条确认）
 
-- [ ] 🔵 预测市场货币：v1 **ore**（✅ 倾向）还是 G？是否接受「currency 可插拔、G 后置」的工程对策？
+- [x] ✅ 预测市场货币：旧待拍板项已关闭；owner 已决定目标方向用 **G**（World-as-Market），旧「v1 ore / G 后置」作废。
 - [ ] 🔵 `MAX_ORE_POOL=1000` 对市场派彩：豁免 cap 还是接受截断？
 - [ ] 🔵 RNG 方案：VRF（依赖外部 VRF 服务/预言机是否可得）还是 commit-reveal（纯链上但多一步交互）？
 - [ ] 🔵 是否单开「单位扩容（12 → 60）」epic、谁长期负责？
@@ -355,6 +363,6 @@
 - [ ] 🔵 是否采用 **operator-relay 代发交易 + 平台垫 gas** 做 gasless 上手？（✅ 倾向是，复用现成 operator 机制）
 - [ ] 🔵 autopilot 的 LLM 计费与 gas 谁付、怎么限流？（E7.1：自带 key / 买额度 / 免费档；gas relayer or 用户付）
 - [ ] 🔵 非 crypto 用户 onboarding 要做到多轻？（托管钱包 / 社交登录 / 还是要求自带钱包）
-- [x] ✅ 预测市场货币：因「human-as-agent」**确认保留 ore**（真人通过 agent 玩、agent 产 ore）
+- [x] ✅ 预测市场货币：旧记录曾因「human-as-agent」确认保留 ore；最新 owner 决议已改为 **World-as-Market / G Question betting**，ore 仅作基础参与层与 legacy 兼容。
 - [x] ✅ 身份模型：真人**拥有/控制 agent**（非裸 EOA），复用 `agentOwner`/`operator`，合约基本不改
 - [ ] 🔵 E6/E7 是否进 M0？（钱包/写链路 E6.1 是所有真人功能的地基，建议提前到 M0）

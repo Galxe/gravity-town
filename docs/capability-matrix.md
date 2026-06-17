@@ -2,6 +2,7 @@
 
 > 这是对产品全部能力（交互 + 显示）的去重合并清单，覆盖 MCP 工具、链上合约函数、Roadmap 规划项与现有前端，并逐项标注当前 demo（`demo/index.html` + `demo/interaction-logic.json`）的支持程度。
 > 此矩阵替代旧版仅有 ~15 个动作的瘦版规格说明。
+> ⚠️ 对齐口径：当前 demo 仍是 ore 版 mock；已采纳目标方向是 World-as-Market（见 `docs/world-as-market.md` / `docs/dev-breakdown.md`）：预测市场用 **G**，ore 是无限软币且计分降权，挖矿/建造/战斗/市场统一成 Question/答题，G 税进入中心金库并触发世界事件。下方旧能力统计保持 149 不变；新增 WAM 分区只作目标方向标注，不计入旧统计。
 
 ## 汇总 Summary
 
@@ -35,7 +36,7 @@
 | 6 | removeAgent / updateStats（销毁/改写四维，owner/operator） | 交互 | lifecycle | `AgentRegistry.removeAgent/updateStats` | ❌ | 破坏性生命周期 op，未作为 MCP 工具暴露，demo 无 |
 | 7 | Embedded wallet / 社交登录 onboarding（Privy/Dynamic 式） | 交互 | onboarding-wallet | roadmap E6.1 | ⏳ | demo `connectWallet` 是 mock（写 `0xAb12…cd34`，无真实钱包）；真实前端只读、零钱包 |
 | 8 | Agent 创建/引导人机流程（connect→createAgent，relay 代付 gas） | 交互 | onboarding-wallet | roadmap E6.2 | ◐ | demo 有 3 步 onboard 流（mock）；真实前端无人机创建流 |
-| 9 | 手动动作 UI（人直接签名 harvest/build/move/attack） | 交互 | onboarding-wallet | roadmap FR（条件项） | ◐ | demo `#/me` 提供 mock 手动 harvest/build/raid（autopilot OFF 时）；真实前端只读无此能力 |
+| 9 | 手动动作 UI（人直接签名 harvest/build/move/attack） | 交互 | onboarding-wallet | roadmap FR（条件项） | ◐ | demo `#/me` 提供 mock 手动 harvest/build/raid（autopilot OFF 时）；真实前端只读无此能力；**已从开发范围裁剪**为独立 US-C3/手动操作事件，目标用 Question receipt/trace 表达 |
 | **B. 世界与移动 World & Movement** ||||||
 | 10 | get_world 读取所有已占领 hex + agent 位置 | 显示 | world | MCP `get_world` / `GameEngine.getAllHexKeys` | ❌ | demo 无世界地图数据源；仅 `#/me` 一个 7 格静态 SVG mini 簇 |
 | 11 | move_agent 移动到目标 location | 交互 | world | MCP `move_agent` / `AgentRegistry.moveAgent` | ❌ | demo 无独立移动动作（raid 内含 auto-move，但无显式 move） |
@@ -49,8 +50,8 @@
 | 19 | advanceTick / createLocation（operator 世界钟/建图） | 交互 | world | `LocationLedger.advanceTick/createLocation` | ❌ | operator 原语，非玩家工具，demo 无 |
 | 20 | toKey / hexDist（hex 寻址 & 距离纯函数） | 显示 | world | `GameEngine.toKey/hexDist` | ❌ | 客户端地图数学 helper |
 | **C. 矿石经济 Ore Economy** ||||||
-| 21 | harvest 收割待产 ore（懒结算，permissionless） | 交互 | economy | MCP `harvest` / `GameEngine.harvest` | ◐ | demo `#/me` mock 手动 harvest（固定 +42，clamp 至 1000），autopilot OFF 时；非真实链上 |
-| 22 | build 建造矿场(50 ore)/兵工厂(100 ore)，6 槽/hex | 交互 | economy | MCP `build` / `GameEngine.build` | ◐ | demo 快捷动作建矿场（mock -50 ore，+1 building），无兵工厂/槽位选择 |
+| 21 | harvest 收割待产 ore（懒结算，permissionless） | 交互 | economy | MCP `harvest` / `GameEngine.harvest` | ◐ | demo `#/me` mock 手动 harvest（固定 +42，clamp 至 1000），autopilot OFF 时；非真实链上。目标方向：harvest 是 difficulty 0/低难 Question，ore 固定奖励，不做独立手动操作事件 |
+| 22 | build 建造矿场(50 ore)/兵工厂(100 ore)，6 槽/hex | 交互 | economy | MCP `build` / `GameEngine.build` | ◐ | demo 快捷动作建矿场（mock -50 ore，+1 building），无兵工厂/槽位选择。目标方向：build 是 STATE Question / receipt，不做独立手动操作事件 |
 | 23 | get_hex 读取 hex（owner/建筑/ore/防御/happiness） | 显示 | economy | MCP `get_hex` / `GameEngine.getHex` | ❌ | demo 无单 hex 详情面板 |
 | 24 | get_my_hexes 读取 agent 所有 hex（含建筑/ore） | 显示 | economy | MCP `get_my_hexes` / `GameEngine.getAgentHexKeys` | ◐ | `#/me` TERRITORY 列最多 5 hex（label/矿/兵工/happy），无 reserve/防御总/槽位 n/6 |
 | 25 | Agent 领地面板（avg happiness/总 ore/总矿/总防御 + 每 hex 列表） | 显示 | hex-economy | 前端 `AgentDetail.tsx` HexTerritoryPanel | ◐ | demo 仅 owner 自己、5 hex、无聚合统计与槽位用量 |
@@ -59,12 +60,12 @@
 | 28 | orePool / spendOre / refundOre（ore 池读 & 跨系统增减 hook） | 交互/显示 | economy | `GameEngine.orePool/spendOre/refundOre` | ❌ | operator/owner 跨系统 hook，非玩家工具，demo 无 |
 | **D. 战斗与领土 Combat & Territory** ||||||
 | 29 | attack 攻击目标 hex（Tullock 竞赛，胜则夺 hex + 30% ore） | 交互 | combat | MCP `attack` / `GameEngine.attack` | ❌ | demo 无 `attack`（仅 raid 一步式 mock） |
-| 30 | raid 一步式攻击（auto-move + 自动选源 hex + 战斗） | 交互 | combat | MCP `raid` / `GameEngine.raid` | ◐ | demo `#/me` mock raid（~55% 胜，+1 hex/+54 ore loot toast），非链上、无真实 Tullock |
+| 30 | raid 一步式攻击（auto-move + 自动选源 hex + 战斗） | 交互 | combat | MCP `raid` / `GameEngine.raid` | ◐ | demo `#/me` mock raid（~55% 胜，+1 hex/+54 ore loot toast），非链上、无真实 Tullock。目标方向：combat 进入 World Question/RNG trace，不做独立手动操作事件 |
 | 31 | claim_neutral 免费占领中立(rebel) hex | 交互 | territory | MCP `claim_neutral` / `GameEngine.claimNeutral` | ❌ | demo 无中立占领 |
 | 32 | incite_rebellion 翻盘机制（0 hex 时 50% 降 happy 30，捕获重生） | 交互 | territory | MCP `incite_rebellion` / `GameEngine.inciteRebellion` | ❌ | demo 仅作 drama-ticker / 卡片 provenance 文案出现（RISEN_FROM_ASHES），无机制 |
 | 33 | 战斗日志聚合（attack/settlement/combat 跨 agent） | 显示 | combat | 前端 `Sidebar.tsx` combatLog | ◐ | demo 战斗仅以 AgentMind 'combat' 脚本行 + raid toast 出现，无聚合面板 |
 | **E. 计分与排行 Scoring & Leaderboard** ||||||
-| 34 | get_score 读取 agent 分数（hex×100 + ore + 建筑×50） | 显示 | scoring | MCP `get_score` / `GameEngine.getScore` | ◐ | demo `#/me` 显示 owner 的 score stat；公式一致但 mock |
+| 34 | get_score 读取 agent 分数（hex×100 + ore + 建筑×50） | 显示 | scoring | MCP `get_score` / `GameEngine.getScore` | ◐ | demo `#/me` 显示 owner 的 score stat；公式一致但 mock。目标方向：ore 作为无限软币必须降权（sqrt/封顶），score-based G market 等 score v2 后再开放 |
 | 35 | get_scoreboard 全局排行 | 显示 | scoring | MCP `get_scoreboard` | ◐ | demo landing SCOREBOARD 排 6 个 mock NPC，不可点入详情/地图，无实时链上 |
 | 36 | 全局 scoreboard / ranking（奖牌色、点击聚焦） | 显示 | scoring | 前端 `Sidebar.tsx` Card 2 | ◐ | 同上；demo 行不可点击到 detail/map |
 | **F. 社交 / 公告板 Social / Location Board** ||||||
@@ -87,9 +88,9 @@
 | 51 | Agent 记忆面板（类别徽章/重要度星/容量） | 显示 | memory | 前端 `AgentDetail.tsx` Memories card | ◐ | 同 #49，demo 无 ring-buffer feed / 容量徽章 |
 | 52 | AgentMind 决策日志（LLM 推理「看 AI 怎么想」钩子） | 显示 | world-feed | roadmap ★ Phase 0/2 | ◐ | demo 有脚本化 AgentMind peek（landing + `#/me`）；真实 per-agent 实时推理日志未完全建成 |
 | **I. 辩论 / 预言机 Debate / Oracle** ||||||
-| 53 | start_debate 在当前 hex 开辩论（普通 1h / Oracle 4h 押 ore） | 交互 | debate | MCP `start_debate` / `GameEngine.startDebate` | ❌ | demo 无任何辩论 UI |
-| 54 | vote_debate 投票支持/反对（可押 ore，winner 分 loser 池） | 交互 | debate | MCP `vote_debate` / `GameEngine.voteOnDebate` | ❌ | demo 无 |
-| 55 | resolve_debate 截止后结算（普通按票/Oracle operator override） | 交互 | debate | MCP `resolve_debate` / `GameEngine.resolveDebate` | ❌ | demo 无（注：市场 resolveMarket 复用同一池/rake 逻辑，但属预测市场而非辩论） |
+| 53 | start_debate 在当前 hex 开辩论（普通 1h / Oracle 4h 押 ore） | 交互 | debate | MCP `start_debate` / `GameEngine.startDebate` | ❌ | demo 无任何辩论 UI；旧 ore betting 属 legacy，目标方向转 World ORACLE/STATE Question |
+| 54 | vote_debate 投票支持/反对（可押 ore，winner 分 loser 池） | 交互 | debate | MCP `vote_debate` / `GameEngine.voteOnDebate` | ❌ | demo 无；目标方向不扩展 ore 押注，市场下注走 G `bet_question` |
+| 55 | resolve_debate 截止后结算（普通按票/Oracle operator override） | 交互 | debate | MCP `resolve_debate` / `GameEngine.resolveDebate` | ❌ | demo 无（注：市场 resolveMarket 复用同一池/rake 逻辑，但属预测市场而非辩论）；目标方向保留 legacy alias 并转 World Question |
 | 56 | expireDebate 过期退款（截止+24h grace，permissionless） | 交互 | debate | `GameEngine.expireDebate` | ❌ | 似无专用 MCP 工具；demo 无 |
 | 57 | get_debate 读取辩论状态（票数/ore 池/剩余时间/oracle 标志） | 显示 | debate | MCP `get_debate` / `GameEngine.getDebate` | ❌ | demo 无 |
 | 58 | get_active_oracle_debate 读当前活跃 Oracle 押注辩论 | 显示 | debate | MCP `get_active_oracle_debate` | ❌ | demo 无 |
@@ -142,8 +143,8 @@
 | 102 | arena_buy 用 G 买持久卡（3-6 G）入 inventory | 交互 | arena-economy | MCP `arena_buy` / `ArenaEngine.buy` | ◐ | demo `buyCard` mock 扣 G + 自动 bench/inventory，卡名非真实 roster |
 | 103 | arena_deposit_g 充 G 入 agena Arena 余额（×1e18） | 交互 | g-economy | MCP `arena_deposit_g` / `GTreasury.depositG` | ◐ | demo `depositG` mock（+20/+100/+1000），非真实 payable；真实前端无 on-ramp UI |
 | 104 | arena_withdraw_g 提取自有 backed G 到钱包（mainnet/withdraw 模式） | 交互 | arena-economy | MCP `arena_withdraw_g` / `GTreasury.withdraw` | ❌ | demo 无提现路径 |
-| 105 | G/ore 余额展示 + 充值/提现 on-ramp（真人 UI） | 交互 | currency-g | roadmap E6.6 | ⏳ | depositG/withdraw 在合约/MCP 已有；真实前端无人机 on-ramp UI / 余额面 |
-| 106 | 双币（ore / G）展示（ore=赚 / G=充） | 显示 | currency-g | roadmap ★ 承重决策 4 | ⏳ | demo 状态卡区分 ◆ore/⬡G（mock）；真实前端无统一双币展示 |
+| 105 | G/ore 余额展示 + 充值/提现 on-ramp（真人 UI） | 交互 | currency-g | roadmap E6.6 / World-as-Market | ⏳ | depositG/withdraw 在合约/MCP 已有；真实前端无人机 on-ramp UI / 余额面。目标方向：G 同时用于 World betting、Arena、金库事件，ore 为免费参与层 |
+| 106 | 双币（ore / G）展示（ore=赚 / G=充） | 显示 | currency-g | roadmap ★ 承重决策 4 / World-as-Market | ⏳ | demo 状态卡区分 ◆ore/⬡G（mock）；真实前端无统一双币展示。目标方向：ore 无限软币且计分降权；G 稀缺价值层，预测市场用 G |
 | 107 | arena_list_inventory 中 listed 标志（见 #80） | 显示 | arena | — | — | 已合并入 #80 |
 | 108 | arena_place_listing 把 inventory 卡上架二级市场（G 报价） | 交互 | arena-economy | MCP `arena_place_listing` / `CardLedger.listCard` | ❌ | demo 无上架动作（listings 为预置 mock） |
 | 109 | arena_cancel_listing 取消自己的上架 | 交互 | arena-economy | MCP `arena_cancel_listing` / `CardLedger.cancelListing` | ❌ | demo 无 |
@@ -153,17 +154,22 @@
 | 113 | 卡牌收藏画廊 + provenance 故事展示 | 显示 | nft-cards | roadmap E3.4/E6.5 | ⏳ | demo Overview 有 COLLECTION + story/provenance 卡（mock）；真实前端无 provenance 展示（metadata 尚不存在） |
 | **M. 预测市场（独立原语）Prediction Market** ||||||
 | 114 | create_market 创建结构化市场（question/outcomes/resolveAt/type） | 交互 | prediction-market | roadmap E1.1/E1.2/E1.4 | ⏳ | 全栈未建；今天仅 hex 耦合的 Oracle 辩论。demo markets 为 mock 预置 |
-| 115 | bet 对市场 outcome 下注（parimutuel，v1 ore 计价） | 交互 | prediction-market | roadmap E1.2/E1.4 | ⏳ | demo `placeBet` mock（ore 10-500，移动赔率，记 position）；合约/MCP 无独立 bet 工具 |
-| 116 | resolve_market 自结算（读链上 state 裁决 + Oracle + 过期退款） | 交互 | prediction-market | roadmap E1.2/E1.3/E1.6 | ⏳ | demo `resolveMarket` mock（self/oracle 派付，10% oracle rake，ore-cap clamp）；无独立合约 |
+| 115 | bet 对市场 outcome 下注（legacy v1 写法：parimutuel，ore 计价） | 交互 | prediction-market | roadmap E1.2/E1.4（已演进为 World Question） | ⏳ | demo `placeBet` mock（ore 10-500，移动赔率，记 position）；合约/MCP 无独立 bet 工具。目标方向：G `bet_question`，G pool 无 cap |
+| 116 | resolve_market 自结算（读链上 state 裁决 + Oracle + 过期退款） | 交互 | prediction-market | roadmap E1.2/E1.3/E1.6（已演进为 World Question） | ⏳ | demo `resolveMarket` mock（self/oracle 派付，10% oracle rake，ore-cap clamp）；无独立合约。目标方向：G escrow/退款/派彩不得套 ore cap |
 | 117 | list_markets / get_market 市场发现 + 赔率 | 显示 | prediction-market | roadmap E1.4 | ⏳ | demo `#/markets` 列表 + detail modal（mock）；无链上读 surface |
 | 118 | Market feed + detail（world-context view + AI brief） | 显示 | prediction-market | roadmap E6.4 ★ | ⏳ | demo market detail 有 context + aiBrief + related agent 文案（mock）；真实前端零 market UI |
 | 119 | Bet 下注层（赔率 + 派付预估 + parimutuel 警示） | 交互 | prediction-market | roadmap E6.4 ★ | ⏳ | demo 有下注 UI（mock）；真实前端无写路径 |
 | 120 | My positions（追踪未结算下注） | 显示 | prediction-market | roadmap E6.4 ★ | ⏳ | demo 有 my positions 面板（mock）；真实前端无 positions surface |
 | 121 | Settlement 回执 / 裁决证明（展示哪条链上事实裁决） | 显示 | prediction-market | roadmap E6.4 ★ | ⏳ | demo 有 resolved receipt（mock）；真实前端无 |
+| **M2. World-as-Market（目标方向，不计入旧 149 去重计数）** ||||||
+| WAM-1 | World Question / 万物皆答题统一原语 | 交互/显示 | world-as-market | `docs/world-as-market.md` / `docs/dev-breakdown.md` C0-C8 | ⏳ | 挖矿、建造、攻击、辩论、预测市场、世界事件统一为 Question；当前 GameEngine 直写入口为 legacy/adapter 现状 |
+| WAM-2 | G parimutuel prediction market / Question betting | 交互 | world-as-market | `docs/world-as-market.md` / Lane C,E4 | ⏳ | 预测市场目标方向用 G 押注、G pool 无 cap；当前 demo/旧 debate 仍是 ore mock/legacy |
+| WAM-3 | World Treasury：G 税、burn、event prize pool | 显示/交互 | world-as-market | `docs/world-as-market.md` / Lane C8,D2,D3 | ⏳ | 中心金库由 G fee/rake/on-ramp 供养，达阈值触发世界事件或 seed 新奖池；当前 demo 无 treasury meter |
+| WAM-4 | ore 无限参与层 + score 降权 | 显示/交互 | world-as-market | `docs/world-as-market.md` / A4 | ⏳ | ore 作为免费/固定奖励与 sink 保留，但不能线性主导 score；当前 demo 和 GameEngine 仍是旧公式 |
 | **N. Autopilot / 所有权 / Relay** ||||||
 | 122 | Autopilot 开关（owner→operator 委托 addOperator/removeOperator） | 交互 | autopilot | roadmap E6.3/E7.3 / `AgentRegistry.addOperator/removeOperator` | ◐ | demo `toggleAutopilot` mock 切 owner/AI；合约机制已存在，真实前端无开关 UI |
 | 123 | Goal steering / feed-goal 输入（owner 设高层目标） | 交互 | autopilot | roadmap E7.3 ★ | ◐ | demo `setGoal` mock 写 agent.goal；真实前端未建 |
-| 124 | Per-turn 接管 / 暂停控制面板 | 交互 | autopilot | roadmap E7.3 ★ | ⏳ | demo autopilot ON 时禁用手动动作（隐含），无显式 per-turn 接管/暂停面板 |
+| 124 | Per-turn 接管 / 暂停控制面板 | 交互 | autopilot | roadmap E7.3 ★（已裁剪 US-C3 事件系统） | ⏳ | demo autopilot ON 时禁用手动动作（隐含），无显式 per-turn 接管/暂停面板；独立手动操作事件已裁剪，保留暂停/委托与 Question receipt/trace |
 | 125 | setOperator / isOperator / addOperator / removeOperator（委托原语） | 交互/显示 | delegation | `AgentRegistry.setOperator/isOperator/addOperator/removeOperator` | ❌ | autopilot/relay 底层；demo 仅以 autopilot toggle 间接体现，无委托原语 UI |
 | 126 | operator-relay 无 gas 执行（平台代付，钱包退化为所有权钥匙） | 交互 | infra-relay | roadmap E6.1/E7.1 ★ | ⏳ | demo 标注大多数动作 gasless（mock）；真实 relay 计费/恢复模型未建 |
 | 127 | 多租户 agent-runner（per-user autopilot，限流/配额） | 交互 | autopilot | roadmap E7.2/E7.4 | ⏳ | 今天固定 26 角色 + 单一全局 5 分钟限流；多租户未建 |
@@ -207,7 +213,7 @@
 按对「展示产品全貌 / 核心 UX 闭环」的重要性排序：
 
 1. **Hex 世界地图（Phaser tilemap）完全缺失** — demo 无任何地图画布，只有 7 格静态 SVG。这是产品「全链 AI 世界」最直观的门面，spectator 第一眼应看到的东西。
-2. **预测市场是真实可上线的差异化闭环，但全栈仍是规划态** — create_market / bet / resolve_market / market feed / my positions / settlement receipt 全部 ⏳。demo 用 mock 模拟了完整闭环，是当前唯一展示该差异化的载体，但需要真实合约（roadmap E1）落地。
+2. **预测市场是真实可上线的差异化闭环，但全栈仍是规划态** — create_market / bet / resolve_market / market feed / my positions / settlement receipt 全部 ⏳。demo 用 ore mock 模拟了完整闭环，是当前唯一展示该差异化的载体；目标方向已演进为 World-as-Market 的 G Question betting（见 WAM 分区）。
 3. **辩论 / Oracle 系统在 demo 中零覆盖** — start/vote/resolve/get_debate、oracle 押注、web_search 全 ❌，而这是预测市场的链上前身与世界「治理」叙事核心。
 4. **世界圣经 + 编年史声誉系统几乎不可见** — write/read_world_bible、write_chronicle、read_evaluations 均 ❌，编年史仅剩一个 rep 数字。这是 agent 留存资产（on-chain 传记）的关键。
 5. **Arena 全局排行榜 / ghost 对战生态缺失** — demo 只展示 owner 自己的 tier/战绩，没有 Top-10 ELO ghost 排行、tier 过滤、全局 recent/ongoing 对局、高亮 ticker，看不到「与世界对战」的竞技场全貌。

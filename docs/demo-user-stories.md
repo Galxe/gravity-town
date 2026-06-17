@@ -1,5 +1,7 @@
 # Gravity Town Demo · 用户故事操作手册（User-Story Manual）
 
+> ⚠️ **状态横幅（请先读）**：本手册描述的是**当前 mock demo**（`demo/index.html`，ore 版，pre-World-as-Market）：预测市场仍用 ore 下注，My Agent 仍有手动 QUICK ACTIONS，开户仍展示 `Continue with Email`，ore 池仍有 1000 cap。owner 已采纳的目标方向是 **World-as-Market**（预测市场用 **G**、挖矿/战斗统一为「答题」、中心金库由 G 税供养并触发世界事件），见 `docs/world-as-market.md` 与 `docs/dev-breakdown.md`。demo 重建后，本手册会随之更新。
+
 > 这份手册回答一个问题：**「一个真人来到 Gravity Town，他是谁、想玩什么、在页面上怎么一步步交互、每一步看到什么。」**
 >
 > 这份手册按真实用户路径组织 demo：先看世界，再创建 agent，再下注 / 进 Arena。每条 user story 都标注它落在哪一屏、对应路线图（`docs/roadmap.md`）的哪条开发主线，方便团队把「玩法」直接映射到「正在开发的东西」。
@@ -18,10 +20,10 @@
 |---|---|---|---|---|
 | 👁 **观众** | 看戏、看 AI 怎么想 | 不需要 | — | `#/` World、`#/arena` 回放/卡市 |
 | ⚡ **Agent 主理人**（核心） | 拥有一个替我打世界的 AI | 嵌入式钱包 | — | `#/onboard` → `#/me`（声誉/记忆/私信/公告板）+ `#/lore` |
-| 🎲 **预言家 / 赌徒**（一种玩法） | 用 agent 挣的 ore 赌世界结局 | 同上 | **ore** | `#/markets` |
+| 🎲 **预言家 / 赌徒**（一种玩法） | 用 agent 挣的 ore 赌世界结局（当前 mock）；目标方向改为用 **G** 押 World-as-Market 问题 | 同上 | **ore**（当前 mock） | `#/markets` |
 | 📜 **收藏家 / 牌商 / 爬塔党**（一种玩法） | 用付费余额 G 收卡、组阵、爬塔 | 同上 | **G**（付费余额，demo 模拟） | `#/arena`（含 COLLECTION 背包） |
 
-**两条货币贯穿始终**：`ore`（◆ 琥珀）= 世界里挣的（免费入口，下注用）；`G`（⬡ 青）= 产品语义上的「付费余额」——真实产品里要花钱充，但在 demo 里只是点按钮本地模拟加数，只用于 Arena。两者永不互转。完整对照见文末「货币速记」。
+**两条货币贯穿始终（当前 mock 口径）**：`ore`（◆ 琥珀）= 世界里挣的（免费入口，当前 demo 下注用）；`G`（⬡ 青）= 产品语义上的「付费余额」——真实产品里要花钱充，但在 demo 里只是点按钮本地模拟加数，只用于 Arena。两者永不互转。目标方向里预测市场改用 **G**，完整对照见文末「货币速记」。
 
 下面按漏斗顺序讲故事：**看戏 → 上手 → 驾驭 → 赌 → 收藏/爬塔**。
 
@@ -55,7 +57,7 @@
 | operator-relay | 平台用「操作员」身份替你 agent 代发交易、代付 gas，你几乎不用签名。 |
 | autopilot | agent 的自动驾驶：开着时 AI 自己采矿 / 建矿 / 侦察，你只定方向。 |
 | AgentMind | agent 的实时「思考流」——它当前在想什么、做什么，逐行滚动。 |
-| ore / G | ore = 世界里挣的资源（下注用）；G = 产品语义上的付费余额（只用于 Arena），demo 里只是点按钮本地模拟加数。完整对照见文末「货币速记」。 |
+| ore / G | 当前 mock：ore = 世界里挣的资源（下注用）；G = 产品语义上的付费余额（只用于 Arena），demo 里只是点按钮本地模拟加数。目标方向：预测市场改用 G（World-as-Market）。完整对照见文末「货币速记」。 |
 | parimutuel（注池） | 所有下注进同一个池，赢家按下注比例瓜分输家的池子（没有庄家定价）。 |
 | 自结算 / Oracle 市场 | 自结算：到期由链上状态自动判定胜负；Oracle：由指定裁定者主观判断。 |
 | ELO | 对战天梯分，赢一场涨、输一场跌。 |
@@ -122,6 +124,7 @@
 **主路径（4 步）：登录 → 定义 agent → 确认 → 进 dashboard**
 
 1. **登录**：点 `Continue with Google` 或 `Continue with Email` → 平台立刻替我生成一个嵌入式钱包（`0xAb…`，mock），toast 提示钱包已创建，随即自动进下一步。**全程没有 MetaMask、没有助记词。**[^b-timing]
+   > ⚠️ `Continue with Email` 是 demo 演示保留，**已从开发范围裁剪**：真实开发不做 email 登录 / embedded social login（见 `docs/dev-breakdown.md` 的 E1 与裁剪说明）。
 2. **定义 agent**：我给它取名（`Agent name`，空着的话 `Review →` 是灰的），写一段它的性格和行事风格（`Personality prompt` 已**预填**示例）——以后 AI 自动行动时按这段话思考[^b-prompt]，再四选一一个原型（`Archetype`：`Warlord` 默认 / `Farmer` / `Diplomat` / `Oracle`，每张带 4 条属性条，点卡切换）。点 `Review →` 进确认。
 3. **确认创建**：我看到一张预览（头像 / 名字 / 原型 / 人格引文）和一行「平台代付 gas」的说明——确认我不用付 gas。点橙色 **`⚡ Spawn agent (no signature needed)`**，确认后平台代发创建交易，我看到一段创建进度动画。[^b-timing]
 4. **看到成功**：🎉 加两张数据卡 `CLAIMED 7 hexes`、`STARTING ORE ◆ 200`——我已经有自己的领地和启动资源了。点 `Enter my dashboard →` 进 `#/me`。
@@ -161,6 +164,8 @@
 
 ### US-C3 · 我想手动接管一回合，亲自操作
 
+> ⚠️ 本节是 demo 演示保留，**已从开发范围裁剪**：真实开发不做独立「手动操作事件 / US-C3」系统，手动 Harvest/Build/Raid 只作为 World Question 的 receipt/trace 表达（见 `docs/dev-breakdown.md` 的 E7 与裁剪说明）。不要把这里的 QUICK ACTIONS 理解成开发范围承诺。
+
 **前提**：手动动作**仅在 autopilot 关闭时**可用。autopilot 开着时，我看到前 3 个手动按钮是灰的、点不动，旁边提示我先暂停 autopilot（`disabled while AI operates`，面板底部还有静态提示 `Pause autopilot to act manually.`）。下注按钮 `🎲 Bet →` 例外，始终可点——因为下注是我的战略决策。
 
 **QUICK ACTIONS（左栏 4 按钮）**：
@@ -175,7 +180,7 @@
 
 ---
 
-## D · 预言家 / 赌徒线（用 ore 赌世界，对应核心 UX 闭环 · Epic ① 预测市场 E1）
+## D · 预言家 / 赌徒线（当前 mock：用 ore 赌世界；目标方向见 World-as-Market）
 
 > 设计意图：预测市场是「观众 → 参与者」的转化开关。差异化在于**每个市场背后都有可读的 AI 意图**。闭环 = 看戏 → 看懂 → 押注 → 输赢 → 更上头。
 
@@ -194,7 +199,7 @@
 
 **怎么交互**：**点任意市场卡** → 弹下注弹窗。左栏给足上下文：`World context`、相关 agent/hex、`Related agent intentions (on-chain)` 链上发言、`⚡ AI brief` 摘要、`Resolution rule` 结算规则代码。**这就是「市场背后是可读意图」的兑现。**
 
-### US-D3 · 我用 agent 的 ore 押注
+### US-D3 · 我用 agent 的 ore 押注（当前 mock）
 
 **怎么交互**（弹窗右栏 Place bet）：
 1. 点 `YES` / `NO` 切阵营（默认 YES），赔率/估算随之刷新。
@@ -344,7 +349,7 @@
 | 是什么 | 世界内资源，时间/技巧挣的 | 产品语义上的付费余额（真实产品要花钱充；demo 里点按钮本地模拟） |
 | 怎么来 | 出生送 200、harvest、突袭获胜(+54)、派彩 | 创建即 seed 240、`Deposit G`（demo 模拟充值） |
 | 上限 | **1000**（超出即浪费，多处 cap toast） | 无 |
-| 用途 | 建矿（`Build mine`，demo 无 arsenal UI）、**预测市场下注**（突袭在 demo 里不消耗 ore） | **仅 Arena**：买卡/Roll/卡市 |
+| 用途 | 建矿（`Build mine`，demo 无 arsenal UI）、**预测市场下注**（当前 mock 用 ore；目标方向预测市场用 **G**，见 World-as-Market；突袭在 demo 里不消耗 ore） | **仅 Arena**：买卡/Roll/卡市 |
 | 互转 | ❌ 两者永不互转 | ❌ |
 
 ---
@@ -386,8 +391,8 @@
 | US-B1 创建 agent | `#/onboard` | Epic E6.1 钱包 / 写链路 + E6.2 onboarding · operator-relay |
 | US-C1 看 autopilot | `#/me` | Phase 2 啊哈 · Epic E7 用户自营 agent |
 | US-C2 接管 / 喂目标 | `#/me` | owner=战略家 / AI=执行者 · Epic E6.3 + E7.3 |
-| US-C3 手动动作 | `#/me` | 手动动作 UI（Epic E6） |
-| US-D1–US-D4 赌徒线 | `#/markets` | Roadmap ① 预测市场（核心）· Epic E1 + E6.4 · 注池 / ore |
+| US-C3 手动动作 | `#/me` | 手动动作 UI（demo 演示保留；**已从开发范围裁剪**，不做独立手动操作事件 / US-C3，见 `docs/dev-breakdown.md`） |
+| US-D1–US-D4 赌徒线 | `#/markets` | Roadmap ① 预测市场（当前 mock：注池 / ore；目标方向：World-as-Market Question / **G**，见 `docs/world-as-market.md` + `docs/dev-breakdown.md`） |
 | US-E0 Arena 总览 | `#/arena` OVERVIEW | Roadmap ④ 战斗可视化 / ③ 卡经济 · Epic E6.5（卡 / 市场 UI） |
 | US-E1–US-E3 收藏 / 牌商 | `#/arena` | Roadmap ③ 叙事卡 / NFT 经济 · Epic E3 + E6.5 / E6.6 · G |
 | US-E4 战斗回放 | `#/arena` | Roadmap ④ 战斗可视化 · #34 + Epic E6.8 |
