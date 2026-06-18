@@ -24,7 +24,8 @@
         "push":     "{op:'push', path, value}                — append value (object literal, may embed $args) to array at path",
         "pull":     "{op:'pull', path, where}                — remove first array element matching where {field:value/$arg}",
         "clampMax": "{op:'clampMax', path, max}              — path = min(path, max)",
-        "settlePositions":           "{op:'settlePositions', path, where, rule} — used ONLY by resolveMarket. For every position in the array at `path` matching `where` (e.g. {marketId:$marketId}): compute winPool/losePool/rakePct/distributable from the resolved market, then if pos.side===rule.winnerSide credit pos.stake + floor(stake/winPool*distributable) to rule.creditTo (agent.ore) clamped to rule.creditClampMax (oreCap, overflow wasted); else payout=0. Marks each matched position settled=true and writes pos.payout. rule fields: winnerSide, winPool, losePool, rakePct (ORACLE=10/SELF_RESOLVING=0), distributable=losePool-floor(losePool*rakePct/100), payoutIfWin, creditTo, creditClampMax, payoutIfLose, markSettled.",
+        "settlePositions":           "{op:'settlePositions', path, where, rule} — used ONLY by legacy resolveMarket. For every position in the array at `path` matching `where` (e.g. {marketId:$marketId}): compute winPool/losePool/rakePct/distributable from the resolved market, then if pos.side===rule.winnerSide credit pos.stake + floor(stake/winPool*distributable) to rule.creditTo (agent.ore) clamped to rule.creditClampMax (oreCap, overflow wasted); else payout=0. Marks each matched position settled=true and writes pos.payout. rule fields: winnerSide, winPool, losePool, rakePct (ORACLE=10/SELF_RESOLVING=0), distributable=losePool-floor(losePool*rakePct/100), payoutIfWin, creditTo, creditClampMax, payoutIfLose, markSettled.",
+        "settleGPositions":          "{op:'settleGPositions', path, where, rule} — used ONLY by resolveQuestion for currency=G. Same parimutuel shape, but losing pool is split into feeG/taxG/burnG/eventPoolG and winning payout credits agent.gBalance with NO oreCap/ORE_POOL_CAP clamp. The test runner implements this op locally so the generic legacy engine remains backward-compatible.",
         "mintCardToBenchOrInventory":"{op:'mintCardToBenchOrInventory', value, benchMax} — resolve the card object literal in `value`; if the bench has a free slot (filled < benchMax=5) drop the card into the first empty slot, else append it to inventory. Used by buyCard/buyListing so no card/G is ever lost.",
         "moveInventoryCardToSlot":   "{op:'moveInventoryCardToSlot', cardId, slotIndex} — used ONLY by placeOnBench. Removes the inventory card whose id===cardId and writes it into bench[slotIndex].card (the slot must be empty — enforced by the action's precondition)."
       },
@@ -46,7 +47,7 @@
     "G": {
       "label": "G (⬡)",
       "source": "real-money deposit",
-      "note": "Gravity-chain native token, fully separate from ore. Deposited via fiat on-ramp (depositG). Spent ONLY in the Arena side-game: buy cards (3-6 G), roll shop (1 G), buy market listings. Accounted in wei on-chain (WEI_PER_G = 1e18) but priced/displayed in whole-G units here.",
+      "note": "Gravity-chain native token, fully separate from ore. Deposited via fiat on-ramp (depositG). Spent in the Arena side-game and in high-difficulty World-as-Market questions. G market pools are uncapped: no ORE_POOL_CAP/MAX_ORE_POOL clamp may apply to G payout.",
       "symbol": "⬡"
     }
   },
@@ -71,7 +72,12 @@
     "UNIT_COUNT": 12,
     "MANUAL_HARVEST_ORE": 42,
     "MANUAL_RAID_LOOT_ORE": 54,
-    "ORACLE_RAKE_PCT": 10
+    "ORACLE_RAKE_PCT": 10,
+    "G_WORLD_FEE_PCT": 2,
+    "G_PROTOCOL_TAX_PCT": 3,
+    "G_PROTOCOL_BURN_PCT": 2,
+    "G_EVENT_POOL_PCT": 3,
+    "WORLD_EVENT_TRIGGER_G": 250
   },
 
   "entities": {
@@ -121,6 +127,20 @@
       "resolveRule": "string — SELF_RESOLVING: on-chain predicate read at resolveAt; ORACLE: human/operator outcomeOverride",
       "oracleRakePct": "number — ORACLE only: 10% of losing pool to the Oracle agent"
     },
+    "question": {
+      "_doc": "World-as-Market §9 shape. `markets` remains the legacy route name, while questions carry kind/difficulty/currency/stake/resolveAt/resolver/poolId/status. G questions settle in G without oreCap clamp.",
+      "id": "string",
+      "kind": "MATH|STATE|ORACLE",
+      "difficulty": "uint",
+      "currency": "ORE|G",
+      "stake": "number — suggested default stake or 0 for answer cards",
+      "resolveAt": "epoch ms",
+      "resolver": "LOCAL_MATH|CHAIN_STATE|CHAIN_STATE_RNG_LOCK|ORACLE_*",
+      "poolId": "string",
+      "status": "OPEN|RESOLVED",
+      "poolYes": "number — pool in question.currency",
+      "poolNo": "number — pool in question.currency"
+    },
     "position": {
       "_doc": "A user's open bet on a market. NOTE: the placeBet id template 'pos-$marketId-$side' is illustrative and NOT collision-safe — the demo allows repeated bets on the same market+side (each creating a distinct position with a random id, fields mktId/closeAt/poolAt rather than marketId/resolveAt). A literal engine must add a uniqueness suffix to avoid id collisions on repeated same-side bets.",
       "id": "string",
@@ -132,6 +152,24 @@
       "type": "SELF_RESOLVING|ORACLE",
       "settled": "bool",
       "payout": "number|null — credited on resolve (parimutuel, ore-cap-clamped)"
+    },
+    "worldTreasury": {
+      "_doc": "Demo World treasury view used by World-as-Market §9. G market fee/tax/burn/event allocation is visible here.",
+      "surplusG": "number",
+      "protocolBurnG": "number",
+      "eventPrizePoolG": "number",
+      "nextTriggerAt": "number — next event threshold in G for this demo",
+      "lastTriggeredEventId": "string|null"
+    },
+    "worldEvent": {
+      "_doc": "Treasury-triggered event timeline entry, separate from World Bible canon chapters.",
+      "id": "string",
+      "type": "ORACLE|STATE_RUSH|STATE_RNG",
+      "title": "string",
+      "triggeredAt": "epoch ms",
+      "sourceQuestionId": "string",
+      "prizePoolG": "number",
+      "description": "string"
     },
     "card": {
       "_doc": "Mirrors CardLedger Card + roadmap E3 narrative metadata. Owned Arena unit instance. NOTE: the demo's 6-card shop roster (Sentinel/Wraith/Forgeling/Bulwark/Reaver/Mystic) uses ILLUSTRATIVE placeholder names+stats and does NOT match the real on-chain UnitCatalog.sol roster (Mineworker/Stoneguard/Skirmisher/Pyromancer/Battlemage/Ravenscout/Hexhunter/Crystalwarden/Stormcaller/Wraith/Shadowstalker/Spiritbinder). Only the 12-unit count, the 3-6 G cost band, the 1 G roll cost, and the ON_START/ON_HURT/ON_DEATH ability-trigger taxonomy are pinned to chain. Unit NAMES and per-unit ATK/HP are demo-only mockups. (e.g. demo 'Wraith' 3/2 cost4 != chain 'Wraith' 5/5 cost6.)",
@@ -191,7 +229,7 @@
     },
     "markets": {
       "mkt-101": {
-        "id": "mkt-101", "type": "SELF_RESOLVING",
+        "id": "mkt-101", "type": "SELF_RESOLVING", "currency": "G",
         "question": "Will Ironclad still own hex (3,-2) in 1 hour?",
         "poolYes": 740, "poolNo": 410,
         "resolveAt": "+52m", "resolved": false, "winner": null,
@@ -201,7 +239,7 @@
         "resolveRule": "hex(3,-2).ownerId == Ironclad  @ block resolveAt"
       },
       "mkt-102": {
-        "id": "mkt-102", "type": "SELF_RESOLVING",
+        "id": "mkt-102", "type": "SELF_RESOLVING", "currency": "ORE",
         "question": "Will Rustwood top the scoreboard at close?",
         "poolYes": 230, "poolNo": 560,
         "resolveAt": "+128m", "resolved": false, "winner": null,
@@ -211,18 +249,58 @@
         "resolveRule": "argmax(getScore(a) for a in agents) == Rustwood @ resolveAt"
       },
       "mkt-201": {
-        "id": "mkt-201", "type": "ORACLE",
+        "id": "mkt-201", "type": "ORACLE", "currency": "G",
         "question": "Was the Seraphine-Vortex alliance an act of genuine diplomacy?",
         "poolYes": 180, "poolNo": 150,
         "resolveAt": "+180m", "resolved": false, "winner": null,
         "involvedAgents": ["Seraphine", "Vortex"], "hexes": [],
-        "context": "Subjective / narrative outcome — cannot be read from chain state. A designated Oracle agent (Halcyon) judges and posts the verdict. Winners split losers minus a 10% Oracle rake.",
+        "context": "Subjective / narrative outcome — cannot be read from chain state. A designated Oracle agent (Halcyon) judges and posts the verdict. Winners split losers after the G fee/tax/burn/event allocation.",
         "aiBrief": "Seraphine (rep 4.9) rarely defects. But the pact conveniently freed her to siege Nyx. Read the inbox threads before betting.",
         "resolveRule": "Oracle(Halcyon).outcomeOverride  (subjective, human-judged)",
         "oracleRakePct": 10
       }
     },
+    "questions": {
+      "mkt-001": {
+        "id": "mkt-001", "kind": "MATH", "difficulty": 0, "currency": "ORE", "stake": 0,
+        "resolveAt": "+30m", "resolver": "LOCAL_MATH", "poolId": "pool-001", "status": "OPEN",
+        "question": "Warm-up: what is 1 + 1?", "expression": "1 + 1", "answer": 2, "fixedRewardOre": 12,
+        "poolYes": 0, "poolNo": 0, "resolved": false, "winner": null
+      },
+      "mkt-101": {
+        "id": "mkt-101", "kind": "STATE", "difficulty": 600, "currency": "G", "stake": 25,
+        "resolveAt": "+52m", "resolver": "CHAIN_STATE_RNG_LOCK", "poolId": "pool-101-g", "status": "OPEN",
+        "question": "Will Ironclad still own hex (3,-2) in 1 hour?",
+        "poolYes": 740, "poolNo": 410, "resolved": false, "winner": null
+      },
+      "mkt-102": {
+        "id": "mkt-102", "kind": "STATE", "difficulty": 50, "currency": "ORE", "stake": 0,
+        "resolveAt": "+128m", "resolver": "CHAIN_STATE", "poolId": "pool-102-ore", "status": "OPEN",
+        "question": "Will Rustwood top the scoreboard at close?", "answer": "NO", "fixedRewardOre": 18,
+        "poolYes": 230, "poolNo": 560, "resolved": false, "winner": null
+      },
+      "mkt-201": {
+        "id": "mkt-201", "kind": "ORACLE", "difficulty": 420, "currency": "G", "stake": 25,
+        "resolveAt": "+180m", "resolver": "ORACLE_HALCYON", "poolId": "pool-201-g", "status": "OPEN",
+        "question": "Was the Seraphine-Vortex alliance an act of genuine diplomacy?",
+        "poolYes": 180, "poolNo": 150, "resolved": false, "winner": null
+      },
+      "mkt-world-cup": {
+        "id": "mkt-world-cup", "kind": "ORACLE", "difficulty": 700, "currency": "G", "stake": 50,
+        "resolveAt": "+120m", "resolver": "ORACLE_HALCYON", "poolId": "pool-world-cup-g", "status": "PENDING_EVENT",
+        "question": "World Cup Champion: will Ironclad hold #1 after the event window?",
+        "poolYes": 320, "poolNo": 280, "resolved": false, "winner": null
+      }
+    },
     "positions": [],
+    "worldTreasury": {
+      "surplusG": 118,
+      "protocolBurnG": 12,
+      "eventPrizePoolG": 160,
+      "nextTriggerAt": 250,
+      "lastTriggeredEventId": null
+    },
+    "worldEvents": [],
     "shop": [
       { "offerId": "off-0", "unitType": "Sentinel",  "atk": 2, "hp": 5, "cost": 3, "ability": "ON_HURT: gain +1 ATK" },
       { "offerId": "off-1", "unitType": "Wraith",    "atk": 3, "hp": 2, "cost": 4, "ability": "ON_DEATH: summon a 3/3 Husk" },
@@ -254,7 +332,7 @@
       "route": "#/",
       "requiresAgent": false,
       "describes": "Spectator landing / live world. Scoreboard, featured markets, drama ticker, AgentMind decision-log peek. No wallet needed.",
-      "actions": []
+      "actions": ["triggerWorldEvent"]
     },
     {
       "id": "onboard",
@@ -275,7 +353,7 @@
       "route": "#/markets",
       "requiresAgent": false,
       "describes": "Prediction markets list + detail modal + my positions + resolved receipt. Browsing is open to spectators; placing a bet requires an agent.",
-      "actions": ["placeBet", "resolveMarket"]
+      "actions": ["answerQuestion", "placeBet", "placeGBet", "resolveMarket", "resolveQuestion"]
     },
     {
       "id": "arena",
@@ -306,7 +384,7 @@
       "args": ["name", "archetype", "personality"],
       "currency": null,
       "gasless": true,
-      "_doc": "Operator-relayed createAgent(): platform pays gas, auto-claims a SPAWN_HEXES cluster with SPAWN_ORE. Personality becomes the autopilot LLM system prompt. New agents default to autopilot ON. Idempotent guard: only when no agent yet.",
+      "_doc": "Operator-relayed createAgent(): platform pays gas, auto-claims a SPAWN_HEXES cluster with SPAWN_ORE, then loads the prebuilt Arena demo account seeded with 240 G. Personality becomes the autopilot LLM system prompt. New agents default to autopilot ON. Idempotent guard: only when no agent yet.",
       "pre": [
         { "op": "isNull", "path": "user.agentId" }
       ],
@@ -315,7 +393,7 @@
         { "op": "set", "path": "agent", "value": {
           "id": 42, "name": "$name", "archetype": "$archetype", "personality": "$personality",
           "goal": "Expand north, then dominate the prediction markets.",
-          "color": "#2dd4bf", "ore": 200, "oreCap": 1000, "gBalance": 0,
+          "color": "#2dd4bf", "ore": 200, "oreCap": 1000, "gBalance": 240,
           "hexCount": 7, "buildings": 0, "elo": 1000, "chronicleScore": 0,
           "autopilot": true, "ownerWallet": "state:user.wallet",
           "territory": [
@@ -356,6 +434,25 @@
       ],
       "eff": [
         { "op": "set", "path": "agent.goal", "value": "$goal" }
+      ]
+    },
+    {
+      "id": "answerQuestion",
+      "screen": "markets",
+      "args": ["questionId", "answer"],
+      "currency": "ORE",
+      "gasless": true,
+      "_doc": "Answer-card path for MATH/low-difficulty STATE questions. MATH is locally checked: mkt-001 requires answer=2 from the displayed 1+1 expression in demo/index.html. Correct answers credit fixedRewardOre to agent.ore, ore-cap-clamped.",
+      "pre": [
+        { "op": "notNull", "path": "agent" },
+        { "op": "eq", "path": "questions.$questionId.status", "value": "OPEN" },
+        { "op": "eq", "path": "$answer", "value": "state:questions.$questionId.answer" }
+      ],
+      "eff": [
+        { "op": "set", "path": "questions.$questionId.status", "value": "RESOLVED" },
+        { "op": "set", "path": "questions.$questionId.resolved", "value": true },
+        { "op": "set", "path": "questions.$questionId.winner", "value": "$answer" },
+        { "op": "incClamp", "path": "agent.ore", "by": "state:questions.$questionId.fixedRewardOre", "max": "state:agent.oreCap" }
       ]
     },
     {
@@ -412,10 +509,11 @@
       "args": ["marketId", "side", "amount"],
       "currency": "ore",
       "gasless": true,
-      "_doc": "Place a parimutuel bet of `amount` ore on `side` (YES/NO) of an unresolved market. Stake must be within [BET_MIN=10, BET_MAX=500] AND <= agent.ore. The stake is added to that side's pool (moving the odds) and an open position is recorded. Requires an agent.",
+      "_doc": "Legacy ORE path: place a parimutuel bet of `amount` ore on `side` (YES/NO) of an unresolved ORE market. Stake must be within [BET_MIN=10, BET_MAX=500] AND <= agent.ore. The stake is added to that side's pool (moving the odds) and an open position is recorded. Requires an agent.",
       "pre": [
         { "op": "notNull", "path": "agent" },
         { "op": "eq", "path": "markets.$marketId.resolved", "value": false },
+        { "op": "eq", "path": "markets.$marketId.currency", "value": "ORE" },
         { "op": "between", "path": "$amount", "min": 10, "max": 500 },
         { "op": "gte", "path": "agent.ore", "value": "$amount" }
       ],
@@ -435,14 +533,45 @@
       ]
     },
     {
+      "id": "placeGBet",
+      "screen": "markets",
+      "args": ["questionId", "side", "amount"],
+      "currency": "G",
+      "gasless": true,
+      "_doc": "Place a G parimutuel bet on a high-difficulty World-as-Market question. The stake is deducted from agent.gBalance, added to the G pool, and recorded as a G position. Uses the same [BET_MIN,BET_MAX] UI bounds; no ore is touched.",
+      "pre": [
+        { "op": "notNull", "path": "agent" },
+        { "op": "eq", "path": "questions.$questionId.currency", "value": "G" },
+        { "op": "eq", "path": "questions.$questionId.status", "value": "OPEN" },
+        { "op": "between", "path": "$amount", "min": 10, "max": 500 },
+        { "op": "gte", "path": "agent.gBalance", "value": "$amount" }
+      ],
+      "eff": [
+        { "op": "dec", "path": "agent.gBalance", "by": "$amount" },
+        { "op": "inc", "path": "questions.$questionId.poolYes", "by": { "if": "eq:$side:YES", "then": "$amount", "else": 0 } },
+        { "op": "inc", "path": "questions.$questionId.poolNo",  "by": { "if": "eq:$side:NO",  "then": "$amount", "else": 0 } },
+        { "op": "push", "path": "positions", "value": {
+          "id": "pos-$questionId-$side",
+          "questionId": "$questionId",
+          "marketId": "$questionId",
+          "question": "state:questions.$questionId.question",
+          "side": "$side", "stake": "$amount", "currency": "G",
+          "resolveAt": "state:questions.$questionId.resolveAt",
+          "type": "state:questions.$questionId.kind",
+          "settled": false, "payout": null, "feeG": 0, "taxG": 0, "burnG": 0, "eventPoolG": 0
+        }}
+      ]
+    },
+    {
       "id": "resolveMarket",
       "screen": "markets",
       "args": ["marketId", "winner"],
       "currency": "ore",
       "gasless": true,
-      "_doc": "Resolve an unresolved market whose resolveAt has passed. SELF_RESOLVING reads the on-chain predicate; ORACLE uses the operator outcomeOverride (winner arg). Marks resolved, sets winner. For each open position on this market: if side==winner, credit parimutuel payout = stake + (stake/winPool)*distributable, where winPool = pool on winning side, losePool = pool on losing side, distributable = losePool - rake (ORACLE: 10% rake; SELF_RESOLVING: 0). Payout credit is ore-cap-clamped to 1000 (excess silently wasted — see GameEngine.sol:881). Losing positions pay 0.",
+      "_doc": "Legacy ORE path: resolve an unresolved ORE market whose resolveAt has passed. SELF_RESOLVING reads the on-chain predicate; ORACLE uses the operator outcomeOverride (winner arg). Marks resolved, sets winner. For each open position on this market: if side==winner, credit parimutuel payout = stake + (stake/winPool)*distributable, where winPool = pool on winning side, losePool = pool on losing side, distributable = losePool - rake (ORACLE: 10% rake; SELF_RESOLVING: 0). Payout credit is ore-cap-clamped to 1000 (excess silently wasted — see GameEngine.sol:881). Losing positions pay 0.",
       "pre": [
         { "op": "eq", "path": "markets.$marketId.resolved", "value": false },
+        { "op": "eq", "path": "markets.$marketId.currency", "value": "ORE" },
         { "op": "lte", "path": "markets.$marketId.resolveAt", "value": "state:now" }
       ],
       "eff": [
@@ -462,6 +591,60 @@
             "markSettled": true
           }
         }
+      ]
+    },
+    {
+      "id": "resolveQuestion",
+      "screen": "markets",
+      "args": ["questionId", "winner"],
+      "currency": "G",
+      "gasless": true,
+      "_doc": "Resolve a World-as-Market question. For currency=G, losing pool is split into World fee/protocol tax/burn/event prize pool allocation; winners receive G payout into agent.gBalance with NO ORE_POOL_CAP clamp (hard invariant H1).",
+      "pre": [
+        { "op": "eq", "path": "questions.$questionId.status", "value": "OPEN" },
+        { "op": "lte", "path": "questions.$questionId.resolveAt", "value": "state:now" }
+      ],
+      "eff": [
+        { "op": "set", "path": "questions.$questionId.status", "value": "RESOLVED" },
+        { "op": "set", "path": "questions.$questionId.resolved", "value": true },
+        { "op": "set", "path": "questions.$questionId.winner", "value": "$winner" },
+        { "op": "settleGPositions", "path": "positions", "where": { "questionId": "$questionId" },
+          "rule": {
+            "winnerSide": "$winner",
+            "worldFeePct": 2,
+            "protocolTaxPct": 3,
+            "protocolBurnPct": 2,
+            "eventPoolPct": 3,
+            "creditTo": "agent.gBalance",
+            "markSettled": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "triggerWorldEvent",
+      "screen": "landing",
+      "args": ["eventId", "type", "title", "sourceQuestionId", "prizePoolG", "description"],
+      "currency": "G",
+      "gasless": true,
+      "_doc": "Demo shortcut that spends accumulated eventPrizePoolG into a world event and makes the source question live. Used for World Cup Champion / Ore Rush / Boss Invasion samples.",
+      "pre": [
+        { "op": "gte", "path": "worldTreasury.eventPrizePoolG", "value": "$prizePoolG" }
+      ],
+      "eff": [
+        { "op": "dec", "path": "worldTreasury.eventPrizePoolG", "by": "$prizePoolG" },
+        { "op": "set", "path": "worldTreasury.lastTriggeredEventId", "value": "$eventId" },
+        { "op": "set", "path": "questions.$sourceQuestionId.status", "value": "OPEN" },
+        { "op": "push", "path": "worldEvents", "value": {
+          "id": "$eventId",
+          "type": "$type",
+          "title": "$title",
+          "triggeredAt": "state:now",
+          "sourceQuestionId": "$sourceQuestionId",
+          "prizePoolG": "$prizePoolG",
+          "description": "$description"
+        }},
+        { "op": "inc", "path": "worldTreasury.nextTriggerAt", "by": 250 }
       ]
     },
     {
@@ -598,7 +781,7 @@
             { "op": "notNull", "path": "agent" },
             { "op": "eq", "path": "agent.hexCount", "value": 7 },
             { "op": "eq", "path": "agent.ore", "value": 200 },
-            { "op": "eq", "path": "agent.gBalance", "value": 0 },
+            { "op": "eq", "path": "agent.gBalance", "value": 240 },
             { "op": "eq", "path": "agent.elo", "value": 1000 },
             { "op": "eq", "path": "agent.autopilot", "value": true }
           ]
@@ -627,11 +810,11 @@
         },
         {
           "action": "placeBet",
-          "args": { "marketId": "mkt-101", "side": "YES", "amount": 100 },
+          "args": { "marketId": "mkt-102", "side": "YES", "amount": 100 },
           "expect": [
             { "op": "eq", "path": "agent.ore", "value": 92 },
-            { "op": "eq", "path": "markets.mkt-101.poolYes", "value": 840 },
-            { "op": "eq", "path": "markets.mkt-101.poolNo", "value": 410 },
+            { "op": "eq", "path": "markets.mkt-102.poolYes", "value": 330 },
+            { "op": "eq", "path": "markets.mkt-102.poolNo", "value": 560 },
             { "op": "len", "path": "positions", "value": 1 },
             { "op": "eq", "path": "positions.0.side", "value": "YES" },
             { "op": "eq", "path": "positions.0.stake", "value": 100 }
@@ -639,29 +822,29 @@
         },
         {
           "action": "resolveMarket",
-          "args": { "marketId": "mkt-101", "winner": "YES", "_atTime": ">resolveAt" },
-          "_doc": "Self-resolving market closes; YES wins. winPool=840, losePool=410, rake=0 (SELF_RESOLVING). payout = 100 + floor(100/840*410) = 100 + 48 = 148. Credited to agent.ore (92 + 148 = 240), under the 1000 cap so no clamp.",
+          "args": { "marketId": "mkt-102", "winner": "YES", "_atTime": ">resolveAt" },
+          "_doc": "Self-resolving ORE market closes; YES wins. winPool=330, losePool=560, rake=0 (SELF_RESOLVING). payout = 100 + floor(100/330*560) = 100 + 169 = 269. Credited to agent.ore (92 + 269 = 361), under the 1000 cap so no clamp.",
           "expect": [
-            { "op": "eq", "path": "markets.mkt-101.resolved", "value": true },
-            { "op": "eq", "path": "markets.mkt-101.winner", "value": "YES" },
+            { "op": "eq", "path": "markets.mkt-102.resolved", "value": true },
+            { "op": "eq", "path": "markets.mkt-102.winner", "value": "YES" },
             { "op": "eq", "path": "positions.0.settled", "value": true },
-            { "op": "eq", "path": "positions.0.payout", "value": 148 },
-            { "op": "eq", "path": "agent.ore", "value": 240 }
+            { "op": "eq", "path": "positions.0.payout", "value": 269 },
+            { "op": "eq", "path": "agent.ore", "value": 361 }
           ]
         },
         {
           "action": "depositG",
           "args": { "amount": 20 },
           "expect": [
-            { "op": "eq", "path": "agent.gBalance", "value": 20 }
+            { "op": "eq", "path": "agent.gBalance", "value": 260 }
           ]
         },
         {
           "action": "buyCard",
           "args": { "offerId": "off-4" },
-          "_doc": "Reaver costs 6 G. 20 - 6 = 14 G. Card auto-benches into the first empty slot (index 0).",
+          "_doc": "Reaver costs 6 G. Seeded 240 G + deposit 20 - 6 = 254 G. Card auto-benches into the first empty slot (index 0).",
           "expect": [
-            { "op": "eq", "path": "agent.gBalance", "value": 14 },
+            { "op": "eq", "path": "agent.gBalance", "value": 254 },
             { "op": "eq", "path": "bench.0.card.unitType", "value": "Reaver" },
             { "op": "eq", "path": "bench.filledCount", "value": 1 }
           ]
@@ -669,10 +852,124 @@
         {
           "action": "submitBench",
           "args": {},
-          "_doc": "gBalance 14 < 100 => Bronze tier pool.",
+          "_doc": "gBalance 254 is in the seeded Silver tier pool.",
           "expect": [
             { "op": "eq", "path": "matchmaking.submitted", "value": true },
-            { "op": "eq", "path": "matchmaking.tier", "value": "Bronze" }
+            { "op": "eq", "path": "matchmaking.tier", "value": "Silver" }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "world-as-market-question-g-flow",
+      "desc": "World-as-Market §9 happy path: local MATH answer card, high-difficulty G bet, no-cap G payout, treasury fee/tax/burn/event allocation, then a demo-triggered World Cup event appears in the worldEvents timeline.",
+      "steps": [
+        {
+          "action": "connectWallet",
+          "args": { "provider": "Google" },
+          "expect": [
+            { "op": "eq", "path": "user.connected", "value": true }
+          ]
+        },
+        {
+          "action": "createAgent",
+          "args": { "name": "Tessellate", "archetype": "Oracle", "personality": "A market-native chronicler." },
+          "expect": [
+            { "op": "eq", "path": "agent.ore", "value": 200 },
+            { "op": "eq", "path": "agent.gBalance", "value": 240 }
+          ]
+        },
+        {
+          "action": "answerQuestion",
+          "args": { "questionId": "mkt-001", "answer": 2 },
+          "_doc": "MATH path mirrors demo/index.html local check: displayed expression 1+1 resolves to 2. Correct answer credits fixedRewardOre=12 under ore cap.",
+          "expect": [
+            { "op": "eq", "path": "questions.mkt-001.status", "value": "RESOLVED" },
+            { "op": "eq", "path": "agent.ore", "value": 212 }
+          ]
+        },
+        {
+          "action": "depositG",
+          "args": { "amount": 2000 },
+          "expect": [
+            { "op": "eq", "path": "agent.gBalance", "value": 2240 }
+          ]
+        },
+        {
+          "action": "placeGBet",
+          "args": { "questionId": "mkt-101", "side": "YES", "amount": 500 },
+          "expect": [
+            { "op": "eq", "path": "agent.gBalance", "value": 1740 },
+            { "op": "eq", "path": "questions.mkt-101.poolYes", "value": 1240 },
+            { "op": "eq", "path": "questions.mkt-101.poolNo", "value": 410 },
+            { "op": "len", "path": "positions", "value": 1 },
+            { "op": "eq", "path": "positions.0.currency", "value": "G" }
+          ]
+        },
+        {
+          "action": "resolveQuestion",
+          "args": { "questionId": "mkt-101", "winner": "YES", "_atTime": ">resolveAt" },
+          "_doc": "G no-cap proof on the browser's mkt-101 G question. winPool=1240, losePool=410. fee/tax/burn/event=8/12/8/12, distributable=370. payout=500+floor(500/1240*370)=649. agent.gBalance 1740+649=2389, intentionally above ORE_POOL_CAP=1000.",
+          "expect": [
+            { "op": "eq", "path": "questions.mkt-101.status", "value": "RESOLVED" },
+            { "op": "eq", "path": "positions.0.settled", "value": true },
+            { "op": "eq", "path": "positions.0.payout", "value": 649 },
+            { "op": "eq", "path": "positions.0.feeG", "value": 8 },
+            { "op": "eq", "path": "positions.0.taxG", "value": 12 },
+            { "op": "eq", "path": "positions.0.burnG", "value": 8 },
+            { "op": "eq", "path": "positions.0.eventPoolG", "value": 12 },
+            { "op": "eq", "path": "agent.gBalance", "value": 2389 },
+            { "op": "gt", "path": "agent.gBalance", "value": 1000 },
+            { "op": "eq", "path": "worldTreasury.surplusG", "value": 138 },
+            { "op": "eq", "path": "worldTreasury.protocolBurnG", "value": 20 },
+            { "op": "eq", "path": "worldTreasury.eventPrizePoolG", "value": 172 }
+          ]
+        },
+        {
+          "action": "triggerWorldEvent",
+          "args": {
+            "eventId": "evt-001",
+            "type": "ORACLE",
+            "title": "World Cup Champion",
+            "sourceQuestionId": "mkt-world-cup",
+            "prizePoolG": 80,
+            "description": "Treasury seeded a G championship market judged by Halcyon."
+          },
+          "expect": [
+            { "op": "len", "path": "worldEvents", "value": 1 },
+            { "op": "eq", "path": "worldEvents.0.id", "value": "evt-001" },
+            { "op": "eq", "path": "worldTreasury.lastTriggeredEventId", "value": "evt-001" },
+            { "op": "eq", "path": "worldTreasury.eventPrizePoolG", "value": 92 },
+            { "op": "eq", "path": "worldTreasury.nextTriggerAt", "value": 500 },
+            { "op": "eq", "path": "questions.mkt-world-cup.status", "value": "OPEN" }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "edge-trigger-world-event-insufficient-g",
+      "desc": "World event trigger is rejected when the event prize pool lacks the requested G; no event is created and nextTriggerAt is unchanged.",
+      "expectError": true,
+      "steps": [
+        {
+          "action": "triggerWorldEvent",
+          "args": {
+            "eventId": "evt-low",
+            "type": "ORACLE",
+            "title": "World Cup Champion",
+            "sourceQuestionId": "mkt-world-cup",
+            "prizePoolG": 200,
+            "description": "Should not trigger without enough treasury G."
+          },
+          "expect": [
+            { "op": "failsPre", "path": "worldTreasury.eventPrizePoolG", "reason": "treasury lacks requested prizePoolG" },
+            { "op": "eq", "path": "worldTreasury.eventPrizePoolG", "value": 160 },
+            { "op": "eq", "path": "worldTreasury.nextTriggerAt", "value": 250 },
+            { "op": "eq", "path": "worldTreasury.lastTriggeredEventId", "value": null },
+            { "op": "len", "path": "worldEvents", "value": 0 },
+            { "op": "eq", "path": "questions.mkt-world-cup.status", "value": "PENDING_EVENT" }
           ]
         }
       ]
@@ -686,7 +983,7 @@
       "steps": [
         {
           "action": "placeBet",
-          "args": { "marketId": "mkt-101", "side": "YES", "amount": 5 },
+          "args": { "marketId": "mkt-102", "side": "YES", "amount": 5 },
           "expect": [
             { "op": "failsPre", "path": "$amount", "reason": "below min bet (BET_MIN=10)" },
             { "op": "eq", "path": "agent.ore", "value": 200 },
@@ -703,7 +1000,7 @@
       "steps": [
         {
           "action": "placeBet",
-          "args": { "marketId": "mkt-101", "side": "NO", "amount": 600 },
+          "args": { "marketId": "mkt-102", "side": "NO", "amount": 600 },
           "expect": [
             { "op": "failsPre", "path": "$amount", "reason": "above max bet (BET_MAX=500)" }
           ]
@@ -718,7 +1015,7 @@
       "steps": [
         {
           "action": "placeBet",
-          "args": { "marketId": "mkt-101", "side": "YES", "amount": 200 },
+          "args": { "marketId": "mkt-102", "side": "YES", "amount": 200 },
           "expect": [
             { "op": "failsPre", "path": "agent.ore", "reason": "stake exceeds balance (agent.ore < amount)" },
             { "op": "eq", "path": "agent.ore", "value": 30 },
@@ -755,14 +1052,14 @@
       "id": "edge-double-resolve",
       "desc": "Resolving an already-resolved market is rejected (no double payout).",
       "expectError": true,
-      "_setup": "mkt-101 already resolved (winner=YES) by an earlier resolveMarket.",
+      "_setup": "mkt-102 already resolved (winner=YES) by an earlier resolveMarket.",
       "steps": [
         {
           "action": "resolveMarket",
-          "args": { "marketId": "mkt-101", "winner": "NO" },
+          "args": { "marketId": "mkt-102", "winner": "NO" },
           "expect": [
-            { "op": "failsPre", "path": "markets.mkt-101.resolved", "reason": "market already resolved" },
-            { "op": "eq", "path": "markets.mkt-101.winner", "value": "YES" }
+            { "op": "failsPre", "path": "markets.mkt-102.resolved", "reason": "market already resolved" },
+            { "op": "eq", "path": "markets.mkt-102.winner", "value": "YES" }
           ]
         }
       ]

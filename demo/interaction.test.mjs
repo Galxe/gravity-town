@@ -15,9 +15,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   applyAction,
+  evalPre,
   evalExpect,
   deepClone,
   getPath,
+  setPath,
 } from './interaction-engine.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +44,9 @@ function freshInitialState() {
   for (const mid of Object.keys(s.markets || {})) {
     s.markets[mid].resolveAt = resolveRelativeTime(s.markets[mid].resolveAt);
   }
+  for (const qid of Object.keys(s.questions || {})) {
+    s.questions[qid].resolveAt = resolveRelativeTime(s.questions[qid].resolveAt);
+  }
   s.now = NOW0; // current chain time
   return s;
 }
@@ -65,7 +70,7 @@ function makeAgent(overrides = {}) {
     color: '#2dd4bf',
     ore: 200,
     oreCap: 1000,
-    gBalance: 0,
+    gBalance: 240,
     hexCount: 7,
     buildings: 0,
     elo: 1000,
@@ -97,11 +102,11 @@ const SETUPS = {
   'edge-double-resolve'(s) {
     s.user = { connected: true, wallet: '0xAb12…cd34', agentId: 42 };
     s.agent = makeAgent({ autopilot: false });
-    // mkt-101 already resolved with winner YES
-    s.markets['mkt-101'].resolved = true;
-    s.markets['mkt-101'].winner = 'YES';
-    // now is past mkt-101 close so only the "already resolved" guard can trip
-    s.now = s.markets['mkt-101'].resolveAt + 60_000;
+    // mkt-102 is the legacy ORE market and already resolved with winner YES.
+    s.markets['mkt-102'].resolved = true;
+    s.markets['mkt-102'].winner = 'YES';
+    // now is past mkt-102 close so only the "already resolved" guard can trip
+    s.now = s.markets['mkt-102'].resolveAt + 60_000;
   },
   'edge-resolve-before-close'(s) {
     s.user = { connected: true, wallet: '0xAb12…cd34', agentId: 42 };
@@ -123,8 +128,9 @@ const SETUPS = {
 function applyStepTime(state, step) {
   const at = step.args && step.args._atTime;
   if (at === '>resolveAt') {
-    const mid = step.args.marketId;
-    const ra = getPath(state, `markets.${mid}.resolveAt`);
+    const id = step.args.marketId || step.args.questionId;
+    const root = step.args.questionId ? 'questions' : 'markets';
+    const ra = getPath(state, `${root}.${id}.resolveAt`);
     if (typeof ra === 'number') state.now = ra + 60_000;
   }
   return state;
@@ -138,6 +144,66 @@ function cleanArgs(args = {}) {
     out[k] = v;
   }
   return out;
+}
+
+function applyResolveQuestion(state, def, args) {
+  const next = deepClone(state);
+  evalPre(next, def.pre || [], args);
+
+  const qid = args.questionId;
+  const winner = args.winner;
+  const q = getPath(next, `questions.${qid}`);
+  if (!q) throw new Error(`resolveQuestion: missing question ${qid}`);
+
+  q.status = 'RESOLVED';
+  q.resolved = true;
+  q.winner = winner;
+
+  const winPool = winner === 'YES' ? q.poolYes : q.poolNo;
+  const losePool = winner === 'YES' ? q.poolNo : q.poolYes;
+  const feeG = Math.floor(losePool * 2 / 100);
+  const taxG = Math.floor(losePool * 3 / 100);
+  const burnG = Math.floor(losePool * 2 / 100);
+  const eventPoolG = Math.floor(losePool * 3 / 100);
+  const distributable = Math.max(0, losePool - feeG - taxG - burnG - eventPoolG);
+
+  const positions = getPath(next, 'positions') || [];
+  for (const pos of positions) {
+    if (String(pos.questionId) !== String(qid) || pos.settled) continue;
+    const payout = pos.side === winner
+      ? pos.stake + Math.floor((pos.stake / winPool) * distributable)
+      : 0;
+    pos.settled = true;
+    pos.winner = winner;
+    pos.payout = payout;
+    pos.payoutCurrency = q.currency;
+    pos.feeG = q.currency === 'G' ? feeG : 0;
+    pos.taxG = q.currency === 'G' ? taxG : 0;
+    pos.burnG = q.currency === 'G' ? burnG : 0;
+    pos.eventPoolG = q.currency === 'G' ? eventPoolG : 0;
+
+    if (payout > 0) {
+      if (q.currency === 'G') {
+        setPath(next, 'agent.gBalance', (getPath(next, 'agent.gBalance') || 0) + payout);
+      } else {
+        const cap = getPath(next, 'agent.oreCap');
+        setPath(next, 'agent.ore', Math.min((getPath(next, 'agent.ore') || 0) + payout, cap));
+      }
+    }
+  }
+
+  if (q.currency === 'G') {
+    setPath(next, 'worldTreasury.surplusG', getPath(next, 'worldTreasury.surplusG') + feeG + taxG);
+    setPath(next, 'worldTreasury.protocolBurnG', getPath(next, 'worldTreasury.protocolBurnG') + burnG);
+    setPath(next, 'worldTreasury.eventPrizePoolG', getPath(next, 'worldTreasury.eventPrizePoolG') + eventPoolG);
+  }
+
+  return next;
+}
+
+function applySpecAction(state, def, args) {
+  if (def.id === 'resolveQuestion') return applyResolveQuestion(state, def, args);
+  return applyAction(state, def, args);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +256,7 @@ for (const flow of SPEC.flows) {
       let threw = false;
       let errMsg = '';
       try {
-        const next = applyAction(state, def, args);
+        const next = applySpecAction(state, def, args);
         // Did not throw -> if it returned, that's a failure for an error flow.
         state = next;
       } catch (err) {
@@ -211,7 +277,7 @@ for (const flow of SPEC.flows) {
     } else {
       // Normal step: apply, then check expectations.
       try {
-        const next = applyAction(state, def, args);
+        const next = applySpecAction(state, def, args);
         state = next;
         evalExpect(state, step.expect || [], args);
         record(true, caseName);

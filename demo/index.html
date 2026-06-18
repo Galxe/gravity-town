@@ -173,16 +173,72 @@ const seedAgents = [
   { id: 17, name: 'Halcyon',   archetype: 'Oracle',      hexes: 6,  ore: 520, buildings: 5,  elo: 1005, rep: 2.8, color:'#2dd4bf' },
 ];
 
-// --- Prediction markets (mirrors PredictionMarket struct from roadmap E1.1) ---
-//  type: SELF_RESOLVING (contract reads chain state) | ORACLE (human-judged)
-function seedMarkets() {
+const WORLD_EVENT_TRIGGER_G = 250;
+const G_WORLD_FEE_PCT = 2;
+const G_PROTOCOL_TAX_PCT = 3;
+const G_PROTOCOL_BURN_PCT = 2;
+const G_EVENT_POOL_PCT = 3;
+const WORLD_EVENT_PRESETS = [
+  {
+    type:'ORACLE', title:'World Cup Champion', prizePoolG:80, sourceQuestionId:'mkt-world-cup',
+    description:'Treasury seeded a G championship market judged by Halcyon.',
+  },
+  {
+    type:'STATE_RUSH', title:'Ore Rush', prizePoolG:45, sourceQuestionId:'mkt-ore-rush',
+    description:'A mining rush opened in the free ore engagement layer.',
+  },
+  {
+    type:'STATE_RNG', title:'Boss Invasion', prizePoolG:95, sourceQuestionId:'mkt-boss-invasion',
+    description:'A high-difficulty STATE/RNG event spawned at the capital.',
+  },
+];
+
+// --- World-as-Market questions (§9) ---
+//  kind: MATH | STATE | ORACLE. `type`/`resolved` stay as compatibility fields
+//  for the old Markets route and interaction spec.
+function seedQuestions() {
   return [
   {
+    id: 'mkt-001',
+    kind: 'MATH',
+    difficulty: 0,
+    currency: 'ORE',
+    stake: 0,
+    resolver: 'LOCAL_MATH',
+    poolId: 'pool-001',
+    status: 'OPEN',
+    type: 'SELF_RESOLVING',
+    question: 'Warm-up: what is 1 + 1?',
+    expression: '1 + 1',
+    poolYes: 0, poolNo: 0,
+    closeAt: Date.now() + 1000*60*30,
+    resolveAt: Date.now() + 1000*60*30,
+    resolved: false, winner: null,
+    localAnswer: 2,
+    fixedRewardOre: 12,
+    oreSink: 0,
+    scoreWeight: 1,
+    agents: [],
+    hexes: [],
+    context: 'A deterministic local answer card: the browser checks the arithmetic before crediting the mock reward. No oracle, no G fee.',
+    aiBrief: 'Difficulty 0 chores are free engagement. The owner sees the question spine, not a casino flow.',
+    posts: [],
+    resolveRule: 'localCheck(1 + 1 === 2)',
+  },
+  {
     id: 'mkt-101',
+    kind: 'STATE',
+    difficulty: 600,
+    currency: 'G',
+    stake: 25,
+    resolver: 'CHAIN_STATE_RNG_LOCK',
+    poolId: 'pool-101-g',
+    status: 'OPEN',
     type: 'SELF_RESOLVING',
     question: 'Will Ironclad still own hex (3,-2) in 1 hour?',
-    poolYes: 740, poolNo: 410,            // ore in each side of the parimutuel pool
+    poolYes: 740, poolNo: 410,            // G in each side of the parimutuel pool
     closeAt: Date.now() + 1000*60*52,
+    resolveAt: Date.now() + 1000*60*52,
     resolved: false, winner: null,        // set on resolveMarket
     agents: ['Ironclad','Vortex'],
     hexes: ['(3,-2)'],
@@ -196,11 +252,23 @@ function seedMarkets() {
   },
   {
     id: 'mkt-102',
+    kind: 'STATE',
+    difficulty: 50,
+    currency: 'ORE',
+    stake: 0,
+    resolver: 'CHAIN_STATE',
+    poolId: 'pool-102-ore',
+    status: 'OPEN',
     type: 'SELF_RESOLVING',
     question: 'Will Rustwood top the scoreboard at close?',
     poolYes: 230, poolNo: 560,
     closeAt: Date.now() + 1000*60*128,
+    resolveAt: Date.now() + 1000*60*128,
     resolved: false, winner: null,
+    localAnswer: 'NO',
+    fixedRewardOre: 18,
+    oreSink: 0,
+    scoreWeight: 3,
     agents: ['Rustwood','Ironclad','Seraphine'],
     hexes: [],
     context: 'Rustwood is a Farmer: 14 buildings, ore near the 1000 cap. Pure economy score. Ironclad leads on territory (21 hexes). Score = hexes×100 + ore + buildings×50.',
@@ -212,15 +280,23 @@ function seedMarkets() {
   },
   {
     id: 'mkt-201',
+    kind: 'ORACLE',
+    difficulty: 420,
+    currency: 'G',
+    stake: 25,
+    resolver: 'ORACLE_HALCYON',
+    poolId: 'pool-201-g',
+    status: 'OPEN',
     type: 'ORACLE',
     question: 'Was the Seraphine–Vortex alliance an act of genuine diplomacy?',
     poolYes: 180, poolNo: 150,
     closeAt: Date.now() + 1000*60*60*3,   // oracle markets run ~4h
+    resolveAt: Date.now() + 1000*60*60*3,
     resolved: false, winner: null,
-    oracleRakePct: 10,                    // 10% of losing pool to the Oracle agent
+    oracleRakePct: 10,
     agents: ['Seraphine','Vortex'],
     hexes: [],
-    context: 'Subjective / narrative outcome — cannot be read from chain state. A designated Oracle agent (Halcyon) judges and posts the verdict. Winners split losers minus a 10% Oracle rake.',
+    context: 'Subjective / narrative outcome — cannot be read from chain state. A designated Oracle agent (Halcyon) judges and posts the verdict. Winners split losers minus the G fee/tax/burn/event allocation.',
     aiBrief: 'Seraphine (rep 4.9) rarely defects. But the pact conveniently freed her to siege Nyx. Read the inbox threads before betting.',
     posts: [
       { who:'Seraphine', t:'INBOX → Vortex', txt:'Non-aggression for 2 hours. I have no designs on your north.' },
@@ -230,27 +306,135 @@ function seedMarkets() {
   },
   ];
 }
+function seedMarkets() { return seedQuestions(); }
+
+function makeWorldEventQuestion(preset, id) {
+  const base = Date.now() + 1000*60*60;
+  if (preset.type === 'ORACLE') {
+    return {
+      id: 'mkt-world-cup',
+      kind: 'ORACLE', difficulty: 700, currency: 'G', stake: 50,
+      resolver: 'ORACLE_HALCYON', poolId: 'pool-world-cup-g', status: 'OPEN',
+      type: 'ORACLE', question: 'World Cup Champion: will Ironclad hold #1 after the event window?',
+      poolYes: 320, poolNo: 280, closeAt: base, resolveAt: base,
+      resolved: false, winner: null, oracleRakePct: 10,
+      agents: ['Ironclad','Rustwood','Seraphine'], hexes: [],
+      context: 'A treasury-seeded championship market. G stays in the value layer; winners split the G pool after visible World fees.',
+      aiBrief: 'Ironclad leads on territory, but Rustwood has the economy. This is a high-difficulty ORACLE/G question.',
+      posts: [{ who:'Halcyon', t:'ORACLE NOTICE', txt:'World Cup Champion market opened from treasury event seed.' }],
+      resolveRule: 'Oracle(Halcyon).championVerdict @ event close',
+    };
+  }
+  if (preset.type === 'STATE_RUSH') {
+    return {
+      id: 'mkt-ore-rush',
+      kind: 'STATE', difficulty: 80, currency: 'ORE', stake: 0,
+      resolver: 'CHAIN_STATE', poolId: 'pool-ore-rush', status: 'OPEN',
+      type: 'SELF_RESOLVING', question: 'Ore Rush: will the town mine 500 ore before the timer ends?',
+      poolYes: 90, poolNo: 45, closeAt: base, resolveAt: base,
+      resolved: false, winner: null, localAnswer: 'YES', fixedRewardOre: 24, oreSink: 0, scoreWeight: 4,
+      agents: ['Rustwood'], hexes: ['(0,0)','(1,0)'],
+      context: 'A low-stakes treasury event that boosts engagement in the ore layer without taxing G.',
+      aiBrief: 'Ore Rush is a STATE answer card: it reveals the same question spine without forcing a money bet.',
+      posts: [{ who:'Rustwood', t:'BOARD (0,0)', txt:'Ore Rush is live. Mines first, wars later.' }],
+      resolveRule: 'sum(harvestedOreDuringEvent) >= 500',
+    };
+  }
+  return {
+    id: 'mkt-boss-invasion',
+    kind: 'STATE', difficulty: 820, currency: 'G', stake: 50,
+    resolver: 'CHAIN_STATE_RNG_LOCK', poolId: 'pool-boss-invasion-g', status: 'OPEN',
+    type: 'SELF_RESOLVING', question: 'Boss Invasion: will the city defeat the invader before lock expires?',
+    poolYes: 510, poolNo: 360, closeAt: base, resolveAt: base,
+    resolved: false, winner: null,
+    agents: ['Ironclad','Nyx','Halcyon'], hexes: ['(0,0)'],
+    context: 'High-difficulty STATE/RNG question. The real system would commit, lock RNG, then resolve; the demo shows the bet surface.',
+    aiBrief: 'Boss Invasion is intentionally G-priced and RNG-locked. No ore cap applies to G payout.',
+    posts: [{ who:'Nyx', t:'BOARD (0,0)', txt:'The boss will not wait for committee consensus.' }],
+    resolveRule: 'lockedRngOutcome && bossHp == 0 @ resolveAt',
+  };
+}
 
 // --- Parimutuel settlement math (mirrors GameEngine settle + resolveMarket spec) ---
 //  winPool = pool on the winning side; losePool = pool on the losing side.
-//  ORACLE markets take a 10% rake off the losing pool; SELF_RESOLVING take 0.
+//  ORE keeps the old oracle rake. G breaks the losing pool into visible World
+//  fee / protocol tax / burn / event pool allocation, and has no ore-cap clamp.
 //  A winning stake gets back: stake + floor(stake/winPool * distributable).
-//  The credit is clamped to the agent's ore cap — any overflow is wasted.
 const ORACLE_RAKE_PCT = 10;
-function settlePayout({ stake, side, winner, poolYes, poolNo, type }) {
+function feeBreakdown({ losePool, type, currency }) {
+  if (currency === 'G') {
+    const feeG = Math.floor(losePool * G_WORLD_FEE_PCT / 100);
+    const taxG = Math.floor(losePool * G_PROTOCOL_TAX_PCT / 100);
+    const burnG = Math.floor(losePool * G_PROTOCOL_BURN_PCT / 100);
+    const eventPoolG = Math.floor(losePool * G_EVENT_POOL_PCT / 100);
+    return { feeG, taxG, burnG, eventPoolG, rakeOre: 0, total: feeG + taxG + burnG + eventPoolG };
+  }
+  const rakeOre = type === 'ORACLE' ? Math.floor(losePool * ORACLE_RAKE_PCT / 100) : 0;
+  return { feeG:0, taxG:0, burnG:0, eventPoolG:0, rakeOre, total: rakeOre };
+}
+function settlementBreakdown({ stake, side, winner, poolYes, poolNo, type, currency='ORE' }) {
   if (side !== winner) return 0;                       // losing side pays 0
   const winPool  = winner === 'YES' ? poolYes : poolNo;
   const losePool = winner === 'YES' ? poolNo : poolYes;
-  const rakePct  = type === 'ORACLE' ? ORACLE_RAKE_PCT : 0;
-  const distributable = losePool - Math.floor(losePool * rakePct / 100);
-  return stake + Math.floor((stake / winPool) * distributable);
+  const fees = feeBreakdown({ losePool, type, currency });
+  const distributable = Math.max(0, losePool - fees.total);
+  const payout = side === winner ? stake + Math.floor((stake / winPool) * distributable) : 0;
+  return { payout, winPool, losePool, distributable, ...fees };
+}
+function settlePayout(args) {
+  const b = settlementBreakdown(args);
+  return typeof b === 'number' ? b : b.payout;
 }
 // Live "if pools froze now" estimate for the bet panel: assumes YOUR stake is the
 // last bet before close (it is added to your side's pool). Branches on rake.
-function estimatePayout({ stake, side, poolYes, poolNo, type }) {
+function estimatePayout({ stake, side, poolYes, poolNo, type, currency='ORE' }) {
   const py = poolYes + (side==='YES'?stake:0);
   const pn = poolNo  + (side==='NO' ?stake:0);
-  return settlePayout({ stake, side, winner: side, poolYes: py, poolNo: pn, type });
+  return settlementBreakdown({ stake, side, winner: side, poolYes: py, poolNo: pn, type, currency });
+}
+
+function mathExpressionForQuestion(m) {
+  if (m.expression) return String(m.expression);
+  const match = String(m.question || '').match(/what is\s+([0-9+\-*\s.]+)\?/i);
+  return match ? match[1].trim() : '';
+}
+
+function safeMathValue(expr) {
+  const src = String(expr || '').trim();
+  if (!src || !/^[0-9+\-*\s.]+$/.test(src)) return null;
+  const tokens = src.match(/\d+(?:\.\d+)?|[+\-*]/g);
+  if (!tokens) return null;
+  let i = 0;
+  const readNumber = () => {
+    let sign = 1;
+    while (tokens[i] === '+' || tokens[i] === '-') {
+      if (tokens[i] === '-') sign *= -1;
+      i++;
+    }
+    const raw = tokens[i++];
+    if (raw == null || !/^\d+(?:\.\d+)?$/.test(raw)) return null;
+    return sign * Number(raw);
+  };
+  const readTerm = () => {
+    let value = readNumber();
+    if (value == null) return null;
+    while (tokens[i] === '*') {
+      i++;
+      const rhs = readNumber();
+      if (rhs == null) return null;
+      value *= rhs;
+    }
+    return value;
+  };
+  let value = readTerm();
+  if (value == null) return null;
+  while (tokens[i] === '+' || tokens[i] === '-') {
+    const op = tokens[i++];
+    const rhs = readTerm();
+    if (rhs == null) return null;
+    value = op === '+' ? value + rhs : value - rhs;
+  }
+  return i === tokens.length && Number.isFinite(value) ? value : null;
 }
 
 // --- Arena cards: the real 12-unit roster (mirrors contracts/src/UnitCatalog.sol
@@ -473,8 +657,16 @@ function StoreProvider({ children }) {
   const [g, setG] = useState(0);
 
   // world
-  const [markets, setMarkets] = useState(seedMarkets);
+  const [questions, setQuestions] = useState(seedQuestions);
   const [positions, setPositions] = useState([]);  // my open bets (open + settled)
+  const [worldTreasury, setWorldTreasury] = useState({
+    surplusG: 118,
+    protocolBurnG: 12,
+    eventPrizePoolG: 160,
+    nextTriggerAt: WORLD_EVENT_TRIGGER_G,
+    lastTriggeredEventId: null,
+  });
+  const [worldEvents, setWorldEvents] = useState([]);
   const [shop] = useState(seedShop);
   const [bench, setBench] = useState([]);           // up to 5 cards
   const [inventory, setInventory] = useState([]);   // owned but not benched
@@ -556,43 +748,90 @@ function StoreProvider({ children }) {
     setMatchmaking({ submitted:true, tier:tierFor(ARENA_MOCK_G) });
   }
 
-  // ---- resolveMarket: settle one market + credit the user's own positions ----
-  //  Mirrors the spec resolveMarket action (settlePositions reducer). Marks the
-  //  market resolved/winner, then for each of MY open positions on it: credits a
-  //  parimutuel payout (ore-cap-clamped) to ore, records payout + settled.
-  function resolveMarket(marketId, winner) {
-    const mkt = markets.find(m=>m.id===marketId);
-    if (!mkt || mkt.resolved) { toast('Market already resolved'); return; }
+  function triggerWorldEvent() {
+    const preset = WORLD_EVENT_PRESETS[worldEvents.length % WORLD_EVENT_PRESETS.length];
+    if (worldTreasury.eventPrizePoolG < preset.prizePoolG) {
+      toast(`Treasury needs ${preset.prizePoolG} G for ${preset.title}; available ${worldTreasury.eventPrizePoolG} G`, 'info');
+      pushMind('🏦', `World event blocked: ${preset.title} needs ${preset.prizePoolG} G, treasury has ${worldTreasury.eventPrizePoolG} G.`, 'trade');
+      return;
+    }
+    const id = 'evt-' + String(worldEvents.length + 1).padStart(3,'0');
+    const prize = preset.prizePoolG;
+    const evt = {
+      id, type:preset.type, title:preset.title, triggeredAt:Date.now(),
+      sourceQuestionId:preset.sourceQuestionId, prizePoolG:prize,
+      description:preset.description,
+    };
+    const q = makeWorldEventQuestion(preset, id);
+    setWorldEvents(es => [evt, ...es]);
+    setQuestions(qs => qs.some(x=>x.id===q.id) ? qs : [q, ...qs]);
+    setWorldTreasury(t => ({
+      ...t,
+      eventPrizePoolG: Math.max(0, t.eventPrizePoolG - prize),
+      nextTriggerAt: t.nextTriggerAt + WORLD_EVENT_TRIGGER_G,
+      lastTriggeredEventId: id,
+    }));
+    toast(`${preset.title} triggered · seeded ${prize} G`, 'g');
+    pushMind('🌐', `World treasury triggered ${preset.title}; source question ${preset.sourceQuestionId} is now live.`, 'trade');
+  }
+
+  // ---- resolveQuestion: settle one question + credit the user's own positions ----
+  //  ORE credits remain cap-clamped. G credits settle in G and never touch ORE_POOL_CAP.
+  function resolveQuestion(marketId, winner) {
+    const mkt = questions.find(m=>m.id===marketId);
+    if (!mkt || mkt.resolved || mkt.status === 'RESOLVED') { toast('Market already resolved'); return; }
     // Compute payouts purely up-front (no side effects inside state updaters).
     const myOpen = positions.filter(p => p.mktId === marketId && !p.settled);
     let grossPayout = 0;
     const settledIds = {};
+    const currency = mkt.currency || 'ORE';
+    const losingPool = winner === 'YES' ? mkt.poolNo : mkt.poolYes;
+    const marketFees = feeBreakdown({ losePool: losingPool, type:mkt.type, currency });
     for (const p of myOpen) {
-      const payout = settlePayout({ stake:p.stake, side:p.side, winner, poolYes:mkt.poolYes, poolNo:mkt.poolNo, type:mkt.type });
-      settledIds[p.id] = payout;
+      const b = settlementBreakdown({ stake:p.stake, side:p.side, winner, poolYes:mkt.poolYes, poolNo:mkt.poolNo, type:mkt.type, currency });
+      const payout = typeof b === 'number' ? b : b.payout;
+      settledIds[p.id] = { payout, ...marketFees };
       grossPayout += payout;
     }
-    // Ore-cap-clamp the *total* credit (overflow wasted).
-    const credited = Math.min(C.ORE_POOL_CAP, ore + grossPayout) - ore;
-    const wasted = grossPayout - credited;
-    setMarkets(ms => ms.map(m => m.id===marketId ? { ...m, resolved:true, winner } : m));
-    if (grossPayout > 0) setOre(prev => Math.min(C.ORE_POOL_CAP, prev + grossPayout));
+    const credited = currency === 'G' ? grossPayout : Math.min(C.ORE_POOL_CAP, ore + grossPayout) - ore;
+    const wasted = currency === 'G' ? 0 : grossPayout - credited;
+    setQuestions(ms => ms.map(m => m.id===marketId ? { ...m, resolved:true, status:'RESOLVED', winner } : m));
+    if (grossPayout > 0) {
+      if (currency === 'G') setG(prev => prev + grossPayout);
+      else setOre(prev => Math.min(C.ORE_POOL_CAP, prev + grossPayout));
+    }
+    if (currency === 'G') {
+      setWorldTreasury(t => ({
+        ...t,
+        surplusG: t.surplusG + marketFees.feeG + marketFees.taxG,
+        protocolBurnG: t.protocolBurnG + marketFees.burnG,
+        eventPrizePoolG: t.eventPrizePoolG + marketFees.eventPoolG,
+      }));
+    }
     setPositions(ps => ps.map(p => p.mktId===marketId && !p.settled
-      ? { ...p, settled:true, payout:settledIds[p.id], winner, resolvedAt:Date.now() } : p));
+      ? { ...p, settled:true, payout:settledIds[p.id].payout, winner, resolvedAt:Date.now(),
+          feeG:settledIds[p.id].feeG, taxG:settledIds[p.id].taxG,
+          burnG:settledIds[p.id].burnG, eventPoolG:settledIds[p.id].eventPoolG,
+          payoutCurrency:currency } : p));
     setTimeout(()=>{
       toast(`Market resolved · ${winner} wins`, 'g');
-      if (credited>0) toast(`Payout +${credited} ore credited`+(wasted>0?` (${wasted} wasted — at cap)`:''), 'win');
-      else if (myOpen.length>0) toast('Your position lost — staked ore not returned', 'info');
-      pushMind('⛓', `Market ${marketId} resolved → ${winner}. Settled your position(s) parimutuel.`, 'trade');
+      if (credited>0) toast(`Payout +${credited} ${currency} credited`+(wasted>0?` (${wasted} wasted — at cap)`:''), 'win');
+      else if (myOpen.length>0) toast(`Your position lost — staked ${currency} not returned`, 'info');
+      pushMind('⛓', `Question ${marketId} resolved → ${winner}. Settled your position(s) in ${currency}.`, 'trade');
     }, 0);
   }
+  const resolveMarket = resolveQuestion;
+
+  const markets = questions;
+  const setMarkets = setQuestions;
 
   const value = {
     route, go,
     connected, setConnected, wallet, setWallet,
     agent, setAgent, autopilot, setAutopilot, goal, setGoal,
     ore, setOre, g, setG, elo, setElo,
-    markets, setMarkets, positions, setPositions, resolveMarket,
+    questions, setQuestions, markets, setMarkets, positions, setPositions, resolveQuestion, resolveMarket,
+    worldTreasury, setWorldTreasury, worldEvents, setWorldEvents, triggerWorldEvent,
     shop, bench, setBench, inventory, setInventory,
     listings, setListings, myListings, setMyListings,
     matchHistory, setMatchHistory, matchmaking, setMatchmaking,
@@ -634,6 +873,88 @@ function GAmt({ v, className='' }) {
     <span className={'font-mono text-gtok glow-g '+className}>
       ⬡ {(+v).toLocaleString()}<span className="text-gtok/60 text-[0.7em] ml-1">G</span>
     </span>
+  );
+}
+function CurrencyAmt({ v, currency='ORE', className='', cap=false }) {
+  return currency === 'G'
+    ? <GAmt v={v} className={className} />
+    : <OreAmt v={v} className={className} cap={cap} />;
+}
+function currencyText(currency='ORE') {
+  return currency === 'G' ? 'G' : 'ore';
+}
+function difficultyColor(difficulty=0) {
+  if (difficulty >= 600) return '#ff5470';
+  if (difficulty >= 100) return '#f5a623';
+  return '#2dd4bf';
+}
+function DifficultyBar({ value=0 }) {
+  const pct = Math.max(0, Math.min(100, value / 10));
+  const col = difficultyColor(value);
+  return (
+    <div>
+      <div className="flex items-center justify-between text-[9px] font-mono text-steel-dim mb-1">
+        <span>difficulty</span><span style={{color:col}}>{value}</span>
+      </div>
+      <div className="h-1.5 bg-void-900 rounded-sm overflow-hidden border border-void-600">
+        <div className="h-full" style={{width:pct+'%', background:col, boxShadow:'0 0 8px '+col}} />
+      </div>
+    </div>
+  );
+}
+function WorldTreasuryMeter({ compact=false, showTrigger=false }) {
+  const s = useStore();
+  const t = s.worldTreasury;
+  const nextPreset = WORLD_EVENT_PRESETS[s.worldEvents.length % WORLD_EVENT_PRESETS.length];
+  const canTrigger = t.eventPrizePoolG >= nextPreset.prizePoolG;
+  const pct = Math.min(100, Math.round((t.eventPrizePoolG / Math.max(1, t.nextTriggerAt)) * 100));
+  if (compact) {
+    return (
+      <div className="clip-btn bg-void-900 border border-gtok/25 px-3 py-2 min-w-[220px]">
+        <div className="flex items-center justify-between gap-2 text-[9px] font-mono text-steel-dim">
+          <span>WORLD TREASURY</span>
+          <span className="text-gtok">{pct}% to next event</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between text-[11px] font-mono">
+          <span className="text-steel">surplus <span className="text-gtok">⬡ {t.surplusG}</span></span>
+          <span className="text-steel">event <span className="text-gtok">⬡ {t.eventPrizePoolG}</span></span>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Panel className="p-4 border-gtok/30">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div>
+          <h2 className="font-display text-sm tracking-widest text-white">WORLD TREASURY</h2>
+          <p className="text-[10px] font-mono text-steel-dim">G surplus seeds world events; ore chores remain free engagement.</p>
+        </div>
+        {showTrigger && (
+          <Btn kind="primary" size="sm" onClick={s.triggerWorldEvent} disabled={!canTrigger}>
+            {canTrigger ? 'trigger event' : `needs ${nextPreset.prizePoolG} G`}
+          </Btn>
+        )}
+      </div>
+      <div className="grid sm:grid-cols-3 gap-3">
+        <div className="clip-btn bg-void-900 border border-void-700 p-3">
+          <div className="text-[9px] font-mono text-steel-dim">SURPLUS G</div>
+          <GAmt v={t.surplusG} className="text-base" />
+        </div>
+        <div className="clip-btn bg-void-900 border border-void-700 p-3">
+          <div className="text-[9px] font-mono text-steel-dim">EVENT PRIZE POOL</div>
+          <GAmt v={t.eventPrizePoolG} className="text-base" />
+        </div>
+        <div className="clip-btn bg-void-900 border border-void-700 p-3">
+          <div className="text-[9px] font-mono text-steel-dim">NEXT EVENT THRESHOLD</div>
+          <div className="font-mono text-white">{t.eventPrizePoolG} / {t.nextTriggerAt} G</div>
+        </div>
+      </div>
+      <div className="mt-3 h-2 bg-void-900 rounded-sm overflow-hidden border border-void-600">
+        <div className="h-full bg-gtok" style={{width:pct+'%', boxShadow:'0 0 10px #2dd4bf'}} />
+      </div>
+      {showTrigger && !canTrigger && <div className="mt-2 text-[10px] font-mono text-danger">treasury short: {t.eventPrizePoolG} / {nextPreset.prizePoolG} G for {nextPreset.title}</div>}
+      {t.lastTriggeredEventId && <div className="mt-2 text-[10px] font-mono text-steel-dim">last event: <span className="text-gtok">{t.lastTriggeredEventId}</span></div>}
+    </Panel>
   );
 }
 
@@ -853,21 +1174,24 @@ const DRAMA = [
 
 function MarketMiniCard({ m, onOpen }) {
   const o = odds(m.poolYes, m.poolNo);
+  const currency = m.currency || 'ORE';
+  const status = m.status || (m.resolved ? 'RESOLVED' : 'OPEN');
   return (
     <Panel className={'p-4 transition-colors cursor-pointer '+(m.resolved?'opacity-70 border-win/30':'hover:border-gtok/50')} onClick={onOpen}>
       <div onClick={onOpen}>
         <div className="flex items-center justify-between mb-2">
-          <Tag color={m.type==='ORACLE'?'#c69bff':'#2dd4bf'}>{m.type==='ORACLE'?'ORACLE · subjective':'SELF-RESOLVING · on-chain'}</Tag>
-          {m.resolved ? <Tag color="#3ad29f">RESOLVED {m.winner}</Tag> : <Countdown to={m.closeAt} />}
+          <Tag color={m.kind==='ORACLE'?'#c69bff':difficultyColor(m.difficulty)}>{m.kind || m.type} · diff {m.difficulty ?? 0} · {currency}</Tag>
+          {m.resolved ? <Tag color="#3ad29f">RESOLVED {m.winner}</Tag> : <Tag color={status==='OPEN'?'#2dd4bf':'#5a6b8c'}>{status}</Tag>}
         </div>
         <div className="text-sm font-medium text-white mb-3 leading-snug min-h-[40px]">{m.question}</div>
+        <DifficultyBar value={m.difficulty || 0} />
         {/* odds bars */}
-        <div className="space-y-1.5">
+        <div className="space-y-1.5 mt-3">
           <OddsBar label="YES" pct={o.yes} color="#3ad29f" />
           <OddsBar label="NO" pct={o.no} color="#ff5470" />
         </div>
         <div className="flex items-center justify-between mt-3 text-[11px] font-mono text-steel-dim">
-          <span>pool <span className="text-ore">◆ {o.tot.toLocaleString()} ore</span></span>
+          <span>pool <CurrencyAmt v={o.tot} currency={currency} className="text-[11px]" /></span>
           <span>{m.agents.join(' · ')}</span>
         </div>
       </div>
@@ -918,6 +1242,10 @@ function Landing() {
         </div>
       </section>
 
+      <div className="mb-8">
+        <WorldTreasuryMeter showTrigger />
+      </div>
+
       {/* DRAMA TICKER */}
       <div className="clip-panel border border-void-600 bg-void-900/70 overflow-hidden mb-8">
         <div className="flex items-stretch">
@@ -955,7 +1283,7 @@ function Landing() {
         {/* FEATURED MARKETS */}
         <div className="lg:col-span-2">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="font-display text-sm tracking-widest text-white">FEATURED PREDICTION MARKETS</h2>
+            <h2 className="font-display text-sm tracking-widest text-white">FEATURED QUESTIONS / MARKETS</h2>
             <a className="text-[11px] font-mono text-gtok hl-link" onClick={()=>s.go('/markets')}>all markets →</a>
           </div>
           <div className="grid sm:grid-cols-2 gap-4">
@@ -1217,6 +1545,26 @@ function ArenaSpectatorCTA({ what }) {
   );
 }
 
+function QuestionActionCard({ title, subtitle, kind, difficulty, currency, meta, disabled=false, onClick, buttonKind='ore', buttonText }) {
+  return (
+    <div className="clip-btn bg-void-900 border border-void-700 p-3">
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div>
+          <div className="font-display text-sm text-white">{title}</div>
+          <div className="text-[10px] font-mono text-steel-dim">{subtitle}</div>
+        </div>
+        <Tag color={currency==='G'?'#2dd4bf':'#f5a623'}>{currency}</Tag>
+      </div>
+      <div className="flex flex-wrap gap-1.5 mb-2">
+        <Tag color={kind==='MATH'?'#2dd4bf':difficultyColor(difficulty)}>{kind}</Tag>
+        {meta.map(x=><Tag key={x} color="#5a6b8c">{x}</Tag>)}
+      </div>
+      <DifficultyBar value={difficulty} />
+      <Btn kind={buttonKind} size="sm" className="w-full mt-3" disabled={disabled} onClick={onClick}>{buttonText}</Btn>
+    </div>
+  );
+}
+
 function MyAgent() {
   const s = useStore();
   // --- ALL hooks first (Rules of Hooks): never gate a hook behind an early return ---
@@ -1301,6 +1649,7 @@ function MyAgent() {
         <div className="flex flex-wrap gap-4 mt-4 pt-4 border-t border-void-700">
           <div><span className="text-[10px] font-mono text-steel-dim block">ORE (in-world)</span><OreAmt v={s.ore} className="text-base" cap /></div>
           <div><span className="text-[10px] font-mono text-steel-dim block">G (premium balance)</span><GAmt v={s.g} className="text-base" /></div>
+          <WorldTreasuryMeter compact />
         </div>
       </Panel>
 
@@ -1347,12 +1696,20 @@ function MyAgent() {
               <h2 className="font-display text-sm tracking-widest text-white">QUICK ACTIONS</h2>
               {manualLocked && <Tag color="#5a6b8c">disabled while AI operates</Tag>}
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Btn kind="ore" size="sm" disabled={manualLocked} onClick={harvest}>⛏️ Harvest</Btn>
-              <Btn kind="ore" size="sm" disabled={manualLocked} onClick={build}>⚒️ Build mine (50)</Btn>
-              <Btn kind="danger" size="sm" disabled={manualLocked} onClick={attack}>🗡️ Raid (3,-2)</Btn>
+            <div className="grid gap-2">
+              <QuestionActionCard
+                title="Harvest" subtitle="free engagement chore" kind="MATH|STATE" difficulty={0} currency="ORE"
+                meta={['G fee 0']} disabled={manualLocked} onClick={harvest} buttonKind="ore" buttonText="⛏️ Harvest" />
+              <QuestionActionCard
+                title="Build mine" subtitle="state-changing economy action" kind="STATE" difficulty={50} currency="ORE"
+                meta={['sink 50 ore']} disabled={manualLocked} onClick={build} buttonKind="ore" buttonText="⚒️ Build mine" />
+              <QuestionActionCard
+                title="Raid" subtitle="combat question with locked randomness" kind="STATE" difficulty={600} currency="G/ORE"
+                meta={['requires RNG lock']} disabled={manualLocked} onClick={attack} buttonKind="danger" buttonText="🗡️ Raid (3,-2)" />
               {/* Bet is navigation to the Markets screen — NOT an autopilot-gated action, so it stays enabled. */}
-              <Btn kind="primary" size="sm" onClick={()=>s.go('/markets')}>🎲 Bet →</Btn>
+              <QuestionActionCard
+                title="Bet" subtitle="open high-difficulty G questions" kind="ORACLE|STATE" difficulty={700} currency="G"
+                meta={['parimutuel', 'no G cap']} onClick={()=>s.go('/markets')} buttonKind="primary" buttonText="🎲 Bet →" />
             </div>
             <p className="mt-3 text-[10px] font-mono text-gtok/70">manual harvest/build/raid run via operator-relay — no gas, no signature. {manualLocked && <span className="text-steel-dim">Pause autopilot to act manually.</span>}</p>
           </Panel>
@@ -1660,6 +2017,8 @@ function Lore() {
   const canWrite = !!s.agent && wb.myChronicleScore >= wb.bestScore;
   const nextWriteAt = wb.lastUpdate + wb.cooldownMs;
   const cooldownLeft = Math.max(0, nextWriteAt - Date.now());
+  const nextPreset = WORLD_EVENT_PRESETS[s.worldEvents.length % WORLD_EVENT_PRESETS.length];
+  const canTriggerEvent = s.worldTreasury.eventPrizePoolG >= nextPreset.prizePoolG;
   return (
     <div className="max-w-4xl mx-auto px-4 py-6">
       <div className="mb-5">
@@ -1687,6 +2046,39 @@ function Lore() {
       </Panel>
 
       {!s.agent && <Panel className="p-4 mb-6 text-xs text-steel-dim">👁 Spectating — the World Bible is public. <a className="text-gtok cursor-pointer" onClick={()=>s.go('/onboard')}>Spawn an agent</a> to compete for the chronicler's pen.</Panel>}
+
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <h2 className="font-display text-sm tracking-widest text-white">WORLD EVENTS</h2>
+          <Btn kind="ghost" size="sm" onClick={s.triggerWorldEvent} disabled={!canTriggerEvent}>
+            {canTriggerEvent ? 'trigger event' : `needs ${nextPreset.prizePoolG} G`}
+          </Btn>
+        </div>
+        {s.worldEvents.length===0 ? (
+          <Panel className="p-4 text-xs text-steel-dim">No treasury-triggered world events yet. Use the Landing shortcut or this demo trigger to seed one.</Panel>
+        ) : (
+          <div className="space-y-3">
+            {s.worldEvents.map(evt=>{
+              const q = s.questions.find(x=>x.id===evt.sourceQuestionId);
+              return (
+                <Panel key={evt.id} className="p-4 border-gtok/25">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                    <div>
+                      <div className="font-display text-sm text-white">{evt.title}</div>
+                      <div className="text-[10px] font-mono text-steel-dim">{evt.id} · {evt.type} · {timeAgo(evt.triggeredAt)}</div>
+                    </div>
+                    <GAmt v={evt.prizePoolG} className="text-sm" />
+                  </div>
+                  <p className="text-[12px] text-steel leading-relaxed">{evt.description}</p>
+                  <div className="mt-2 text-[10px] font-mono text-steel-dim">
+                    source question <span className="text-gtok">{evt.sourceQuestionId}</span>{q ? <span> · {q.question}</span> : null}
+                  </div>
+                </Panel>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <h2 className="font-display text-sm tracking-widest text-white mb-3">CHAPTERS</h2>
       <div className="space-y-3">
@@ -1723,7 +2115,7 @@ function Markets() {
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <div>
           <h1 className="font-display text-xl text-white tracking-wide">PREDICTION MARKETS</h1>
-          <p className="text-xs text-steel">Bet your agent's <span className="text-ore">ore</span> on the world's outcomes · parimutuel pools</p>
+          <p className="text-xs text-steel">World-as-Market questions: free ore answer cards plus <span className="text-gtok">G</span> parimutuel pools for high-difficulty outcomes.</p>
         </div>
         <div className="flex gap-5 font-display text-sm tracking-widest">
           <a className={'cursor-pointer '+(tab==='all'?'tab-active':'text-steel')} onClick={()=>setTab('all')}>MARKETS</a>
@@ -1737,18 +2129,21 @@ function Markets() {
         </div>
       )}
 
-      {tab==='positions' && <Positions/>}
+      {tab==='positions' && <Positions onBrowse={()=>setTab('all')} />}
 
-      {openMkt && <MarketDetail m={openMkt} onClose={()=>setOpen(null)} />}
+      {openMkt && <QuestionModal m={openMkt} onClose={()=>setOpen(null)} />}
     </div>
   );
 }
 
-function MarketDetail({ m, onClose }) {
+function QuestionModal({ m, onClose }) {
   const s = useStore();
+  const currency = m.currency || 'ORE';
   const o = odds(m.poolYes, m.poolNo);
   const [side, setSide] = useState('YES');
-  const [amt, setAmt] = useState(50);
+  const [amt, setAmt] = useState(Math.max(C.BET_MIN, Math.min(C.BET_MAX, m.stake || (currency==='G' ? 25 : 50))));
+  const [answer, setAnswer] = useState('');
+  const [answerState, setAnswerState] = useState(null);
   useEffect(()=>{ // Escape closes the modal
     const onKey = (e)=>{ if(e.key==='Escape') onClose(); };
     window.addEventListener('keydown', onKey); return ()=>window.removeEventListener('keydown', onKey);
@@ -1756,25 +2151,53 @@ function MarketDetail({ m, onClose }) {
 
   // need an agent to bet
   const canBet = !!s.agent;
-  const isOracle = m.type==='ORACLE';
-  // "IF POOLS FROZE" parimutuel estimate: branches on market type so the 10% ORACLE
-  // rake is subtracted. Final payout depends on bets placed before close (drift).
-  const payout = canBet ? estimatePayout({ stake:amt, side, poolYes:m.poolYes, poolNo:m.poolNo, type:m.type }) : 0;
+  const isOracle = m.kind==='ORACLE' || m.type==='ORACLE';
+  const isHighState = m.kind==='STATE' && (m.difficulty || 0) >= 500;
+  const showBetPanel = isOracle || isHighState;
+  const showAnswerCard = !showBetPanel && (m.kind === 'MATH' || m.kind === 'STATE');
+  // "IF POOLS FROZE" parimutuel estimate. G fee/tax/burn/event allocations are
+  // removed from the losing pool before winners split it; G payouts are never cap-clamped.
+  const estimate = canBet ? estimatePayout({ stake:amt, side, poolYes:m.poolYes, poolNo:m.poolNo, type:m.type, currency }) : { payout:0, feeG:0, taxG:0, burnG:0, eventPoolG:0, rakeOre:0 };
+  const payout = estimate.payout || 0;
   const profit = payout - amt;
   const loseAfter = side==='YES' ? m.poolNo : m.poolYes;       // opposite side pool (your potential winnings source)
-  const rakeOre = isOracle ? Math.floor(loseAfter * ORACLE_RAKE_PCT / 100) : 0;
+  const rakeOre = currency === 'ORE' && isOracle ? Math.floor(loseAfter * ORACLE_RAKE_PCT / 100) : 0;
   const impliedProb = (side==='YES' ? o.yes : o.no);            // current crowd-implied probability
-  const insufficient = canBet && s.ore < amt;
+  const balance = currency === 'G' ? s.g : s.ore;
+  const insufficient = canBet && balance < amt;
   const outOfBounds = amt < C.BET_MIN || amt > C.BET_MAX;
+  const localReward = m.fixedRewardOre || 0;
+  const mathExpression = m.kind === 'MATH' ? mathExpressionForQuestion(m) : '';
+  const mathExpected = m.kind === 'MATH' ? safeMathValue(mathExpression) : null;
+
+  function submitAnswer() {
+    if (!canBet) { s.toast('Create an agent first'); s.go('/onboard'); return; }
+    if (m.status === 'RESOLVED' || m.resolved) { s.toast('Question already resolved'); return; }
+    let correct = false;
+    if (m.kind === 'MATH') {
+      const n = Number(answer.trim());
+      correct = Number.isFinite(n) && mathExpected != null && n === mathExpected && n === m.localAnswer;
+    } else if (m.kind === 'STATE') {
+      correct = String(answer).toUpperCase() === String(m.localAnswer).toUpperCase();
+    }
+    setAnswerState(correct ? 'correct' : 'wrong');
+    if (!correct) { s.toast('Answer rejected by local checker'); return; }
+    if (localReward > 0) s.setOre(o=>Math.min(C.ORE_POOL_CAP, o + localReward));
+    s.setQuestions(qs => qs.map(q => q.id===m.id ? { ...q, status:'RESOLVED', resolved:true, winner:String(answer || m.localAnswer).toUpperCase() } : q));
+    s.toast(`Answer accepted · +${localReward} ore`, 'ore');
+    s.pushMind('✅', `Answered ${m.kind} question ${m.id}: local checker passed.`, 'reason');
+    setTimeout(onClose, 500);
+  }
 
   function placeBet() {
     if (!canBet) { s.toast('Create an agent first'); s.go('/onboard'); return; }
     if (m.resolved) { s.toast('Market already resolved'); return; }
     // Bet bounds enforced HERE (not just the slider) so logic matches the spec.
-    if (amt < C.BET_MIN) { s.toast(`Minimum bet is ${C.BET_MIN} ore`); return; }
-    if (amt > C.BET_MAX) { s.toast(`Maximum bet is ${C.BET_MAX} ore`); return; }
-    if (s.ore < amt) { s.toast(`Need ◆${amt} ore, you have ◆${Math.round(s.ore)}`); return; }
-    s.setOre(prev=>prev-amt);
+    if (amt < C.BET_MIN) { s.toast(`Minimum bet is ${C.BET_MIN} ${currencyText(currency)}`); return; }
+    if (amt > C.BET_MAX) { s.toast(`Maximum bet is ${C.BET_MAX} ${currencyText(currency)}`); return; }
+    if (balance < amt) { s.toast(`Need ${amt} ${currencyText(currency)}, you have ${Math.round(balance)}`); return; }
+    if (currency === 'G') s.setG(prev=>prev-amt);
+    else s.setOre(prev=>prev-amt);
     // mutate the pool — your bet moves the odds
     s.setMarkets(ms => ms.map(x => x.id===m.id ? {
       ...x, poolYes: x.poolYes + (side==='YES'?amt:0), poolNo: x.poolNo + (side==='NO'?amt:0)
@@ -1783,10 +2206,10 @@ function MarketDetail({ m, onClose }) {
       id:'pos-'+m.id+'-'+side+'-'+Math.random().toString(36).slice(2,6),
       mktId:m.id, marketId:m.id, question:m.question, side, stake:amt, closeAt:m.closeAt,
       resolveAt:m.closeAt, poolAt:{yes:m.poolYes,no:m.poolNo}, type:m.type,
-      settled:false, payout:null,
+      currency, settled:false, payout:null, feeG:0, taxG:0, burnG:0, eventPoolG:0,
     }]);
-    s.toast('Bet placed · '+amt+' ore on '+side+' — executed via relay, no gas','ore');
-    s.pushMind('🎲','Owner bet '+amt+' ore on '+side+': "'+m.question+'"','trade');
+    s.toast('Bet placed · '+amt+' '+currencyText(currency)+' on '+side+' — executed via relay, no gas', currency==='G'?'g':'ore');
+    s.pushMind('🎲','Owner bet '+amt+' '+currency+' on '+side+': "'+m.question+'"','trade');
     onClose();
   }
 
@@ -1796,8 +2219,14 @@ function MarketDetail({ m, onClose }) {
         <div onClick={e=>e.stopPropagation()}>
           <div className="flex items-start justify-between gap-4 mb-3">
             <div>
-              <Tag color={m.type==='ORACLE'?'#c69bff':'#2dd4bf'}>{m.type==='ORACLE'?'ORACLE · subjective · human-judged':'SELF-RESOLVING · contract reads chain state'}</Tag>
+              <div className="flex flex-wrap gap-2 mb-2">
+                <Tag color={m.kind==='ORACLE'?'#c69bff':difficultyColor(m.difficulty)}>{m.kind}</Tag>
+                <Tag color={difficultyColor(m.difficulty)}>difficulty {m.difficulty ?? 0}</Tag>
+                <Tag color={currency==='G'?'#2dd4bf':'#f5a623'}>{currency}</Tag>
+                <Tag color={m.resolved?'#3ad29f':'#5a6b8c'}>{m.status || (m.resolved?'RESOLVED':'OPEN')}</Tag>
+              </div>
               <h2 className="font-display text-lg text-white mt-2 leading-snug">{m.question}</h2>
+              <div className="text-[10px] font-mono text-steel-dim mt-1">resolver {m.resolver} · pool {m.poolId}</div>
             </div>
             <button onClick={onClose} aria-label="Close" className="text-steel hover:text-white text-xl leading-none">✕</button>
           </div>
@@ -1839,8 +2268,57 @@ function MarketDetail({ m, onClose }) {
               </div>
             </div>
 
-            {/* RIGHT: bet panel */}
+            {/* RIGHT: answer / bet panel */}
             <div>
+              {showAnswerCard && (
+              <div className="clip-panel bg-void-900 border border-void-600 p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-[10px] font-mono text-steel-dim uppercase tracking-widest">Answer card</span>
+                  <Tag color={currency==='G'?'#2dd4bf':'#f5a623'}>{currency}</Tag>
+                </div>
+                <DifficultyBar value={m.difficulty || 0} />
+                <div className="mt-4 clip-btn bg-void-700 border border-void-600 p-3">
+                  <div className="text-[9px] font-mono text-steel-dim mb-1">LOCAL CHECK</div>
+                  {m.kind === 'MATH' ? (
+                    <>
+                      <div className="font-display text-white mb-3">{mathExpression || 'local expression'} = ?</div>
+                      <input value={answer} onChange={e=>setAnswer(e.target.value)} inputMode="numeric" aria-label="Math answer"
+                        className="w-full bg-void-900 border border-void-600 clip-btn px-3 py-2 text-white text-sm focus:border-gtok outline-none font-mono" />
+                    </>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      {['YES','NO'].map(v=>(
+                        <button key={v} onClick={()=>setAnswer(v)}
+                          className={'clip-btn py-2 font-display text-sm border transition-all '+(answer===v?'bg-gtok/20 border-gtok text-gtok':'bg-void-900 border-void-600 text-steel')}>
+                          {v}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {answerState && <p className={'mt-2 text-[10px] font-mono '+(answerState==='correct'?'text-win':'text-danger')}>{answerState==='correct'?'local check passed':'local check failed'}</p>}
+                </div>
+                <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+                  <div className="clip-btn bg-void-700 border border-void-600 p-2">
+                    <div className="text-[9px] font-mono text-steel-dim">FIXED ORE REWARD</div>
+                    <OreAmt v={localReward} className="text-xs" />
+                  </div>
+                  <div className="clip-btn bg-void-700 border border-void-600 p-2">
+                    <div className="text-[9px] font-mono text-steel-dim">ORE SINK</div>
+                    <div className="font-mono text-ore">◆ {m.oreSink || 0}</div>
+                  </div>
+                  <div className="clip-btn bg-void-700 border border-void-600 p-2">
+                    <div className="text-[9px] font-mono text-steel-dim">SCORE WEIGHT</div>
+                    <div className="font-mono text-white">{m.scoreWeight || 1}x</div>
+                  </div>
+                </div>
+                <Btn kind="ore" className="w-full mt-4" onClick={submitAnswer} disabled={m.resolved || !String(answer).trim()}>
+                  {!s.agent ? 'Create agent to answer' : m.resolved ? 'Resolved' : 'Submit answer'}
+                </Btn>
+                <p className="text-center text-[10px] font-mono text-gtok/70 mt-2">MATH runs a real local check; no mock toast shortcut.</p>
+              </div>
+              )}
+
+              {showBetPanel && (
               <div className="clip-panel bg-void-900 border border-void-600 p-4">
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-[10px] font-mono text-steel-dim uppercase tracking-widest">Place bet</span>
@@ -1851,7 +2329,7 @@ function MarketDetail({ m, onClose }) {
                 <div className="space-y-1.5 mb-4">
                   <OddsBar label="YES" pct={o.yes} color="#3ad29f" />
                   <OddsBar label="NO" pct={o.no} color="#ff5470" />
-                  <div className="text-right text-[10px] font-mono text-steel-dim">pool <span className="text-ore">◆ {o.tot.toLocaleString()} ore</span></div>
+                  <div className="text-right text-[10px] font-mono text-steel-dim">pool <CurrencyAmt v={o.tot} currency={currency} className="text-xs" /></div>
                 </div>
 
                 {/* side toggle */}
@@ -1869,44 +2347,64 @@ function MarketDetail({ m, onClose }) {
                 {/* amount slider 10-500 (max clamped to your balance so it can't exceed it) */}
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-1">
-                    <label htmlFor="stake-range" className="text-[10px] font-mono text-steel-dim">STAKE ({C.BET_MIN}–{C.BET_MAX} ore)</label>
-                    <OreAmt v={amt} className="text-xs" />
+                    <label htmlFor="stake-range" className="text-[10px] font-mono text-steel-dim">STAKE ({C.BET_MIN}–{C.BET_MAX} {currencyText(currency)})</label>
+                    <CurrencyAmt v={amt} currency={currency} className="text-xs" />
                   </div>
                   <input id="stake-range" type="range" min={C.BET_MIN}
-                    max={s.agent ? Math.max(C.BET_MIN, Math.min(C.BET_MAX, Math.round(s.ore))) : C.BET_MAX}
-                    step={5} value={amt} aria-label="Bet stake in ore"
+                    max={s.agent ? Math.max(C.BET_MIN, Math.min(C.BET_MAX, Math.round(balance))) : C.BET_MAX}
+                    step={5} value={amt} aria-label={'Bet stake in '+currencyText(currency)}
                     onChange={e=>setAmt(+e.target.value)} className="ore-range w-full" />
-                  {s.agent && <div className="text-right text-[10px] font-mono text-steel-dim mt-1">your ore: <span className="text-ore">{Math.round(s.ore)}</span></div>}
+                  {s.agent && <div className="text-right text-[10px] font-mono text-steel-dim mt-1">your {currencyText(currency)}: <span className={currency==='G'?'text-gtok':'text-ore'}>{Math.round(balance)}</span></div>}
                 </div>
 
                 {/* payout estimate — labelled as a frozen-pool snapshot, not a guarantee */}
                 <div className="grid grid-cols-2 gap-2 mb-2 text-center">
                   <div className="clip-btn bg-void-700 border border-void-600 p-2">
                     <div className="text-[9px] font-mono text-steel-dim">EST. PAYOUT <span className="text-steel-dim/80">IF POOLS FROZE</span></div>
-                    <div className="font-mono text-ore">◆ {payout.toFixed(0)}</div>
+                    <div className="font-mono"><CurrencyAmt v={payout.toFixed(0)} currency={currency} /></div>
                   </div>
                   <div className="clip-btn bg-void-700 border border-void-600 p-2">
-                    <div className="text-[9px] font-mono text-steel-dim">EST. PROFIT</div>
+                    <div className="text-[9px] font-mono text-steel-dim">{currency==='G'?'NET AFTER FEE':'EST. PROFIT'}</div>
                     <div className={'font-mono '+(profit>=0?'text-win':'text-danger')}>{profit>=0?'+':''}{profit.toFixed(0)}</div>
                   </div>
                 </div>
+                {currency === 'G' ? (
+                  <div className="grid grid-cols-2 gap-2 mb-3 text-[9px] font-mono">
+                    <div className="clip-btn bg-void-700 border border-void-600 p-2 text-steel">World fee <span className="text-gtok">⬡ {estimate.feeG || 0}</span></div>
+                    <div className="clip-btn bg-void-700 border border-void-600 p-2 text-steel">protocol tax <span className="text-gtok">⬡ {estimate.taxG || 0}</span></div>
+                    <div className="clip-btn bg-void-700 border border-void-600 p-2 text-steel">burn <span className="text-gtok">⬡ {estimate.burnG || 0}</span></div>
+                    <div className="clip-btn bg-void-700 border border-void-600 p-2 text-steel">event pool <span className="text-gtok">⬡ {estimate.eventPoolG || 0}</span></div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2 mb-3 text-[9px] font-mono">
+                    <div className="clip-btn bg-void-700 border border-void-600 p-2 text-steel">fixed ore reward <span className="text-ore">◆ {m.fixedRewardOre || 0}</span></div>
+                    <div className="clip-btn bg-void-700 border border-void-600 p-2 text-steel">ore sink <span className="text-ore">◆ {m.oreSink || 0}</span></div>
+                    <div className="clip-btn bg-void-700 border border-void-600 p-2 text-steel">score weight <span className="text-white">{m.scoreWeight || 1}x</span></div>
+                  </div>
+                )}
                 {/* fee line + implied probability */}
                 <div className="flex items-center justify-between text-[9px] font-mono text-steel mb-3">
-                  <span>oracle fee: <span className={isOracle?'text-danger':'text-steel'}>{isOracle?`10% (≈◆${rakeOre} off losing pool)`:'0% (self-resolving)'}</span></span>
+                  <span>{currency==='G'?'G fee split':'oracle fee'}: <span className={isOracle||currency==='G'?'text-danger':'text-steel'}>{currency==='G'?`${G_WORLD_FEE_PCT+G_PROTOCOL_TAX_PCT+G_PROTOCOL_BURN_PCT+G_EVENT_POOL_PCT}% visible split`:isOracle?`10% (≈◆${rakeOre} off losing pool)`:'0% (self-resolving)'}</span></span>
                   <span>crowd-implied {side}: <span className="text-steel-dim">{(impliedProb*100).toFixed(0)}%</span></span>
                 </div>
 
-                <p className="text-[10px] font-mono text-steel-dim mb-1 leading-snug">⚖ parimutuel: your bet moves the odds. Winners split the losing side's pool (minus the oracle fee), proportional to stake.</p>
+                <p className="text-[10px] font-mono text-steel-dim mb-1 leading-snug">
+                  ⚖ parimutuel: your bet moves the odds. Winners split the losing side's pool
+                  {currency === 'G'
+                    ? ' after World fee, protocol tax, burn, and event-pool allocation'
+                    : ' minus any oracle fee'}, proportional to stake.
+                </p>
                 <p className="text-[10px] font-mono text-steel-dim mb-3 leading-snug">⚠ estimate at the <b>current</b> pool only — the final payout depends on every bet placed before close.</p>
 
-                {insufficient && <p className="text-[10px] font-mono text-danger mb-2">Need ◆{amt} ore, you have ◆{Math.round(s.ore)}.</p>}
+                {insufficient && <p className="text-[10px] font-mono text-danger mb-2">Need {amt} {currencyText(currency)}, you have {Math.round(balance)}.</p>}
                 {m.resolved && <p className="text-[10px] font-mono text-win mb-2">This market resolved {m.winner}. Betting is closed.</p>}
 
-                <Btn kind="ore" className="w-full" onClick={placeBet} disabled={m.resolved || insufficient || (s.agent && outOfBounds)}>
-                  {!s.agent ? 'Create agent to bet' : m.resolved ? 'Resolved · '+m.winner : 'Place bet · '+amt+' ore'}
+                <Btn kind={currency==='G'?'primary':'ore'} className="w-full" onClick={placeBet} disabled={m.resolved || insufficient || (s.agent && outOfBounds)}>
+                  {!s.agent ? 'Create agent to bet' : m.resolved ? 'Resolved · '+m.winner : 'Place bet · '+amt+' '+currencyText(currency)}
                 </Btn>
                 <p className="text-center text-[10px] font-mono text-gtok/70 mt-2">→ executed via relay, no gas</p>
               </div>
+              )}
             </div>
           </div>
         </div>
@@ -1915,7 +2413,7 @@ function MarketDetail({ m, onClose }) {
   );
 }
 
-function Positions() {
+function Positions({ onBrowse }) {
   const s = useStore();
   const open = s.positions.filter(p=>!p.settled);
   const settled = s.positions.filter(p=>p.settled);
@@ -1925,27 +2423,28 @@ function Positions() {
       <div>
         <h2 className="font-display text-sm tracking-widest text-white mb-3">OPEN POSITIONS</h2>
         {open.length===0 ? (
-          <Panel className="p-6 text-center text-sm text-steel-dim">No open bets yet. Open a market and back a side.<div className="mt-3"><Btn kind="ghost" size="sm" onClick={()=>setTab('all')}>← Browse markets</Btn></div></Panel>
+          <Panel className="p-6 text-center text-sm text-steel-dim">No open bets yet. Open a market and back a side.<div className="mt-3"><Btn kind="ghost" size="sm" onClick={onBrowse}>← Browse markets</Btn></div></Panel>
         ) : (
           <div className="space-y-3 max-w-3xl">
             {open.map(p=>{
               const m = s.markets.find(x=>x.id===p.mktId);
               const poolYes = m?m.poolYes:p.poolAt.yes, poolNo = m?m.poolNo:p.poolAt.no;
               const o = odds(poolYes, poolNo);
+              const currency = p.currency || m?.currency || 'ORE';
               // current "if it resolved your way now" value (frozen-pool estimate)
-              const ifWin = settlePayout({ stake:p.stake, side:p.side, winner:p.side, poolYes, poolNo, type:p.type });
+              const ifWin = settlePayout({ stake:p.stake, side:p.side, winner:p.side, poolYes, poolNo, type:p.type, currency });
               return (
                 <Panel key={p.id} className="p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex-1 min-w-[200px]">
                       <div className="text-sm text-white">{p.question}</div>
                       <div className="text-[11px] font-mono text-steel-dim mt-0.5">
-                        {p.type} · backed <span className={p.side==='YES'?'text-win':'text-danger'}>{p.side}</span> with <span className="text-ore">◆ {p.stake} ore</span>
+                        {p.type} · backed <span className={p.side==='YES'?'text-win':'text-danger'}>{p.side}</span> with <CurrencyAmt v={p.stake} currency={currency} className="text-[11px]" />
                       </div>
                     </div>
                     <div className="text-center">
                       <div className="text-[9px] font-mono text-steel-dim">PAYOUT IF {p.side} WINS</div>
-                      <div className="font-mono text-ore text-sm">◆ {ifWin}</div>
+                      <CurrencyAmt v={ifWin} currency={currency} className="text-sm" />
                     </div>
                     <div className="text-center">
                       <div className="text-[9px] font-mono text-steel-dim">CLOSES</div>
@@ -1969,27 +2468,41 @@ function Positions() {
       <div>
         <h2 className="font-display text-sm tracking-widest text-white mb-3">SETTLED · RECEIPTS</h2>
         {settled.length===0 ? (
-          <Panel className="p-6 text-center text-sm text-steel-dim">No settled bets yet. Place a bet, then resolve its market to see the payout credited to your ore.</Panel>
+          <Panel className="p-6 text-center text-sm text-steel-dim">No settled bets yet. Place a bet, then resolve its market to see the payout receipt.</Panel>
         ) : (
           <div className="space-y-3">
             {settled.map(p=>{
               const won = p.payout > 0;
               const m = s.markets.find(x=>x.id===p.mktId);
+              const currency = p.payoutCurrency || p.currency || m?.currency || 'ORE';
               return (
                 <Panel key={p.id} className={'p-4 '+(won?'border-win/30':'border-danger/30')}>
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex-1 min-w-[220px]">
                       <div className="text-sm text-white">{p.question}</div>
                       <div className="text-[11px] font-mono text-steel-dim mt-0.5">
-                        backed <span className={p.side==='YES'?'text-win':'text-danger'}>{p.side}</span> · staked ◆ {p.stake} ore · {p.type}
+                        backed <span className={p.side==='YES'?'text-win':'text-danger'}>{p.side}</span> · staked <CurrencyAmt v={p.stake} currency={currency} className="text-[11px]" /> · {p.type}
                       </div>
                     </div>
                     <Tag color={won?'#3ad29f':'#ff5470'}>RESOLVED {p.winner}{won?' · WON':' · LOST'}</Tag>
                     <div className="text-center">
                       <div className="text-[9px] font-mono text-steel-dim">PAYOUT</div>
-                      <div className={'font-mono text-sm '+(won?'text-win':'text-danger')}>◆ {p.payout} {won?`(+${p.payout-p.stake})`:`(−${p.stake})`}</div>
+                      <div className={'font-mono text-sm '+(won?'text-win':'text-danger')}>
+                        <CurrencyAmt v={p.payout} currency={currency} className="text-sm" /> {won?`(+${p.payout-p.stake})`:`(−${p.stake})`}
+                      </div>
                     </div>
                   </div>
+                  {currency === 'G' && (
+                    <>
+                      <div className="mt-3 text-[9px] font-mono text-steel-dim uppercase tracking-widest">market-wide G split</div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1 text-[9px] font-mono">
+                        <div className="clip-btn bg-void-900 border border-void-700 p-2 text-steel">market feeG <span className="text-gtok">⬡ {p.feeG || 0}</span></div>
+                        <div className="clip-btn bg-void-900 border border-void-700 p-2 text-steel">market taxG <span className="text-gtok">⬡ {p.taxG || 0}</span></div>
+                        <div className="clip-btn bg-void-900 border border-void-700 p-2 text-steel">market burnG <span className="text-gtok">⬡ {p.burnG || 0}</span></div>
+                        <div className="clip-btn bg-void-900 border border-void-700 p-2 text-steel">market eventPoolG <span className="text-gtok">⬡ {p.eventPoolG || 0}</span></div>
+                      </div>
+                    </>
+                  )}
                   <div className="mt-3 clip-btn bg-void-900 border border-void-700 p-2">
                     <div className="text-[9px] font-mono text-steel-dim uppercase tracking-widest">⛓ on-chain fact that settled it</div>
                     <code className="text-[11px] font-mono text-win">{m ? m.resolveRule : '(rule)'} → {p.winner}</code>
