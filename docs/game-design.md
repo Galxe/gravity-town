@@ -7,7 +7,7 @@ Gravity Town v2 是一个“用可验证预测市场赢行动权，再用行动�
 ## 2. 四层栈
 
 ```text
-Layer 4  NFT 卡牌市场        复用 Arena/CardLedger, 卡牌作为攻防加成接入动作层, Post-MVP 只留接口草图
+Layer 4  NFT 卡牌市场        Pattern ①: 协议排期式限量发行、买卡 burn G, 复用 Arena/CardLedger, Post-MVP 接入攻防加成
 Layer 3  Action 行动层       花 AP 攻击邻接 hex、给己方 hex 加防御, 或让 0-hex agent 回场
 Layer 2  Gambling/AP 层      赢市场获得 AP, 可能同时获得 G 奖励
 Layer 1  Market 市场层       通用“可验证结局”预测市场, MVP 只做 MATH + STATE-by-checkpoint
@@ -28,17 +28,17 @@ Layer 1  Market 市场层       通用“可验证结局”预测市场, MVP 只
 
 ### G
 
-G 是稀缺价值币, 用于 on-ramp、市场押注、市场奖励、未来卡牌二级市场交易。现有 `GTreasury` 已有 agent 级 `gBalance` 账本, 见 `contracts/src/GTreasury.sol:21`。
+G 是稀缺价值币, 用于 on-ramp、市场押注、市场奖励、未来卡牌一级/二级市场交易。现有 `GTreasury` 已有 agent 级 `gBalance` 账本, 见 `contracts/src/GTreasury.sol:21`。
 
 现有 `GTreasury` 已区分测试网 faucet 与可提现模式, 并说明两者互斥, 见 `contracts/src/GTreasury.sol:9` 到 `contracts/src/GTreasury.sol:17`；模式开关在 `contracts/src/GTreasury.sol:74` 到 `contracts/src/GTreasury.sol:87`。v2 价值模式下必须关闭无限 mint 路径, 禁止把 faucet 当正式经济来源。
 
 G payout 铁律:
 
-1. 市场 G 奖励只能来自三类等额 backing: escrow 中的 losing stakes、预存补贴池、协议 surplus。
+1. 市场 G 奖励只能来自三类等额 backing: escrow 中的 losing stakes、预存补贴池、协议已拨入补贴/派彩池的 surplus。`protocolTreasuryG` 本身不直接算市场 backing, 只有按白名单支出拨入补贴/派彩池后才进入 `reservedBackingG`。
 2. `GTreasury.creditG` 只能作为“把已背书 G 记到账户”的账本入口, 不能作为隐式 mint。
 3. 任何 G 发放点在调用 `creditG` 前必须能指出等额 backing 来源, 并在市场/补贴/协议账本中扣减或锁定该来源。
 4. `creditG` 当前只做 `onlyOperator` 校验并直接增加 `gBalance` 与 `totalOutstandingG`, 见 `contracts/src/GTreasury.sol:126` 到 `contracts/src/GTreasury.sol:129`。`onlyOperator` 又来自 `AgentRegistry.isOperator`, 会接受全局 `operator`、`operators` mapping 或 owner, 见 `contracts/src/AgentRegistry.sol:36` 到 `contracts/src/AgentRegistry.sol:37` 和 `contracts/src/AgentRegistry.sol:66` 到 `contracts/src/AgentRegistry.sol:69`。v2 价值模式不能继续把 `creditG` 暴露给泛 operator。
-5. **M1 必须把 G 市场记账权限收紧为单一市场入口**: `creditG` 的正式奖励路径只能接受 `PredictionMarketEngine` 或新增 treasury wrapper 的唯一地址, 不能接受任一 legacy operator/脚本。市场下注用到的 `spendG` 也应通过同一市场入口或 wrapper 进入 escrow, 避免旧系统直接制造绕过 backing 的 G 流。
+5. **M1 必须把 G 市场奖励记账权限收紧为单一入口, 并单独保留二级守恒转账白名单**: `creditG` 的正式奖励路径只能接受 `PredictionMarketEngine` 或新增 treasury wrapper 的唯一地址, 不能接受任一 legacy operator/脚本。市场下注用到的 `spendG` 也应通过同一市场入口或 wrapper 进入 escrow, 避免旧系统直接制造绕过 backing 的 G 流。二级卡牌交易不是奖励 mint, 必须走独立 `SECONDARY_CARD_TRANSFER` 白名单路径: 指定 `SecondaryCardMarket` 合约或 treasury wrapper 的限定函数在同一笔交易内先执行买方 `spendG`, 再执行卖方 `creditG`, 且必须满足 `sellerCreditG + secondaryTaxG + secondaryBurnG == buyerSpendG`。当二级抽水参数为 0 时（**仅迁移兼容模式, 正式不得上线, 见本节卡牌一级/二级抽水口径**）, 该路径退化为现有 `CardLedger.buyListed` 的 `buyer spendG == seller creditG` 等额转账, 见 `contracts/src/CardLedger.sol:130` 到 `contracts/src/CardLedger.sol:132`。该白名单路径不得用于市场奖励、补贴、协议 agent 充值或任何非交易对手方发放。
 6. **Treasury 层保留边界（必须封死，否则 backing 失效）**: 现有 `spendG` 会降低 `totalOutstandingG`（`contracts/src/GTreasury.sol:109` 到 `contracts/src/GTreasury.sol:120`），押注进 escrow 的 native G 立刻表现为可提 surplus；而 `withdrawSurplus`/`surplusG` 只按 `balance - totalOutstandingG` 判断（`contracts/src/GTreasury.sol:151` 到 `contracts/src/GTreasury.sol:168`）。结果是 owner/治理可能把市场 escrow/补贴池当 surplus 提走，随后 `creditG` 仍按内部账发放 → 等额 backing 落空。**M1 必须二选一**: (a) 在 Treasury 层引入 `reservedBackingG`（= 未结算市场 escrow + 补贴池）, 并把 `surplusG`/`withdrawSurplus` 改为 `balance - totalOutstandingG - reservedBackingG`; 或 (b) 市场 G 全部走新增 treasury wrapper 持有、不进 `GTreasury` 的 surplus 口径, wrapper 禁止提取未结算 escrow/补贴。两种都要保证: 任一时刻 `Treasury 可提 surplus ≤ native 余额 − 全部未结算市场 G 负债`。
 
 G 的基础接口复用:
@@ -49,6 +49,21 @@ G 的基础接口复用:
 | 押注/购买/消耗 | `spendG`, `contracts/src/GTreasury.sol:117` 到 `contracts/src/GTreasury.sol:122` |
 | 已背书奖励/卖出收入 | `creditG`, `contracts/src/GTreasury.sol:124` 到 `contracts/src/GTreasury.sol:130`; 不得单独作为 mint 来源 |
 | 提现 | `withdraw`, `contracts/src/GTreasury.sol:134` 到 `contracts/src/GTreasury.sol:146` |
+
+G 账目桶（承接 Treasury 层保留边界）:
+
+1. `gBalance`: 玩家自有 G, 可用于押注、购买、消耗和在 withdraw 模式下提现。
+2. `reservedBackingG`: 未结算市场 escrow + 预存补贴池等保留 backing, **谁都不能动**。它必须从 `surplusG`/`withdrawSurplus` 口径中扣除, 已在 G payout 铁律第 6 条约束。
+3. `protocolTreasuryG`: 协议金库, 属于协议自有收入, **可花但只能用于白名单用途**。白名单支出必须由多签 + timelock 或链上治理执行器发起, 合约层用 `enum TreasuryUse` 固定用途, 不能由 owner 单签直接支配。当前 `GTreasury.withdrawSurplus` 是 `external onlyOwner`, 见 `contracts/src/GTreasury.sol:151` 到 `contracts/src/GTreasury.sol:163`; v2 必须把这类 owner 后门替换为受 timelock/多签和用途枚举约束的支出入口。允许用途只包括: `SubsidyPool`、`MarketPayoutPool`、`GlobalWorldEventPrize`、`DistinctOwnerNeutralRebate`、`IrrecoverableNeutralSinkReturn`。其中 `SubsidyPool` 和 `MarketPayoutPool` 只能是预先公告、与抽取来源和当轮输赢方无关的 source-neutral 池。不得保留“必要经营”泛口径；协议运营成本若需要预算, 必须另立非玩家抽水资金源或单独评审。`protocolTreasuryG` 必须排除在玩家可提余额和市场 backing 之外, 不能被当成 `gBalance`, 也不能替代 `reservedBackingG`。铸卡本身只花交易 gas, 不花 G；金库不为铸卡质押 G。
+4. burn 是销毁, 不是账目桶。进入 burn 的 G 永久消失或进入不可回流 sink, 不得再作为协议 surplus、补贴池或市场 backing。
+
+三桶互不混用: `gBalance` 不能被协议花掉, `reservedBackingG` 不能被 owner/治理提走, `protocolTreasuryG` 不能伪装成玩家 backing 或市场 payout 来源。任何实现方案都必须能在账上证明“可提/可花”不包含未结算市场负债和玩家可提余额。
+
+金库净抽水 cap 是承重不变量, 不是 OPEN 方向:
+
+1. `ProtocolTreasuryAccounting` 必须维护可链上查询的 per-season/epoch 累加器: `protocolTreasuryInG(epoch)`、`treasuryWhitelistOutG(epoch)`、`neutralSinkReturnG(epoch)`、`grossPlayerPaidG(epoch)`、`netTreasuryTakeG(epoch)`。
+2. `netTreasuryTakeG(epoch) = protocolTreasuryInG(epoch) - treasuryWhitelistOutG(epoch)`。只有 source-neutral 白名单支出可以记入 `treasuryWhitelistOutG` 并抵扣净抽水；回流到不可回收、source-neutral sink 的支出必须记入 `treasuryWhitelistOutG` 或等价的已回流字段, 即视作已回流, 不能继续算协议净抽水。
+3. 任何 tax/rake、一级卖卡金库份额或二级抽水入账后若会导致 `netTreasuryTakeG(epoch) > treasuryTakeCapBps * grossPlayerPaidG(epoch) / 10000`, 合约必须拒绝该入账或在同一交易内强制把超额回流到白名单 source-neutral sink。`treasuryTakeCapBps` 的具体数值可以留到 §12, 但这个可查询累加器和超 cap 拒绝/强制回流规则不能留 OPEN。
 
 ### AP
 
@@ -131,7 +146,8 @@ struct Market {
     uint256 id;
     uint256 questionId;
     uint256 totalStakeG;
-    uint256 feeBps;
+    uint256 taxBps;   // 原 feeBps 的正式语义: tax/rake -> protocolTreasuryG
+    uint256 burnBps;  // losingBurnG = burnBps * eligibleLosingStakeG
     uint256 minStakeG;
     uint256 maxStakeG;
     uint256 settledAt;
@@ -212,14 +228,22 @@ interface IMarketOracle {
 
 ### G 押注
 
-押注统一用 G。市场合约通过 `GTreasury.spendG` 扣除下注额, 将下注额记入市场 escrow；结算时只有在等额 backing 来源已确定并扣减后, 才能通过 `GTreasury.creditG` 发放 G 奖励。合法来源只包括 losing stakes、预存补贴池、协议 surplus。若本盘只发 AP, G 可以留在 escrow 后按规则退还、进入协议 surplus、或作为后续已背书奖池, 但不能用 `creditG` 凭空扩张 `totalOutstandingG`。
+押注统一用 G。市场合约通过 `GTreasury.spendG` 扣除下注额, 将下注额记入市场 escrow；结算时只有在等额 backing 来源已确定并扣减后, 才能通过 `GTreasury.creditG` 发放 G 奖励。合法来源只包括 losing stakes、预存补贴池、协议已拨入补贴/派彩池的 surplus。若本盘只发 AP, G 可以留在 escrow 后按规则退还、进入协议金库、或作为后续已背书奖池, 但不能用 `creditG` 凭空扩张 `totalOutstandingG`。
+
+市场结算的总池只允许三段分流:
+
+1. 赢家 payout: 从可分配池向 winning positions 发放, 必须受 §3 的等额 backing 铁律约束。
+2. tax/rake: `taxBps` 从总池或约定 eligible pool 中抽取, 进入 `protocolTreasuryG`, 属于协议自有收入, 后续只能按金库白名单用途花。
+3. burn: `losingBurnG = burnBps * eligibleLosingStakeG`, 或按同等明确口径计算, 进入永久销毁/不可回流 sink。
+
+`taxBps`、`burnBps` 和 payout 公式是三个独立参数。若实现沿用旧字段名 `feeBps`, 它的唯一正式语义是 `taxBps`; 不得同时保留一个 `feeBps` 和另一个 tax/rake 口径。tax 与 burn 必须分清: tax 进 `protocolTreasuryG`、未来可以按白名单再花；burn 永久消失, 不进金库、不进补贴池、不计为协议可回收 surplus。
 
 非 trivial 市场若要发 AP 或 G 补贴, 必须满足独立对手方规则:
 
 1. 至少 2 个独立 owner/account 参与, 且胜负两边各有达到 `minIndependentLoserStakeG` 的独立 owner losing risk；只看 agentId 不够, 因为 `AgentRegistry.createAgent` 没有创建成本, 见 `contracts/src/AgentRegistry.sol:71` 到 `contracts/src/AgentRegistry.sol:93`。但独立 owner/account 不是独立真人证明, 多 EOA 同控自对赌是链上不可完全识别的残留信任假设。
 2. creator、resolver、subject agent 的 owner 自身下注不得计入 AP backing、losing stake backing 或补贴资格；这些 stake 可参与盈亏结算, 但不能放大奖励。
 3. 同一 owner 跨 outcome 的仓位按净风险计入: `ownerNetRisk(outcome) = max(stakeOnOutcome - stakeOnOtherOutcomes, 0)`。自我对冲/对敲不算独立 losing stake, 不得提高 AP/G 补贴。
-4. 非 trivial 市场必须对 losing pool 收真实 burn 费: `losingBurnG = burnBps * eligibleLosingStakeG`, 该部分 G 真销毁或进入不可回流 sink, 不分给 winning account, 不进补贴池, 不计为协议可回收 surplus。这样多 EOA 自对赌每轮都有不可回收成本。
+4. 非 trivial 市场必须对 losing pool 收真实 burn 费: `losingBurnG = burnBps * eligibleLosingStakeG`, 该部分 G 真销毁或进入不可回流 sink, 不分给 winning account, 不进补贴池, 不进 `protocolTreasuryG`, 不计为协议可回收 surplus。这样多 EOA 自对赌每轮都有不可回收成本。协议 tax/rake 另按 `taxBps` 入金库, 不能替代 burn 成本。
 5. 单边盘或无独立对手盘不得发 AP、不得发 G 补贴；市场结算后只退款或按 void 规则退回本金。
 6. 非 trivial `winAP` 上限必须同时受独立 distinct-owner losing stake 和真实 burn 成本约束, 例如 `winAP <= min(f(eligibleDistinctOwnerLosingStakeG), g(realBurnedGInMarket))`, 不能只看 total stake、winning stake 或 winner share。
 7. AP throttle 必须满足经济约束: `单位时间自对赌可刷 AP 上限 <= h(单位时间可承受 losingBurnG)`, 使自对赌刷 AP 的边际成本高于正常赢盘/行动收益。
@@ -461,20 +485,63 @@ v2 score 按状态和动作结果计分, 不按 AP 花费额计分。`reinforceH
 
 ## 7. Layer 4: NFT 卡牌市场占位
 
-本层后置, 不进入 MVP 实现。目标是复用现有 Arena/CardLedger 资产, 让卡牌作为动作层的攻防加成。
+本层后置, 不进入 MVP 实现。目标是按 Pattern ① 复用现有 Arena/CardLedger 资产: 协议排期式限量发行卡牌, 玩家用 G 购买一级市场新卡且买卡 burn G, 卡牌再作为动作层的攻防加成。
 
 现有可复用基础:
 
 | 模块 | 源码 |
 | --- | --- |
 | `CardLedger.Card` 和二级市场 `Listing` | `contracts/src/CardLedger.sol:15` 到 `contracts/src/CardLedger.sol:30` |
-| mint card | `contracts/src/CardLedger.sol:75` 到 `contracts/src/CardLedger.sol:86` |
-| list/cancel/buy listed card | `contracts/src/CardLedger.sol:88` 到 `contracts/src/CardLedger.sol:138` |
+| mint card | `CardLedger.mintCard`, `onlyOperator`, 见 `contracts/src/CardLedger.sol:61` 到 `contracts/src/CardLedger.sol:64` 和 `contracts/src/CardLedger.sol:75` 到 `contracts/src/CardLedger.sol:86` |
+| list/cancel/buy listed card | `CardLedger.listCard`/`buyListed`, 见 `contracts/src/CardLedger.sol:88` 到 `contracts/src/CardLedger.sol:138`; 买方 `spendG`、卖方 `creditG` 在 `contracts/src/CardLedger.sol:130` 到 `contracts/src/CardLedger.sol:132` |
 | Arena ghost bench/card slots | `contracts/src/ArenaEngine.sol:66` 到 `contracts/src/ArenaEngine.sol:76` |
 | Arena 用 G buy card | `contracts/src/ArenaEngine.sol:273` 到 `contracts/src/ArenaEngine.sol:289` |
 | place/remove/move card | `contracts/src/ArenaEngine.sol:291` 到 `contracts/src/ArenaEngine.sol:373` |
 | deterministic combat sim/settle | `contracts/src/ArenaEngine.sol:614` 到 `contracts/src/ArenaEngine.sol:702`, `contracts/src/ArenaCombat.sol:40` 到 `contracts/src/ArenaCombat.sol:67` |
 | unit stats/cost/ability | `contracts/src/UnitCatalog.sol:14` 到 `contracts/src/UnitCatalog.sol:149` |
+
+### Pattern ①: 协议金库 + 卡牌一级市场
+
+Owner 已拍板采用 Pattern ①: 协议排期式限量发行、买卡烧 G、不可赎回, 不引入质押、不引入 bonding curve。
+
+市场结算不另起一套规则, 仍沿用 §4 `G 押注` 的三段分流:
+
+1. 赢家 payout 受 §3 backing 铁律约束。
+2. tax/rake (`taxBps`, 即旧 `feeBps` 的正式语义) 进入 `protocolTreasuryG`。
+3. burn (`losingBurnG`/`burnBps`) 永久销毁或进入不可回流 sink。
+
+三者参数独立、可配置。tax 和 burn 的区别必须在账上可验证: tax 进金库、未来可按白名单再花；burn 消失, 不能被治理、金库或补贴池回收。
+
+卡牌一级市场规则:
+
+1. 协议是唯一铸造方。复用现有 `CardLedger.mintCard(ownerAgent, unitType)`, 但 v2 上线前必须把可调用它的 operator 收敛为唯一 `PrimaryCardMarket` 发售执行器；玩家和 legacy `AgentRegistry.operators` 不能自由铸卡。现有 `mintCard` 是 `external onlyOperator`, 见 `contracts/src/CardLedger.sol:75` 到 `contracts/src/CardLedger.sol:86`; `onlyOperator` 只检查 `registry.isOperator(msg.sender)`, 见 `contracts/src/CardLedger.sol:61` 到 `contracts/src/CardLedger.sol:64`。收敛实现应改成 `onlyPrimaryMinter` 或等价的单一 minter 地址, 而不是继续信任全局 operator。
+2. 供给表述是“协议排期式限量发行”, 不是无条件全局供给不膨胀。每个 season、unitType、rarity 或 saleId 必须有显式 cap, 每个 epoch 也必须有总发行上限；若要宣称全局不膨胀, 还必须有链上 `globalMaxSupply`。cap 一经 open season/sale 即不可调, 一级市场售罄后不能追加同批次供应；若要新供给, 必须开新公开 season/saleId 并公布新 cap。
+3. 玩家用 G 购买一级市场新卡。买家侧支付的 `priceG` 先从玩家 `gBalance` 扣除, 再按 `cardSaleBurnBps` / `cardSaleTreasuryBps` 分流。硬约束: `cardSaleBurnBps > 0` 且 `cardSaleBurnBps + cardSaleTreasuryBps == 10000`; 买卡必 burn, `cardSaleBurnBps == 0` 禁止上线。一级市场售卡只有 burn 和 `protocolTreasuryG` 两个出口, 不得产生第三个未命名账目。铸造本身不消耗 G, 只消耗交易 gas；G 的真实消耗发生在买家侧 burn, 不是“合约质押 G 铸造”。
+4. 一级市场 sale 绝不调用 `creditG` 给协议 agent 制造余额；进入金库的是 `protocolTreasuryG` 账目, 不能进入玩家可提余额, 不能作为未结算市场 backing。协议、金库、做市、团队或其他关联 owner/agent 禁止购买一级新卡；若测试环境需要协议 agent 持卡, 必须走非正式测试开关且不计入真实 sale、回流资格、TWAP 或玩家支付统计。实现注记: 不得通过协议 agent `gBalance` 自买把 `cardSaleTreasuryBps` 收回。
+5. 一级发售必须内置防套利机制, 至少同时使用三项: 荷兰拍或批量清算价避免机器人按固定低价扫货；per-owner per-sale 限购避免单 owner 包场；一级价格下限跟随对应 unit/rarity 的二级成交 TWAP 或 oracle-free rolling median, 没有二级样本的 genesis sale 必须使用公开初始曲线和小额限购。目标是降低一级扫货后立即二级黄牛抛售的无风险空间。
+6. 卡牌无赎回、无 G backing。卡牌价值来自攻防效用 + 排期式限量稀缺, 不是可兑回的 G 储备。
+
+卡牌二级市场规则:
+
+1. 二级市场复用现有 `CardLedger.listCard`/`buyListed` 的库存和 listing 语义, G 计价、玩家间价格发现, 见 `contracts/src/CardLedger.sol:88` 到 `contracts/src/CardLedger.sol:138`。但 v2 不能让 `buyListed` 继续依赖泛 `onlyOperator` 的 `creditG`; 必须升级 `CardLedger` 或引入 `SecondaryCardMarket`/treasury wrapper, 使卖方收款只走 §3 定义的 `SECONDARY_CARD_TRANSFER` 白名单路径。
+2. 二级抽水口径拍板为小额 tax + burn, 与一级和市场三段分流保持一致。公式: `buyerSpendG = askPriceG`; `secondaryTaxG = buyerSpendG * secondaryTaxBps / 10000`; `secondaryBurnG = buyerSpendG * secondaryBurnBps / 10000`; `sellerCreditG = buyerSpendG - secondaryTaxG - secondaryBurnG`。硬约束: `secondaryBurnBps > 0`, `secondaryTaxBps >= 0`, `secondaryTaxBps + secondaryBurnBps < 10000`; 具体 bps 留 §12。`secondaryTaxG` 进入 `protocolTreasuryG`, `secondaryBurnG` 进入不可回流 sink, `sellerCreditG` 由同笔买方 `spendG` 背书, 不属于奖励 mint。
+3. 现有零抽水 `buyListed` 的买方 `spendG` 与卖方 `creditG` 等额关系只作为迁移兼容基线, 见 `contracts/src/CardLedger.sol:130` 到 `contracts/src/CardLedger.sol:132`。v2 正式二级交易必须满足 `sellerCreditG + secondaryTaxG + secondaryBurnG == buyerSpendG`; 零抽水不得作为正式口径上线。迁移测试若临时保留零抽水, 必须标成非正式兼容模式并禁止它计入一级 TWAP、防套利参考或金库回流统计。
+4. 协议/关联 owner 不得通过二级自成交制造 TWAP、回流资格或金库支出资格；同一 owner 控制的买卖双方应按链上 owner 维度拒绝或至少从 TWAP/eligibility 中剔除。链上无法完全识别多 EOA 同控, 这是与市场自对赌相同的残留信任假设。
+
+防通胀双闸:
+
+1. 协议排期式限量发行: 供给只来自公开且 open 后不可调的 cap, 玩家无自由 mint 路径；若没有 `globalMaxSupply`, 文档和 UI 只能声称 epoch/season/sale 级限量, 不能声称全局供给不膨胀。
+2. G 不通胀: G 永不增发, `creditG` 只能记已背书 payout 或二级守恒转账卖方净收入；卡牌一级市场买卡 burn、二级 `secondaryBurnG`、市场 losing burn 都是硬 sink。
+
+回流约束:
+
+tax、一级市场卖卡金库份额和二级 `secondaryTaxG` 都是玩家 -> 金库的单向抽水。`protocolTreasuryG` 必须受 §3 的 per-season/epoch `netTreasuryTakeG` cap 约束, 且回流只能进 source-neutral sink: 全局世界事件奖金、按 distinct-owner 中性均摊的补贴, 或不可回收中性 sink。不得定向回流给本次抽取来源、当轮 losing 方、某个指定 agent/owner、协议/关联 agent, 也不得用“补贴”名义把刚抽到的金库份额返还给同一交易或同一市场的特定参与者。
+
+已知残留风险: 原抽取方如果是高频参与者, 会按其后续市场份额比例回收一部分 source-neutral 回流；global `treasuryTakeCapBps` 只限制全局/epoch 净抽水, 不约束单一 owner 的 per-owner 净抽水。反自对赌的硬防线不依赖回流: AP throttle 必须锚定 `realBurnedGInMarket`, 且该值只包含真实 burn / 不可回收 sink, 不包含 tax、金库回流、补贴或二级 `secondaryTaxG`。
+
+为什么不用 Pattern B:
+
+Pattern B 会再引入一套金融原语: 曲线、赎回、锁仓、套利和赎回负债。这与“保持聚焦、市场才是赌场、卡是效用道具”冲突。Pattern ① 用公开 cap + burn 控制供给和 G sink, 更简单, 不占死资本, 也没有赎回负债。若未来要做可赎回金融卡, 应另开单独设计, 且优先考虑玩家自质押、延后评审。
 
 占位接口:
 
@@ -499,8 +566,8 @@ MVP 的 Layer 3 接口不携带 `cardIds`。本层只保留 Post-MVP hook 草图
 | 旧世界结构参考 | `GameEngine` | 参考 hex 数据结构、spawn、capture 内部写入顺序, 见 `contracts/src/GameEngine.sol:63` 到 `contracts/src/GameEngine.sol:79` 和 `contracts/src/GameEngine.sol:419` 到 `contracts/src/GameEngine.sol:448`; v2 adapter 不能外部改旧内部 mapping |
 | Tullock 攻击数学参考 | `GameEngine` | 参考 power/success 方向, 见 `contracts/src/GameEngine.sol:409` 到 `contracts/src/GameEngine.sol:418`; 随机数不能沿用 `block.prevrandao` |
 | 一步攻击参考 | `GameEngine.raid` | 仅参考 auto-move + attack 流程, 见 `contracts/src/GameEngine.sol:622` 到 `contracts/src/GameEngine.sol:695`; 不是 v2 邻接规则 |
-| G 账本 | `GTreasury` | `gBalance`, `depositG`, `spendG`, `creditG`, `withdraw`; `creditG` 只记已背书 payout |
-| 卡牌库存和二级市场 | `CardLedger` | 持久卡牌、listing、G 交易 |
+| G 账本 | `GTreasury` | `gBalance`, `depositG`, `spendG`, `creditG`, `withdraw`; `creditG` 只记已背书 payout 或二级守恒转账卖方净收入, 不记协议金库收入 |
+| 卡牌库存和二级市场 | `CardLedger` | 持久卡牌、listing、G 交易；一级市场只复用 `mintCard`, 不开放玩家自由铸造；二级交易需经 `SecondaryCardMarket`/wrapper 白名单收款 |
 | Arena 卡牌/战斗资产 | `ArenaEngine`, `ArenaCombat`, `UnitCatalog` | 后置作为动作 bonus 来源 |
 | 地址发现 | `Router` | 已包含 `gameEngine`, `arenaEngine`, `gTreasury`, `cardLedger`, 见 `contracts/src/Router.sol:8` 到 `contracts/src/Router.sol:21` 和 `contracts/src/Router.sol:85` 到 `contracts/src/Router.sol:108` |
 
@@ -509,7 +576,8 @@ MVP 的 Layer 3 接口不携带 `cardIds`。本层只保留 Post-MVP hook 草图
 | 新合约 | 职责 |
 | --- | --- |
 | `QuestionRegistry` 或并入 `PredictionMarketEngine` | 注册 MVP 的 MATH/STATE question 模板与参数；ORACLE 后置 |
-| `PredictionMarketEngine` | 开盘、下注、关盘、结算、claim G/AP；维护 escrow、subsidy pool、surplus backing 账；按 owner/account 记录净风险和独立对手方 eligibility |
+| `PredictionMarketEngine` | 开盘、下注、关盘、结算、claim G/AP；维护 escrow、subsidy pool、已拨入派彩池的 surplus backing 账；按 owner/account 记录净风险和独立对手方 eligibility |
+| `ProtocolTreasuryAccounting` 或 treasury wrapper 内部模块 | 维护 `reservedBackingG`、`protocolTreasuryG`、burn/sink 口径、金库白名单支出、per-season/epoch `netTreasuryTakeG` 累加器；支出只认多签 + timelock/治理执行器和 `TreasuryUse` 枚举 |
 | `MarketSettlementResolver` | MATH 自校验、STATE 只读 `V2World` finalized checkpoint；ORACLE 外部结算接口后置 |
 | `APLedger` | AP 余额、市场唯一增发入口、动作唯一扣费入口、trivial 多维 cap |
 | `HexGrid` library | public/library 级 hex 坐标、边界、邻接校验 |
@@ -517,16 +585,21 @@ MVP 的 Layer 3 接口不携带 `cardIds`。本层只保留 Post-MVP hook 草图
 | `V2World` | 推荐方案: 自持 v2 hex owner、defense、battle result、spawn/respawn、score、finalized checkpoint storage/event, 暴露 `attackWithAP` / `reinforceHex` / `returnFromElimination` 或被 `APActionAdapter` 调用 |
 | `APActionAdapter` | 若保留 adapter, 只连接 AP、RNG、`V2World`; 不外部改旧 `GameEngine` 内部状态 |
 | `ActionCardBonusAdapter` | 后置; 把 CardLedger/Arena 卡牌映射成攻防 bonus |
+| `PrimaryCardMarket` | Post-MVP; 管理 immutable season/sale cap、一级市场 G 收款、买卡 burn、`protocolTreasuryG` 入账、per-owner 限购、荷兰拍/清算价和二级 TWAP 价格下限, 并作为唯一协议 mint 执行器调用 `CardLedger.mintCard` |
+| `SecondaryCardMarket` 或 treasury wrapper 二级模块 | Post-MVP; 包装 `CardLedger.buyListed` 的 G 结算, 执行 `secondaryTaxBps`/`secondaryBurnBps` 分流, 并通过 `SECONDARY_CARD_TRANSFER` 白名单给卖方 `creditG` |
 
 权限边界:
 
-1. `GTreasury.creditG` 的正式奖励路径只能接受单一 `PredictionMarketEngine` 或 treasury wrapper 地址, 不接受全局 `AgentRegistry.operators`。`PredictionMarketEngine` 只有在 losing stakes / 预存补贴池 / 协议 surplus 等额 backing 已扣减或锁定后, 才能调用 `creditG`。
-2. 只有 `PredictionMarketEngine` 可以调用 `APLedger.creditFromMarket`。
-3. 只有 `V2World` 或 `APActionAdapter` 可以调用 `APLedger.spendForAction`。
-4. `V2World` 是唯一能用 AP 改 v2 世界状态的入口；若 M0 选方案 A, 则必须是旧 `GameEngine` 内部 AP-gated hook 写状态。
-5. 外部 adapter 不得直接改旧 `GameEngine.hexes/agentHexKeys/hexCount`。
-6. `V2World` 是唯一能写 finalized checkpoint 的合约；市场只能引用创建时不存在、未来才会 finalized 的 checkpoint。
-7. `GTreasury.fundAgentG` 只允许测试网或受控迁移, 不能作为正式经济 mint。
+1. `GTreasury.creditG` 的正式奖励路径只能接受单一 `PredictionMarketEngine` 或 treasury wrapper 地址, 不接受全局 `AgentRegistry.operators`。`PredictionMarketEngine` 只有在 losing stakes / 预存补贴池 / 协议已拨入派彩池的 surplus 等额 backing 已扣减或锁定后, 才能调用 `creditG`。
+2. 二级卡牌卖方收款是独立 `SECONDARY_CARD_TRANSFER` 白名单路径, 只能由 `SecondaryCardMarket` 或 treasury wrapper 限定函数调用；同笔交易必须满足 `sellerCreditG + secondaryTaxG + secondaryBurnG == buyerSpendG`, 不得伪装成奖励路径。
+3. 只有 `PredictionMarketEngine` 可以调用 `APLedger.creditFromMarket`。
+4. 只有 `V2World` 或 `APActionAdapter` 可以调用 `APLedger.spendForAction`。
+5. `V2World` 是唯一能用 AP 改 v2 世界状态的入口；若 M0 选方案 A, 则必须是旧 `GameEngine` 内部 AP-gated hook 写状态。
+6. 外部 adapter 不得直接改旧 `GameEngine.hexes/agentHexKeys/hexCount`。
+7. `V2World` 是唯一能写 finalized checkpoint 的合约；市场只能引用创建时不存在、未来才会 finalized 的 checkpoint。
+8. `GTreasury.fundAgentG` 只允许测试网或受控迁移, 不能作为正式经济 mint。
+9. `protocolTreasuryG` 只能由多签 + timelock/治理执行器按 `TreasuryUse` 白名单支出, 且受 `netTreasuryTakeG` cap 约束；不能进入玩家可提余额, 不能填补未结算市场 backing, 不能为铸卡质押 G。
+10. Post-MVP 卡牌一级市场只能由唯一 `PrimaryCardMarket` 调用 `CardLedger.mintCard`; 玩家购买新卡的 G 消耗发生在买家侧 burn + 金库分流, `cardSaleBurnBps > 0` 且 burn+treasury=10000, 不是自由 mint 或可赎回质押。
 
 V2World 是 MVP 最大单块, 不能在排期里隐形处理。推荐方案 B 至少包含:
 
@@ -557,10 +630,11 @@ MVP 不做:
 2. 建造/采集。
 3. 把每个动作包装成答题。
 4. 卡牌数值接入。
-5. 复杂外交/debate/chronicle 经济化。
-6. ORACLE 盘创建/结算。
-7. 让外部 adapter 改旧 `GameEngine` 内部 hex 状态。
-8. 使用旧 `GameEngine.getScore`、ore/building 字段作为 v2 胜负依据。
+5. 卡牌一级市场、season cap 发售和金库经营。
+6. 复杂外交/debate/chronicle 经济化。
+7. ORACLE 盘创建/结算。
+8. 让外部 adapter 改旧 `GameEngine` 内部 hex 状态。
+9. 使用旧 `GameEngine.getScore`、ore/building 字段作为 v2 胜负依据。
 
 ## 10. 里程碑
 
@@ -571,8 +645,8 @@ MVP 不做:
 1. World 二选一: A 升级旧 `GameEngine` 暴露 AP-gated capture hook; B 新 `V2World` 自持 hex/战斗/checkpoint 状态。推荐 B。
 2. `V2World` minimal schema: hex storage、spawn/respawn、defense、capture、score、checkpoint event/mapping。
 3. `STATE` checkpoint 策略: eventId 生成、finalized 条件、创建时 checkpoint 必须不存在、结算时 checkpoint 必须存在且 finalized、`openAt < closeAt <= snapshotTimestamp <= settleAfter <= settleDeadline` 或 `openAt < closeAt <= eventFinalizableAfter <= settleAfter <= settleDeadline`、创建时已存在/已知结果拒绝或 void、超时未 finalized 则 void/refund。
-4. G backing 来源和比例: losing stakes、预存补贴池、协议 surplus 的使用顺序、比例、释放条件；不得新增无 backing payout。
-5. `GTreasury.creditG` 单一市场入口或 wrapper 方案, 以及 `reservedBackingG`/wrapper escrow 的二选一落地方式。
+4. G backing 来源和比例: losing stakes、预存补贴池、协议已拨入补贴/派彩池的 surplus 的使用顺序、比例、释放条件；不得新增无 backing payout。
+5. `GTreasury.creditG` 正式奖励单一入口或 wrapper 方案、二级 `SECONDARY_CARD_TRANSFER` 白名单路径, 以及 `reservedBackingG`/wrapper escrow 的二选一落地方式。
 6. 防御不变量: `D_max`、`defenseHalfLife/upkeep`、`costToReachDefense`、`costToReachP50AttackAgainst`、`p_floor`。
 7. 非 trivial AP eligibility: 独立 owner 数、最小 losing stake、creator/resolver/subject 排除、同 owner 净风险、单边退款；多 EOA 同控是链上不可完全识别的残留信任假设, 必须定稿 losing pool 真实 burn 费、AP throttle 经济约束和可选 account 成熟度/bond 门槛。
 8. odds anti-snipe: 早期窗口或 TWAP 快照定义, 不能用 close 瞬时 odds。
@@ -584,11 +658,12 @@ MVP 不做:
 
 实现:
 
-1. `GTreasury` 市场权限收紧: `creditG` 正式奖励路径只认 `PredictionMarketEngine` 或 treasury wrapper。
-2. escrow / subsidy / surplus backing 账, 确保所有 G payout 有来源。**封死 Treasury 层保留边界（§3 G 铁律第 6 条）**: 引入 `reservedBackingG` 并改写 `surplusG`/`withdrawSurplus`, 或让市场 G 走独立 treasury wrapper, 保证未结算市场 escrow/补贴不会被当 surplus 提走。
-3. question/market/position 数据结构, binary market, G 下注、关盘、void/refund、结算状态机。
-4. `MATH` 白名单模板自校验, 且 MVP 全部强制 `trivial=true`, `paysG=false`, `fixedAP=fixedTrivialAP`。
-5. owner/account 级仓位和净风险统计, 为 M3 AP/G eligibility 做准备。
+1. `GTreasury` 市场权限收紧: `creditG` 正式奖励路径只认 `PredictionMarketEngine` 或 treasury wrapper；二级卡牌卖方收款预留独立 `SECONDARY_CARD_TRANSFER` 白名单, 不破坏 `CardLedger.buyListed` 的守恒转账语义。
+2. escrow / subsidy / 已拨入派彩池的 surplus backing / `protocolTreasuryG` 账, 确保所有 G payout 有来源且金库收入不混入玩家 backing。**封死 Treasury 层保留边界（§3 G 铁律第 6 条）**: 引入 `reservedBackingG` 并改写 `surplusG`/`withdrawSurplus`, 或让市场 G 走独立 treasury wrapper, 保证未结算市场 escrow/补贴不会被当 surplus 提走。
+3. `ProtocolTreasuryAccounting` 的白名单支出必须由多签 + timelock/治理执行器授权, 用 `TreasuryUse` 枚举限制用途, 并维护可查询的 `netTreasuryTakeG(epoch)`；超 `treasuryTakeCapBps` 必须拒绝或强制 source-neutral 回流。
+4. question/market/position 数据结构, binary market, G 下注、关盘、void/refund、结算状态机, 并按三段分流记录赢家 payout、`taxBps -> protocolTreasuryG`、`burnBps/losingBurnG -> sink`。
+5. `MATH` 白名单模板自校验, 且 MVP 全部强制 `trivial=true`, `paysG=false`, `fixedAP=fixedTrivialAP`。
+6. owner/account 级仓位和净风险统计, 为 M3 AP/G eligibility 做准备。
 
 M1 可以上线 `MATH`-only 内测；不能上线 `STATE`, 因为 checkpoint 依赖 M2 `V2World`。
 
@@ -631,7 +706,7 @@ MCP/agent-runner/frontend 迁移:
 
 ### M6: Post-MVP Cards
 
-把 `CardLedger`/`ArenaEngine` 的卡牌作为攻防 bonus 接入 `V2World` 或 `APActionAdapter`, 再扩展动作接口携带 card set。
+按 §7 Pattern ①实现卡牌一级/二级市场: `PrimaryCardMarket` 管理 immutable season/sale/epoch cap、荷兰拍或清算价、per-owner 限购、二级 TWAP 价格下限, 买卡 G 分流为 `cardSaleBurnBps > 0` 的 burn + `protocolTreasuryG`, 并作为唯一执行器调用 `CardLedger.mintCard`。`SecondaryCardMarket`/wrapper 包装二级 `buyListed`, 执行 `secondaryTaxBps`/`secondaryBurnBps` 分流并通过 `SECONDARY_CARD_TRANSFER` 给卖方净额 `creditG`。再把 `CardLedger`/`ArenaEngine` 的卡牌作为攻防 bonus 接入 `V2World` 或 `APActionAdapter`, 扩展动作接口携带 card set。
 
 ### M7: Post-MVP Oracle
 
@@ -643,12 +718,12 @@ MCP/agent-runner/frontend 迁移:
 
 ## 12. OPEN 待 owner
 
-承重项已经上提到 M0/M1 blocking 决策, 不再放在 OPEN: G backing 来源/比例、`creditG` 权限模型、`STATE` checkpoint 锚定策略、World 方案 A/B、防御不变量和成本曲线。
+承重项已经上提到 M0/M1 blocking 决策或 §7 Pattern ①, 不再放在 OPEN: G backing 来源/比例、`creditG` 正式奖励权限模型、二级守恒转账白名单、`STATE` checkpoint 锚定策略、World 方案 A/B、防御不变量和成本曲线、三桶隔离、金库白名单授权主体、金库不为铸卡质押、买卡必须 burn G、`netTreasuryTakeG` 可查询累加器与超 cap 拒绝/强制回流。
 
 仍可留待 owner 数值定稿的项:
 
 1. trivial 盘具体节流数值: `fixedTrivialAP`、`T_agent_epoch`、`T_owner_epoch`、`T_global_epoch`、`E_min/E_max`、重复模板限流参数。约束式不可放松。
-2. 非 trivial AP 公式常数: `baseWinAP`, stake 权重、difficulty 权重、TWAP uncertainty 权重、`f(eligibleDistinctOwnerLosingStakeG)`、`g(realBurnedGInMarket)`、`burnBps`、单市场和单 epoch cap。不能放松独立对手方/净风险/真实 burn 成本/单边退款规则。
+2. 非 trivial AP/G 与市场三段分流常数: `baseWinAP`, stake 权重、difficulty 权重、TWAP uncertainty 权重、`f(eligibleDistinctOwnerLosingStakeG)`、`g(realBurnedGInMarket)`、`taxBps`、`burnBps`、单市场和单 epoch cap。不能放松独立对手方/净风险/真实 burn 成本/单边退款规则。
 3. 动作成本数值: `minAttackAP`, `respawnAP`, 攻击 AP 到 attackPower 的换算, `reinforceHex` 在 M0 防御不变量内的具体参数。
-4. Layer 4 卡牌接入时机和数值: 卡牌是否消耗、是否锁定在动作中、是否可同时用于 Arena 和领土战。
+4. Layer 4 卡牌接入时机和数值: 卡牌是否消耗、是否锁定在动作中、是否可同时用于 Arena 和领土战, 以及一级市场 `season/sale/epoch cap` 数值、价格曲线、`cardSaleBurnBps`/`cardSaleTreasuryBps` 具体拆分、`secondaryTaxBps`、`secondaryBurnBps`、`treasuryTakeCapBps` 和 source-neutral 回流节奏。约束不可放松: `cardSaleBurnBps > 0`, `cardSaleBurnBps + cardSaleTreasuryBps == 10000`, `secondaryBurnBps > 0`, `secondaryTaxBps + secondaryBurnBps < 10000`, cap open 后不可调。
 5. Post-MVP ORACLE: 信任模型、挑战窗口和 attestation 来源。MVP 不实现。
