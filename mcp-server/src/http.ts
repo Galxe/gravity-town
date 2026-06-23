@@ -4,6 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import { registerTools, ToolOptions } from "./tools.js";
 import { ChainClient, ChainConfig } from "./chain.js";
+import { preflight } from "./preflight.js";
 
 function getConfig(): ChainConfig {
   const rpcUrl = process.env.RPC_URL || "https://mainnet-rpc.gravity.xyz";
@@ -37,6 +38,7 @@ function createServer(chain: ChainClient, toolOpts: ToolOptions): McpServer {
 
 async function main() {
   const config = getConfig();
+  await preflight(config);
   const chain = new ChainClient(config);
   await chain.ready();
   const toolOpts = parseToolOptions();

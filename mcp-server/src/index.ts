@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ChainClient, ChainConfig } from "./chain.js";
 import { registerTools, ToolOptions } from "./tools.js";
+import { preflight } from "./preflight.js";
 
 function getConfig(): ChainConfig {
   const rpcUrl = process.env.RPC_URL || "https://mainnet-rpc.gravity.xyz";
@@ -26,6 +27,7 @@ function parseToolOptions(): ToolOptions {
 
 async function main() {
   const config = getConfig();
+  await preflight(config);
   const chain = new ChainClient(config);
   await chain.ready();
 
