@@ -7,10 +7,10 @@ Gravity Town v2 是一个“用可验证预测市场赢行动权，再用行动�
 ## 2. 四层栈
 
 ```text
-Layer 4  NFT 卡牌市场        Pattern ①: 协议排期式限量发行、买卡 burn G, 复用 Arena/CardLedger, Post-MVP 接入攻防加成
+Layer 4  NFT 卡牌市场        税养卡池 + 锁定铸造(成就铸稀有卡 / 白板自铸), 复用 Arena/CardLedger, Post-MVP 接入攻防加成
 Layer 3  Action 行动层       花 AP 攻击邻接 hex、给己方 hex 加防御, 或让 0-hex agent 回场
 Layer 2  Gambling/AP 层      赢市场获得 AP, 可能同时获得 G 奖励
-Layer 1  Market 市场层       通用“可验证结局”预测市场, MVP 只做 MATH + STATE-by-checkpoint
+Layer 1  Market 市场层       通用“可验证结局”预测市场, 三类盘 MATH + STATE-by-checkpoint + ORACLE, 按可判定性分批上线(MATH/STATE 先, ORACLE 最后)
 ```
 
 核心闭环:
@@ -54,16 +54,20 @@ G 账目桶（承接 Treasury 层保留边界）:
 
 1. `gBalance`: 玩家自有 G, 可用于押注、购买、消耗和在 withdraw 模式下提现。
 2. `reservedBackingG`: 未结算市场 escrow + 预存补贴池等保留 backing, **谁都不能动**。它必须从 `surplusG`/`withdrawSurplus` 口径中扣除, 已在 G payout 铁律第 6 条约束。
-3. `protocolTreasuryG`: 协议金库, 属于协议自有收入, **可花但只能用于白名单用途**。白名单支出必须由多签 + timelock 或链上治理执行器发起, 合约层用 `enum TreasuryUse` 固定用途, 不能由 owner 单签直接支配。当前 `GTreasury.withdrawSurplus` 是 `external onlyOwner`, 见 `contracts/src/GTreasury.sol:151` 到 `contracts/src/GTreasury.sol:163`; v2 必须把这类 owner 后门替换为受 timelock/多签和用途枚举约束的支出入口。允许用途只包括: `SubsidyPool`、`MarketPayoutPool`、`GlobalWorldEventPrize`、`DistinctOwnerNeutralRebate`、`IrrecoverableNeutralSinkReturn`。其中 `SubsidyPool` 和 `MarketPayoutPool` 只能是预先公告、与抽取来源和当轮输赢方无关的 source-neutral 池。不得保留“必要经营”泛口径；协议运营成本若需要预算, 必须另立非玩家抽水资金源或单独评审。`protocolTreasuryG` 必须排除在玩家可提余额和市场 backing 之外, 不能被当成 `gBalance`, 也不能替代 `reservedBackingG`。铸卡本身只花交易 gas, 不花 G；金库不为铸卡质押 G。
-4. burn 是销毁, 不是账目桶。进入 burn 的 G 永久消失或进入不可回流 sink, 不得再作为协议 surplus、补贴池或市场 backing。
+3. `protocolTreasuryG`: 协议金库, 属于协议自有收入, **可花但只能用于白名单用途**。白名单支出必须由多签 + timelock 或链上治理执行器发起, 合约层用 `enum TreasuryUse` 固定用途, 不能由 owner 单签直接支配。当前 `GTreasury.withdrawSurplus` 是 `external onlyOwner`, 见 `contracts/src/GTreasury.sol:151` 到 `contracts/src/GTreasury.sol:163`; v2 必须把这类 owner 后门替换为受 timelock/多签和用途枚举约束的支出入口。允许用途只包括: `SubsidyPool`、`MarketPayoutPool`、`GlobalWorldEventPrize`、`DistinctOwnerNeutralRebate`、`IrrecoverableNeutralSinkReturn`。其中 `SubsidyPool` 和 `MarketPayoutPool` 只能是预先公告、与抽取来源和当轮输赢方无关的 source-neutral 池。不得保留“必要经营”泛口径；协议运营成本若需要预算, 必须另立非玩家抽水资金源或单独评审。`protocolTreasuryG` 必须排除在玩家可提余额和市场 backing 之外, 不能被当成 `gBalance`, 也不能替代 `reservedBackingG`。卡由锁 G 铸出: 成就稀有卡由税供池 `cardMintPoolG` 出资锁定 backing, 白板基础卡由玩家自锁 `gBalance`(数额 `blankCardMintLockG`)。为此引入两个新口径: `cardMintPoolG`(由市场 tax 的可配置份额 `cardTaxShareBps` 分流注入, 用来持续丰富卡池)和 `cardBackingLockedG`(铸卡锁进的保留桶, 作为卡的 backing, 排除在可提 surplus 之外)。市场 tax 现在分流为两路: 一部分进 `protocolTreasuryG`(同旧), 一部分进 `cardMintPoolG`。
+4. `cardMintPoolG`: 卡牌合约池(税供资), 由市场 tax 的可配置份额 `cardTaxShareBps` 持续注入, 专门用来给成就稀有卡出资锁定 backing、不断丰富卡池。它是协议侧专款专用池, 不能进入玩家可提余额, 不能填补未结算市场 backing, 也不能被当成普通 `protocolTreasuryG` 白名单支出挪用。
+5. `cardBackingLockedG`: 铸卡时锁进的保留桶, 作为已铸卡的 backing(成就卡由 `cardMintPoolG` 锁入, 白板卡由玩家 `gBalance` 锁入)。它是 lock not burn——G 不销毁、锁在保留桶里。`cardBackingLockedG` 必须像 `reservedBackingG` 一样排除在可提 surplus 之外, 谁都不能当 surplus 提走。
+6. burn 是销毁, 不是账目桶。进入 burn 的 G 永久消失或进入不可回流 sink, 不得再作为协议 surplus、补贴池或市场 backing。
 
-三桶互不混用: `gBalance` 不能被协议花掉, `reservedBackingG` 不能被 owner/治理提走, `protocolTreasuryG` 不能伪装成玩家 backing 或市场 payout 来源。任何实现方案都必须能在账上证明“可提/可花”不包含未结算市场负债和玩家可提余额。
+桶互不混用: `gBalance` 不能被协议花掉, `reservedBackingG` 和 `cardBackingLockedG` 不能被 owner/治理提走, `protocolTreasuryG` 不能伪装成玩家 backing 或市场 payout 来源, `cardMintPoolG` 是专款专用税供卡池、只能用于卡牌锁定铸造。任何实现方案都必须能在账上证明“可提/可花”不包含未结算市场负债、卡牌 backing 锁定和玩家可提余额。
 
 金库净抽水 cap 是承重不变量, 不是 OPEN 方向:
 
 1. `ProtocolTreasuryAccounting` 必须维护可链上查询的 per-season/epoch 累加器: `protocolTreasuryInG(epoch)`、`treasuryWhitelistOutG(epoch)`、`neutralSinkReturnG(epoch)`、`grossPlayerPaidG(epoch)`、`netTreasuryTakeG(epoch)`。
 2. `netTreasuryTakeG(epoch) = protocolTreasuryInG(epoch) - treasuryWhitelistOutG(epoch)`。只有 source-neutral 白名单支出可以记入 `treasuryWhitelistOutG` 并抵扣净抽水；回流到不可回收、source-neutral sink 的支出必须记入 `treasuryWhitelistOutG` 或等价的已回流字段, 即视作已回流, 不能继续算协议净抽水。
-3. 任何 tax/rake、一级卖卡金库份额或二级抽水入账后若会导致 `netTreasuryTakeG(epoch) > treasuryTakeCapBps * grossPlayerPaidG(epoch) / 10000`, 合约必须拒绝该入账或在同一交易内强制把超额回流到白名单 source-neutral sink。`treasuryTakeCapBps` 的具体数值可以留到 §12, 但这个可查询累加器和超 cap 拒绝/强制回流规则不能留 OPEN。
+3. 任何 tax/rake、卡牌税供份额或二级抽水入账后若会导致 `netTreasuryTakeG(epoch) > treasuryTakeCapBps * grossPlayerPaidG(epoch) / 10000`, 合约必须拒绝该入账或在同一交易内强制把超额回流到白名单 source-neutral sink。`treasuryTakeCapBps` 的具体数值可以留到 §12, 但这个可查询累加器和超 cap 拒绝/强制回流规则不能留 OPEN。
+
+CARVE-OUT(source-neutral 的有意例外): `cardMintPoolG` 这部分由 `cardTaxShareBps` 分流的 tax, 以及成就稀有卡从 `cardMintPoolG` 的**定向**铸造, 与“source-neutral、不得定向回流给指定 agent/owner”原则存在张力。这里加一个显式例外: 成就卡的定向铸造是由**客观、难刷的链上成就**(白名单)门控的定向收益, 是对 source-neutral 的**有意例外**, 不是任意回流。它引入与 AP 自对赌同类的残留风险——成就若可刷, 税供稀有卡会变成自肥漏。因此成就白名单设计必须抗 sybil / 抗刷, 这一点 flag 为 OPEN(见 §12)。同时 `cardTaxShare` 这部分 tax 是否计入 `netTreasuryTakeG`、还是视作“已返还给玩家(NFT backing)”, 也 flag 为 OPEN(见 §12)。
 
 ### AP
 
@@ -92,7 +96,8 @@ AP 铁律:
 ```solidity
 enum QuestionKind {
     MATH,
-    STATE
+    STATE,
+    ORACLE
 }
 
 enum QuestionStatus {
@@ -128,14 +133,14 @@ struct Question {
 
 | 字段 | 说明 |
 | --- | --- |
-| `kind` | MVP 只允许 `MATH`, `STATE` 两类结算来源 |
+| `kind` | 三类结算来源 `MATH`, `STATE`, `ORACLE`；按可判定性分批上线: MVP 首发实现 `MATH`(+`STATE`), `ORACLE` 作为已规划的第三类、最后上线(M7), 上线前必须先定稿外部预言机信任模型 |
 | `templateId` | 限制问题模板, 避免任意字符串伪装成可验证问题 |
 | `params` | 模板参数, 例如表达式、hexKey、battleId、外部赛事 id |
 | `snapshotTimestamp` / `snapshotEventId` | `STATE` 盘绑定的未来 checkpoint 约束；不能表示“结算时回读任意历史 storage” |
 | `settleDeadline` | `STATE` 盘的最晚结算时间；超过仍未 finalized 则 void + 全额退款 |
 | `difficultyBps` | 难度和不确定性权重, 影响 AP 和可能的 G 回报；MVP `MATH` 强制为 0 |
 | `trivial` | 由合约按 `templateId+params` 推导的地板盘标记, opener 不能手填 |
-| `resolver` | 特殊 `STATE` 盘的结算合约/地址；MVP 不接外部 oracle |
+| `resolver` | 特殊 `STATE` 盘的结算合约/地址, 或 `ORACLE` 盘的外部预言机结算入口；MVP 首发不接外部 oracle, `ORACLE` 随第三类盘在 M7 最后上线、上线前必须先定稿信任模型 |
 
 ### Market
 
@@ -216,7 +221,7 @@ MVP 的 `STATE` 只能做 **STATE-by-checkpoint**:
 
 #### ORACLE
 
-`ORACLE` 是外部可验证结局, 如世界杯冠军。ORACLE 信任模型是安全边界, 不是普通参数；本稿默认 Post-MVP 后置, MVP 不允许创建或结算 ORACLE 盘, 只保留接口草图供后续评审:
+`ORACLE` 是外部真实世界结局, 例如美股涨跌、体育赛事(如世界杯冠军)。它是三类盘中的第三类, 不是被排除项。但因为它依赖外部预言机的信任模型(单 oracle、多签 oracle、optimistic oracle、challenge window、外部 attestation)与失败处理, 这层信任模型是安全边界、不是普通参数, 所以 `ORACLE` 排在 `MATH`/`STATE` 之后、最后上线(M7), 上线前必须先定稿信任模型。按可判定性分批上线的原则: `MATH`(链上自校验) + `STATE`(V2World checkpoint) 先上, `ORACLE`(外部数据) 最后上；MVP 首发实现仍是 `MATH`(+`STATE`), `ORACLE` 作为已规划的第三类在 M7 上线, 实现顺序不变。接口草图:
 
 ```solidity
 interface IMarketOracle {
@@ -224,7 +229,7 @@ interface IMarketOracle {
 }
 ```
 
-如果未来把 ORACLE 提前进 MVP, 必须在 M0/M2 前定稿单 oracle、多签 oracle、optimistic oracle、challenge window 或外部 attestation 的信任模型、挑战流程和失败处理；否则不能上线可结算 ORACLE 盘。
+`ORACLE` 上线前必须在单独评审中定稿单 oracle、多签 oracle、optimistic oracle、challenge window 或外部 attestation 的信任模型、挑战流程和失败处理；否则不能上线可结算 `ORACLE` 盘。这些信任模型要求是好的工程约束、必须保留, 只是 `ORACLE` 这一类从"被排除"改为"第三类、分批最后上线"。
 
 ### G 押注
 
@@ -485,7 +490,7 @@ v2 score 按状态和动作结果计分, 不按 AP 花费额计分。`reinforceH
 
 ## 7. Layer 4: NFT 卡牌市场占位
 
-本层后置, 不进入 MVP 实现。目标是按 Pattern ① 复用现有 Arena/CardLedger 资产: 协议排期式限量发行卡牌, 玩家用 G 购买一级市场新卡且买卡 burn G, 卡牌再作为动作层的攻防加成。
+本层后置, 不进入 MVP 实现。目标是复用现有 Arena/CardLedger 资产: 用**税养卡池 + 锁定铸造**模型产出卡牌(成就铸稀有卡 / 白板自铸), 卡牌再作为动作层的攻防加成。不是协议排期式限量发售、不是买卡 burn、不引入定价限量发行。
 
 现有可复用基础:
 
@@ -500,26 +505,31 @@ v2 score 按状态和动作结果计分, 不按 AP 花费额计分。`reinforceH
 | deterministic combat sim/settle | `contracts/src/ArenaEngine.sol:614` 到 `contracts/src/ArenaEngine.sol:702`, `contracts/src/ArenaCombat.sol:40` 到 `contracts/src/ArenaCombat.sol:67` |
 | unit stats/cost/ability | `contracts/src/UnitCatalog.sol:14` 到 `contracts/src/UnitCatalog.sol:149` |
 
-### Pattern ①: 协议金库 + 卡牌一级市场
+### 税养卡池 + 锁定铸造
 
-Owner 已拍板采用 Pattern ①: 协议排期式限量发行、买卡烧 G、不可赎回, 不引入质押、不引入 bonding curve。
+Owner 已拍板采用**税养卡池 + 锁定铸造**模型: 市场抽的 tax/rake 分出一个可配置份额 `cardTaxShareBps` 注入卡牌合约池 `cardMintPoolG` 持续丰富卡池；卡牌通过**锁定 G**(lock not burn)铸出, 而不是定价限量发售、不是买卡 burn、不引入质押曲线、不引入 bonding curve。
 
-市场结算不另起一套规则, 仍沿用 §4 `G 押注` 的三段分流:
+市场结算不另起一套规则, 仍沿用 §4 `G 押注` 的三段分流; 区别只是 tax 现在再分流一路进卡池:
 
 1. 赢家 payout 受 §3 backing 铁律约束。
-2. tax/rake (`taxBps`, 即旧 `feeBps` 的正式语义) 进入 `protocolTreasuryG`。
+2. tax/rake (`taxBps`, 即旧 `feeBps` 的正式语义) 进入金库分流: 一部分进 `protocolTreasuryG`(同旧), 一部分按 `cardTaxShareBps` 进 `cardMintPoolG`(税供卡池)。
 3. burn (`losingBurnG`/`burnBps`) 永久销毁或进入不可回流 sink。
 
-三者参数独立、可配置。tax 和 burn 的区别必须在账上可验证: tax 进金库、未来可按白名单再花；burn 消失, 不能被治理、金库或补贴池回收。
+三者参数独立、可配置。tax 和 burn 的区别必须在账上可验证: tax 进金库/卡池、未来可按白名单或卡牌锁定铸造再花；burn 消失, 不能被治理、金库或补贴池回收。
 
-卡牌一级市场规则:
+两条铸造路径:
 
-1. 协议是唯一铸造方。复用现有 `CardLedger.mintCard(ownerAgent, unitType)`, 但 v2 上线前必须把可调用它的 operator 收敛为唯一 `PrimaryCardMarket` 发售执行器；玩家和 legacy `AgentRegistry.operators` 不能自由铸卡。现有 `mintCard` 是 `external onlyOperator`, 见 `contracts/src/CardLedger.sol:75` 到 `contracts/src/CardLedger.sol:86`; `onlyOperator` 只检查 `registry.isOperator(msg.sender)`, 见 `contracts/src/CardLedger.sol:61` 到 `contracts/src/CardLedger.sol:64`。收敛实现应改成 `onlyPrimaryMinter` 或等价的单一 minter 地址, 而不是继续信任全局 operator。
-2. 供给表述是“协议排期式限量发行”, 不是无条件全局供给不膨胀。每个 season、unitType、rarity 或 saleId 必须有显式 cap, 每个 epoch 也必须有总发行上限；若要宣称全局不膨胀, 还必须有链上 `globalMaxSupply`。cap 一经 open season/sale 即不可调, 一级市场售罄后不能追加同批次供应；若要新供给, 必须开新公开 season/saleId 并公布新 cap。
-3. 玩家用 G 购买一级市场新卡。买家侧支付的 `priceG` 先从玩家 `gBalance` 扣除, 再按 `cardSaleBurnBps` / `cardSaleTreasuryBps` 分流。硬约束: `cardSaleBurnBps > 0` 且 `cardSaleBurnBps + cardSaleTreasuryBps == 10000`; 买卡必 burn, `cardSaleBurnBps == 0` 禁止上线。一级市场售卡只有 burn 和 `protocolTreasuryG` 两个出口, 不得产生第三个未命名账目。铸造本身不消耗 G, 只消耗交易 gas；G 的真实消耗发生在买家侧 burn, 不是“合约质押 G 铸造”。
-4. 一级市场 sale 绝不调用 `creditG` 给协议 agent 制造余额；进入金库的是 `protocolTreasuryG` 账目, 不能进入玩家可提余额, 不能作为未结算市场 backing。协议、金库、做市、团队或其他关联 owner/agent 禁止购买一级新卡；若测试环境需要协议 agent 持卡, 必须走非正式测试开关且不计入真实 sale、回流资格、TWAP 或玩家支付统计。实现注记: 不得通过协议 agent `gBalance` 自买把 `cardSaleTreasuryBps` 收回。
-5. 一级发售必须内置防套利机制, 至少同时使用三项: 荷兰拍或批量清算价避免机器人按固定低价扫货；per-owner per-sale 限购避免单 owner 包场；一级价格下限跟随对应 unit/rarity 的二级成交 TWAP 或 oracle-free rolling median, 没有二级样本的 genesis sale 必须使用公开初始曲线和小额限购。目标是降低一级扫货后立即二级黄牛抛售的无风险空间。
-6. 卡牌无赎回、无 G backing。卡牌价值来自攻防效用 + 排期式限量稀缺, 不是可兑回的 G 储备。
+1. **成就铸稀有卡(税池出资)**: 当 agent 达成某个**客观链上成就**(白名单)时, 卡牌合约从 `cardMintPoolG` **锁定**一笔 G 作为该 NFT 的 backing(锁入 `cardBackingLockedG`), 并给该 agent 铸一张**与成就绑定的稀有 NFT 卡**。玩家不付 G, 由税池出资；卡是出处 / 身份(例如“全网仅此一张”纪念卡)。成就的定向铸造是 §3 CARVE-OUT 里写明的 source-neutral 有意例外, 但成就白名单必须抗 sybil / 抗刷, 否则税供稀有卡会变成自肥漏(OPEN, 见 §12)。
+2. **白板卡自铸(玩家自锁)**: 任何 agent **锁定自己的 `gBalance`**(数额 `blankCardMintLockG`)铸一张**白板基础卡**。锁定的 G 进入 `cardBackingLockedG`, 作为该白板卡的 backing。
+
+锁定铸造的硬规则:
+
+1. 协议侧唯一铸造执行器。复用现有 `CardLedger.mintCard(ownerAgent, unitType)`, 但 v2 上线前必须把可调用它的 operator 收敛为唯一 `CardMintEngine`；玩家和 legacy `AgentRegistry.operators` 不能自由铸卡。现有 `mintCard` 是 `external onlyOperator`, 见 `contracts/src/CardLedger.sol:75` 到 `contracts/src/CardLedger.sol:86`; `onlyOperator` 只检查 `registry.isOperator(msg.sender)`, 见 `contracts/src/CardLedger.sol:61` 到 `contracts/src/CardLedger.sol:64`。收敛实现应改成 `onlyCardMintEngine` 或等价的单一 minter 地址, 而不是继续信任全局 operator。
+2. **锁定而非销毁(lock not burn)**: 铸卡是把 G **锁进**保留桶 `cardBackingLockedG` 作为卡的 backing, **不是 burn**。成就卡的锁定来源是 `cardMintPoolG`, 白板卡的锁定来源是玩家 `gBalance`。`cardBackingLockedG` 必须像 `reservedBackingG` 一样**排除在可提 surplus 之外**, 谁(owner/治理/协议)都不能当 surplus 提走。
+3. 成就路径门控只能是**客观、难刷的链上成就**白名单。成就的定向铸造是对 source-neutral 的有意例外(§3 CARVE-OUT), 但若成就可刷, 税供稀有卡会变成定向自肥漏；因此成就白名单 / 定义必须抗 sybil / 抗刷, flag 为 OPEN(§12)。
+4. 白板自铸只锁玩家自己的 `gBalance`(`blankCardMintLockG`), 不动税池、不动他人余额；其数额与 per-owner cap 待定(OPEN, §12)。
+5. 锁定的 `cardBackingLockedG` 是否可赎回(能否销卡赎回还是永久锁)待定(OPEN, §12)。在定稿前, 锁定 G 一律按保留桶处理, 不计入任何可提 surplus。
+6. 卡牌价值来自攻防效用 + 出处/身份稀缺 + 锁定的 G backing, 不依赖定价限量发售。
 
 卡牌二级市场规则:
 
@@ -530,18 +540,18 @@ Owner 已拍板采用 Pattern ①: 协议排期式限量发行、买卡烧 G、�
 
 防通胀双闸:
 
-1. 协议排期式限量发行: 供给只来自公开且 open 后不可调的 cap, 玩家无自由 mint 路径；若没有 `globalMaxSupply`, 文档和 UI 只能声称 epoch/season/sale 级限量, 不能声称全局供给不膨胀。
-2. G 不通胀: G 永不增发, `creditG` 只能记已背书 payout 或二级守恒转账卖方净收入；卡牌一级市场买卡 burn、二级 `secondaryBurnG`、市场 losing burn 都是硬 sink。
+1. 卡牌供给受铸造路径门控, 玩家无自由 mint 路径: 成就卡只在达成客观链上成就(抗 sybil 白名单)时由 `CardMintEngine` 从 `cardMintPoolG` 锁定铸出, 白板卡需玩家自锁 `blankCardMintLockG` 且受 per-owner cap, 两条路径都要由唯一 `CardMintEngine` 执行, 不存在 legacy operator 自由铸卡。
+2. G 不通胀: G 永不增发, `creditG` 只能记已背书 payout 或二级守恒转账卖方净收入；铸卡是把 G **锁进** `cardBackingLockedG` 而非凭空增发(lock not burn), 二级 `secondaryBurnG`、市场 losing burn 仍是硬 sink。
 
 回流约束:
 
-tax、一级市场卖卡金库份额和二级 `secondaryTaxG` 都是玩家 -> 金库的单向抽水。`protocolTreasuryG` 必须受 §3 的 per-season/epoch `netTreasuryTakeG` cap 约束, 且回流只能进 source-neutral sink: 全局世界事件奖金、按 distinct-owner 中性均摊的补贴, 或不可回收中性 sink。不得定向回流给本次抽取来源、当轮 losing 方、某个指定 agent/owner、协议/关联 agent, 也不得用“补贴”名义把刚抽到的金库份额返还给同一交易或同一市场的特定参与者。
+tax(含进 `protocolTreasuryG` 与进 `cardMintPoolG` 两路)和二级 `secondaryTaxG` 都是玩家 -> 金库/卡池的单向抽水。`protocolTreasuryG` 必须受 §3 的 per-season/epoch `netTreasuryTakeG` cap 约束, 且回流只能进 source-neutral sink: 全局世界事件奖金、按 distinct-owner 中性均摊的补贴, 或不可回收中性 sink。不得定向回流给本次抽取来源、当轮 losing 方、某个指定 agent/owner、协议/关联 agent, 也不得用“补贴”名义把刚抽到的金库份额返还给同一交易或同一市场的特定参与者。`cardMintPoolG` 的成就卡定向铸造是 §3 CARVE-OUT 写明的有意例外, 受成就白名单抗刷约束; `cardTaxShare` 是否计入 `netTreasuryTakeG` 还是视作已返还玩家(NFT backing)是 OPEN(§12)。
 
 已知残留风险: 原抽取方如果是高频参与者, 会按其后续市场份额比例回收一部分 source-neutral 回流；global `treasuryTakeCapBps` 只限制全局/epoch 净抽水, 不约束单一 owner 的 per-owner 净抽水。反自对赌的硬防线不依赖回流: AP throttle 必须锚定 `realBurnedGInMarket`, 且该值只包含真实 burn / 不可回收 sink, 不包含 tax、金库回流、补贴或二级 `secondaryTaxG`。
 
-为什么不用 Pattern B:
+为什么不做定价限量发售 / bonding curve 金融卡:
 
-Pattern B 会再引入一套金融原语: 曲线、赎回、锁仓、套利和赎回负债。这与“保持聚焦、市场才是赌场、卡是效用道具”冲突。Pattern ① 用公开 cap + burn 控制供给和 G sink, 更简单, 不占死资本, 也没有赎回负债。若未来要做可赎回金融卡, 应另开单独设计, 且优先考虑玩家自质押、延后评审。
+定价限量发售 + bonding curve 会再引入一套金融原语: 曲线、套利和发售机器人扫货防线。这与“保持聚焦、市场才是赌场、卡是效用道具”冲突。税养卡池 + 锁定铸造模型用税供池持续丰富卡池、用客观成就和玩家自锁两条路径产卡, 更简单, 不需要排期发售/荷兰拍/per-owner 限购那套定价机制。锁定的 G 是 backing 而非死资本；锁定卡 G 的可赎回性(能否销卡赎回 `cardBackingLockedG` 还是永久锁)是 OPEN(§12)。若未来要做可赎回金融卡或 bonding curve, 应另开单独设计、延后评审。
 
 占位接口:
 
@@ -567,7 +577,7 @@ MVP 的 Layer 3 接口不携带 `cardIds`。本层只保留 Post-MVP hook 草图
 | Tullock 攻击数学参考 | `GameEngine` | 参考 power/success 方向, 见 `contracts/src/GameEngine.sol:409` 到 `contracts/src/GameEngine.sol:418`; 随机数不能沿用 `block.prevrandao` |
 | 一步攻击参考 | `GameEngine.raid` | 仅参考 auto-move + attack 流程, 见 `contracts/src/GameEngine.sol:622` 到 `contracts/src/GameEngine.sol:695`; 不是 v2 邻接规则 |
 | G 账本 | `GTreasury` | `gBalance`, `depositG`, `spendG`, `creditG`, `withdraw`; `creditG` 只记已背书 payout 或二级守恒转账卖方净收入, 不记协议金库收入 |
-| 卡牌库存和二级市场 | `CardLedger` | 持久卡牌、listing、G 交易；一级市场只复用 `mintCard`, 不开放玩家自由铸造；二级交易需经 `SecondaryCardMarket`/wrapper 白名单收款 |
+| 卡牌库存和二级市场 | `CardLedger` | 持久卡牌、listing、G 交易；铸造只由唯一 `CardMintEngine` 调 `mintCard`(成就锁定 / 白板自锁), 不开放玩家自由铸造；二级交易需经 `SecondaryCardMarket`/wrapper 白名单收款 |
 | Arena 卡牌/战斗资产 | `ArenaEngine`, `ArenaCombat`, `UnitCatalog` | 后置作为动作 bonus 来源 |
 | 地址发现 | `Router` | 已包含 `gameEngine`, `arenaEngine`, `gTreasury`, `cardLedger`, 见 `contracts/src/Router.sol:8` 到 `contracts/src/Router.sol:21` 和 `contracts/src/Router.sol:85` 到 `contracts/src/Router.sol:108` |
 
@@ -585,7 +595,7 @@ MVP 的 Layer 3 接口不携带 `cardIds`。本层只保留 Post-MVP hook 草图
 | `V2World` | 推荐方案: 自持 v2 hex owner、defense、battle result、spawn/respawn、score、finalized checkpoint storage/event, 暴露 `attackWithAP` / `reinforceHex` / `returnFromElimination` 或被 `APActionAdapter` 调用 |
 | `APActionAdapter` | 若保留 adapter, 只连接 AP、RNG、`V2World`; 不外部改旧 `GameEngine` 内部状态 |
 | `ActionCardBonusAdapter` | 后置; 把 CardLedger/Arena 卡牌映射成攻防 bonus |
-| `PrimaryCardMarket` | Post-MVP; 管理 immutable season/sale cap、一级市场 G 收款、买卡 burn、`protocolTreasuryG` 入账、per-owner 限购、荷兰拍/清算价和二级 TWAP 价格下限, 并作为唯一协议 mint 执行器调用 `CardLedger.mintCard` |
+| `CardMintEngine` | Post-MVP; 持有税供卡池 `cardMintPoolG`(由 `cardTaxShareBps` 注入)与锁定保留桶 `cardBackingLockedG`；执行两条铸造路径(成就达成时从 `cardMintPoolG` 锁定铸稀有卡 / 玩家自锁 `blankCardMintLockG` 铸白板卡), 作为唯一协议 mint 执行器调用 `CardLedger.mintCard`；lock not burn, 锁定 G 排除在可提 surplus 之外 |
 | `SecondaryCardMarket` 或 treasury wrapper 二级模块 | Post-MVP; 包装 `CardLedger.buyListed` 的 G 结算, 执行 `secondaryTaxBps`/`secondaryBurnBps` 分流, 并通过 `SECONDARY_CARD_TRANSFER` 白名单给卖方 `creditG` |
 
 权限边界:
@@ -598,8 +608,8 @@ MVP 的 Layer 3 接口不携带 `cardIds`。本层只保留 Post-MVP hook 草图
 6. 外部 adapter 不得直接改旧 `GameEngine.hexes/agentHexKeys/hexCount`。
 7. `V2World` 是唯一能写 finalized checkpoint 的合约；市场只能引用创建时不存在、未来才会 finalized 的 checkpoint。
 8. `GTreasury.fundAgentG` 只允许测试网或受控迁移, 不能作为正式经济 mint。
-9. `protocolTreasuryG` 只能由多签 + timelock/治理执行器按 `TreasuryUse` 白名单支出, 且受 `netTreasuryTakeG` cap 约束；不能进入玩家可提余额, 不能填补未结算市场 backing, 不能为铸卡质押 G。
-10. Post-MVP 卡牌一级市场只能由唯一 `PrimaryCardMarket` 调用 `CardLedger.mintCard`; 玩家购买新卡的 G 消耗发生在买家侧 burn + 金库分流, `cardSaleBurnBps > 0` 且 burn+treasury=10000, 不是自由 mint 或可赎回质押。
+9. `protocolTreasuryG` 只能由多签 + timelock/治理执行器按 `TreasuryUse` 白名单支出, 且受 `netTreasuryTakeG` cap 约束；不能进入玩家可提余额, 不能填补未结算市场 backing。卡牌税供池 `cardMintPoolG` 是与 `protocolTreasuryG` 分开的专款专用池, 只能用于卡牌锁定铸造, 同样不能进入玩家可提余额或填补市场 backing。
+10. Post-MVP 卡牌铸造只能由唯一 `CardMintEngine` 调用 `CardLedger.mintCard`; 铸卡是**锁定铸造**——成就卡由税池 `cardMintPoolG` 锁定 backing, 白板卡由玩家自锁 `gBalance`(`blankCardMintLockG`), 锁入 `cardBackingLockedG` 且排除在可提 surplus 之外(lock not burn), 不是自由 mint, 也不是定价限量发售。
 
 V2World 是 MVP 最大单块, 不能在排期里隐形处理。推荐方案 B 至少包含:
 
@@ -630,9 +640,9 @@ MVP 不做:
 2. 建造/采集。
 3. 把每个动作包装成答题。
 4. 卡牌数值接入。
-5. 卡牌一级市场、season cap 发售和金库经营。
+5. 卡牌税养卡池 + 锁定铸造(成就铸稀有卡 / 白板自铸)和卡牌金库经营。
 6. 复杂外交/debate/chronicle 经济化。
-7. ORACLE 盘创建/结算。
+7. ORACLE 盘上线: `ORACLE` 不是被排除项, 而是三类盘的第三类、最后上线(M7)；MVP 首发不创建/结算 `ORACLE` 盘, 是因为它依赖外部预言机信任模型必须先定稿, 按可判定性排在 `MATH`/`STATE` 之后, 不是把这一类砍掉。
 8. 让外部 adapter 改旧 `GameEngine` 内部 hex 状态。
 9. 使用旧 `GameEngine.getScore`、ore/building 字段作为 v2 胜负依据。
 
@@ -652,7 +662,7 @@ MVP 不做:
 8. odds anti-snipe: 早期窗口或 TWAP 快照定义, 不能用 close 瞬时 odds。
 9. 邻接校验落为 public/library `HexGrid`, 不复用旧 `attack` 的 location 模型。
 10. RNG 选 VRF 或 commit-reveal, 并定义请求、揭示、超时、失败/退款规则。裸 `block.prevrandao` 不进入 AP 攻防。
-11. ORACLE 明确后置；若 owner 要提前, 必须先补信任模型和 challenge/attestation 流程。
+11. ORACLE 是三类盘的第三类、最后上线(M7), 不是被排除项；上线前仍必须先定稿信任模型和 challenge/attestation 流程, 未定稿前不创建/结算可结算 `ORACLE` 盘。
 
 ### M1: Treasury + MATH Market
 
@@ -706,11 +716,11 @@ MCP/agent-runner/frontend 迁移:
 
 ### M6: Post-MVP Cards
 
-按 §7 Pattern ①实现卡牌一级/二级市场: `PrimaryCardMarket` 管理 immutable season/sale/epoch cap、荷兰拍或清算价、per-owner 限购、二级 TWAP 价格下限, 买卡 G 分流为 `cardSaleBurnBps > 0` 的 burn + `protocolTreasuryG`, 并作为唯一执行器调用 `CardLedger.mintCard`。`SecondaryCardMarket`/wrapper 包装二级 `buyListed`, 执行 `secondaryTaxBps`/`secondaryBurnBps` 分流并通过 `SECONDARY_CARD_TRANSFER` 给卖方净额 `creditG`。再把 `CardLedger`/`ArenaEngine` 的卡牌作为攻防 bonus 接入 `V2World` 或 `APActionAdapter`, 扩展动作接口携带 card set。
+按 §7 税养卡池 + 锁定铸造模型实现卡牌: `CardMintEngine` 持有税供卡池 `cardMintPoolG`(由市场 tax 的 `cardTaxShareBps` 注入)与锁定保留桶 `cardBackingLockedG`, 执行两条铸造路径(成就达成时从 `cardMintPoolG` 锁定铸稀有卡 / 玩家自锁 `blankCardMintLockG` 铸白板卡; lock not burn, 锁定 G 排除在可提 surplus 之外), 并作为唯一执行器调用 `CardLedger.mintCard`。`SecondaryCardMarket`/wrapper 包装二级 `buyListed`, 执行 `secondaryTaxBps`/`secondaryBurnBps` 分流并通过 `SECONDARY_CARD_TRANSFER` 给卖方净额 `creditG`(二级交易规则不变)。再把 `CardLedger`/`ArenaEngine` 的卡牌作为攻防 bonus 接入 `V2World` 或 `APActionAdapter`, 扩展动作接口携带 card set。
 
 ### M7: Post-MVP Oracle
 
-在单独评审中确定 ORACLE 信任模型、challenge window、attestation 来源和失败处理后, 才能把 `ORACLE` 加回 `QuestionKind`。
+`ORACLE` 是 `QuestionKind` 三类盘的第三类、按可判定性排在 `MATH`/`STATE` 之后最后上线。在单独评审中确定 ORACLE 信任模型、challenge window、attestation 来源和失败处理后, 才能开放 `ORACLE` 盘的创建/结算。
 
 ## 11. 与旧 `feat/ux-demo-roadmap` 的关系
 
@@ -718,12 +728,18 @@ MCP/agent-runner/frontend 迁移:
 
 ## 12. OPEN 待 owner
 
-承重项已经上提到 M0/M1 blocking 决策或 §7 Pattern ①, 不再放在 OPEN: G backing 来源/比例、`creditG` 正式奖励权限模型、二级守恒转账白名单、`STATE` checkpoint 锚定策略、World 方案 A/B、防御不变量和成本曲线、三桶隔离、金库白名单授权主体、金库不为铸卡质押、买卡必须 burn G、`netTreasuryTakeG` 可查询累加器与超 cap 拒绝/强制回流。
+承重项已经上提到 M0/M1 blocking 决策或 §7 卡牌模型, 不再放在 OPEN: G backing 来源/比例、`creditG` 正式奖励权限模型、二级守恒转账白名单、`STATE` checkpoint 锚定策略、World 方案 A/B、防御不变量和成本曲线、桶隔离(含 `cardMintPoolG`/`cardBackingLockedG` 专款专用与排除 surplus)、金库白名单授权主体、铸卡为 lock not burn(锁定 G 排除在可提 surplus 之外)、`netTreasuryTakeG` 可查询累加器与超 cap 拒绝/强制回流。
 
 仍可留待 owner 数值定稿的项:
 
 1. trivial 盘具体节流数值: `fixedTrivialAP`、`T_agent_epoch`、`T_owner_epoch`、`T_global_epoch`、`E_min/E_max`、重复模板限流参数。约束式不可放松。
 2. 非 trivial AP/G 与市场三段分流常数: `baseWinAP`, stake 权重、difficulty 权重、TWAP uncertainty 权重、`f(eligibleDistinctOwnerLosingStakeG)`、`g(realBurnedGInMarket)`、`taxBps`、`burnBps`、单市场和单 epoch cap。不能放松独立对手方/净风险/真实 burn 成本/单边退款规则。
 3. 动作成本数值: `minAttackAP`, `respawnAP`, 攻击 AP 到 attackPower 的换算, `reinforceHex` 在 M0 防御不变量内的具体参数。
-4. Layer 4 卡牌接入时机和数值: 卡牌是否消耗、是否锁定在动作中、是否可同时用于 Arena 和领土战, 以及一级市场 `season/sale/epoch cap` 数值、价格曲线、`cardSaleBurnBps`/`cardSaleTreasuryBps` 具体拆分、`secondaryTaxBps`、`secondaryBurnBps`、`treasuryTakeCapBps` 和 source-neutral 回流节奏。约束不可放松: `cardSaleBurnBps > 0`, `cardSaleBurnBps + cardSaleTreasuryBps == 10000`, `secondaryBurnBps > 0`, `secondaryTaxBps + secondaryBurnBps < 10000`, cap open 后不可调。
+4. Layer 4 卡牌接入时机和数值: 卡牌是否消耗、是否锁定在动作中、是否可同时用于 Arena 和领土战, 以及税养卡池 + 锁定铸造模型的待定项:
+   (i) 锁定卡 G 的可赎回性: 能否销卡赎回 `cardBackingLockedG`, 还是永久锁。
+   (ii) 税供稀有卡的抗成就刷 / 抗 sybil: 成就白名单必须客观、难刷, 否则定向铸造变自肥漏。
+   (iii) `cardTaxShareBps` 分流比例, 以及这部分 tax 是否计入 `netTreasuryTakeG`(还是视作已返还玩家 NFT backing)。
+   (iv) `blankCardMintLockG` 数额与 per-owner cap。
+   (v) 成就白名单 / 定义。
+   另含二级抽水数值: `secondaryTaxBps`、`secondaryBurnBps`、`treasuryTakeCapBps` 和 source-neutral 回流节奏。约束不可放松: `secondaryBurnBps > 0`, `secondaryTaxBps + secondaryBurnBps < 10000`; 铸卡为 lock not burn, 锁定 G 排除在可提 surplus 之外; 成就白名单必须抗 sybil / 抗刷。
 5. Post-MVP ORACLE: 信任模型、挑战窗口和 attestation 来源。MVP 不实现。
