@@ -6,40 +6,38 @@
 
 ## 0. TL;DR（30 秒版）
 
-> ### ⚠️ GATE 0 阻塞器（当前未过）
-> **M0 决策签字 0/13 完成 → 接口冻结尚不能合法启动 → 无法并行。**
-> 必须逐项签字（§3 决策表 13 行，含 #5b；每项 ✓ + owner + 日期），**13/13 后才放行冻接口**。在此之前任何 lane 不得起步。
+> ### ✅ 架构已定稿（无 GATE 0）
+> **旧稿的「13 项 M0 决策签字门」已删除**——那些项已 research 定稿为 §3 已定架构（World=B、commit-reveal RNG、`reservedBackingG`=(a)、QuestionRegistry 内嵌、Router 14 槽…）。**接口（§4）即刻可冻、lane 即刻可并行**，不再等任何签字。仅剩 §12 数值与 M7 ORACLE 信任模型待 owner，均**不阻塞**冻接口（§3.5）。
 
-- **关键路径（全串行 ~15 周；并行后净 ~11–12 周、最好 ~10 周到可玩 MVP——并行主要把 L-C/L-D 叠到骨干上、并非砍半，详见 §10）**：`M0 决策+签字(1.5w) → 接口冻结(1w) → [L-A 财库 ∥ L-C 世界 ∥ L-D RNG] → L-B MATH(随 L-A) → C1 冻结后 L-B STATE(顺序,1w) → L-E 行动汇流 → L-I 集成切换`。逐 lane 周数与 PERT 见 §10。
-- **唯一并行总开关 = 接口冻结**；冻结的前置 = M0 的 13 项决策（§3 表，含 #5b）**全部在 `/docs/M0-DECISIONS.md` 里签字**（每项 ✓ + owner + 日期）。
+- **关键路径（全串行 ~13.5 周；并行后净 ~10–11 周、最好 ~9 周到可玩 MVP——架构已定稿、省去旧 1.5w 决策门；并行主要把 L-C/L-D 叠到骨干上、并非砍半，详见 §10）**：`接口冻结(1w) → [L-A 财库 ∥ L-C 世界 ∥ L-D RNG] → L-B MATH(随 L-A) → C1 冻结后 L-B STATE(顺序,1w) → L-E 行动汇流 → L-I 集成切换`。逐 lane 周数与 PERT 见 §10。
+- **唯一并行总开关 = 接口冻结**；冻结的前置 = **采纳 §3 已定架构**（已 research 定稿，无签字门）。
 - **能最早 demo 的薄片 = MATH-only**（P1），不依赖 STATE / V2World checkpoint，先转起来。
 - **承重护栏 = L-T**：接口冻结当天起常驻，`contracts/test/WorldInvariants.t.sol`（6 项 property test）+ CI 门禁所有 lane 合并，不变量红则不准 merge。
 - **三个硬汇流点**：①STATE ⟂ V2World.checkpoint（M2→M3，**注意 L-B STATE 顺序等 L-C，非并行**）②L-E ⟂ AP.spend+Hex邻接+RNG（P1 mock/P2 real）（M3→M4，**注意：STATE 市场读 L-E 写的 checkpoint，是 L-E 的下游而非上游**）③L-I feature-flag 软切（M4→M5，**翻 flag 须 L-T 6/6 ∧ P2 gate ∧ M4.5 审计 ∧ 迁移快照校验全绿**）。
-- **本文未决而需 owner 拍板的**：见 §3 决策表（尤其尚未签字的 **#1 World A/B**、**#5b reservedBackingG 边界**——须指定 owner + 期限）+ §12 OPEN 数值；签字前不得冻接口。
-- **7 个必须先落地的执行工件**（详见 §1.工件清单）：`/docs/M0-DECISIONS.md`、`/contracts/src/interfaces/` 7–8 个 MVP 接口（含 IQuestionRegistry 则 8，视 #11 而定）+ `HexGrid.sol` + `Mock*`、`/contracts/test/WorldInvariants.t.sol`、`/lane-PLAN.md`、`/docs/gates.md`、`/docs/§12-values.md`、Router V3→V4 扩展 + setter。无这 7 件，本文只是路线图、不是可执行部署规格。
+- **仅剩需 owner 拍板的**：§12 数值 + M7 ORACLE 信任模型（§3.5），**均不阻塞冻接口**；架构决策（World/RNG/财库/市场/Router）已在 §3 定稿。
+- **6 个必须先落地的执行工件**（详见 §1.工件清单）：`/contracts/src/interfaces/` 6 个 MVP 接口（QuestionRegistry 内嵌、不单列）+ `HexGrid.sol` + `Mock*`、`/contracts/test/WorldInvariants.t.sol`、`/lane-PLAN.md`、`/docs/gates.md`、`/docs/§12-values.md`、Router V3→V4 扩展（14 槽）+ setter。无这 6 件，本文只是路线图、不是可执行部署规格。
 
 ---
 
 ## 1. 这份文档是什么 / 怎么读
 
-工程稿 §10 把里程碑写成一条线性链（M0→M1→…→M7）。但其中很多模块**没有真实依赖**，只是被排成了一串。本文把它拆成**可并行的 lane**：先锁 M0 决策、冻结接口，然后多人/多 agent 各占一条 lane 同时开工，最后按垂直切片合龙到可玩 MVP。读者是项目 lead、工程师和并行 coding agent——你只需要知道**什么能并行、什么顺序、怎么推到能 demo**。合约字段细节一律回查 game-design.md，不在这里复述。
+工程稿 §10 把里程碑写成一条线性链（M0→M1→…→M7）。但其中很多模块**没有真实依赖**，只是被排成了一串。本文把它拆成**可并行的 lane**：采纳 §3 已定架构、冻结接口，然后多人/多 agent 各占一条 lane 同时开工，最后按垂直切片合龙到可玩 MVP。读者是项目 lead、工程师和并行 coding agent——你只需要知道**什么能并行、什么顺序、怎么推到能 demo**。合约字段细节一律回查 game-design.md，不在这里复述。
 
-**阅读顺序建议**：§0 TL;DR → §2 一眼看懂图 → §3 M0 决策表（先签字）→ §5 lane 总表（认领 lane）→ §7 切片（看怎么合龙）。其余按需查。
+**阅读顺序建议**：§0 TL;DR → §2 一眼看懂图 → §3 已定架构 → §5 lane 总表（认领 lane）→ §7 切片（看怎么合龙）。其余按需查。
 
-**七个落地工件（本文之外、但本文强约束——无则 gate 是空壳）**：
+**六个落地工件（本文之外、但本文强约束——无则 gate 是空壳）**：
 
 | # | 工件路径 | 内容 | 谁建/何时 |
 |---|---|---|---|
-| 1 | `/docs/M0-DECISIONS.md` | §3 决策表 13 行逐行（含 #5b）：列 `# / 决策 / owner / 签字✓ / 日期 / 解锁 lane`；README/ADR 登记为阻塞依赖 | lead，M0 开始即建 |
-| 2 | `/contracts/src/interfaces/` + `/contracts/src/libraries/HexGrid.sol` + `Mock*` | 7–8 个 MVP `I*.sol`（含 IQuestionRegistry 则 8）+ `HexGrid` library + 3 个确定性 Mock（§4 清单） | lead，冻结后 3 天内 |
-| 3 | `/contracts/test/WorldInvariants.t.sol` | 6 项 property test 骨架（§8 不变量 #1–#6 映射）；CI `forge test --match-contract WorldInvariants` | L-T owner，冻结日 +1d |
-| 4 | `/lane-PLAN.md`（或 CONTRIBUTING.md） | worktree 命名 regex、文件归属矩阵、合并次序、接口冻结/只读协议、Mock↔real 同步规约、feature-flag SOP、Router 维护 SOP（§9） | lead，冻结前 |
-| 5 | `/docs/gates.md` | P1/P2/P3 DoD 可执行清单（§7） + M4.5 审计 gate；挂 GitHub milestones | lead，M1 前 |
-| 6 | `/docs/§12-values.md` | OPEN 数值：列 `参数 / 影响 / 决定期限 / 占位(local-only) / owner / 日期`（§12）；CI linter 检测硬编码非默认值 | lead，M1 前 |
-| 7 | `Router.sol` V3→V4 扩展 | 7–10 个 address 槽 + 公共 getter + `getAddressesV4()` + setter（§4 Router 段） | lead，随接口冻结 |
+| 1 | `/contracts/src/interfaces/` + `/contracts/src/libraries/HexGrid.sol` + `Mock*` | 6 个 MVP `I*.sol`（QuestionRegistry 内嵌、不单列）+ `HexGrid` library + 3 个确定性 Mock（§4 清单） | lead，冻结后 3 天内 |
+| 2 | `/contracts/test/WorldInvariants.t.sol` | 6 项 property test 骨架（§8 不变量 #1–#6 映射）；CI `forge test --match-contract WorldInvariants` | L-T owner，冻结日 +1d |
+| 3 | `/lane-PLAN.md`（或 CONTRIBUTING.md） | worktree 命名 regex、文件归属矩阵、合并次序、接口冻结/只读协议、Mock↔real 同步规约、feature-flag SOP、Router 维护 SOP（§9） | lead，冻结前 |
+| 4 | `/docs/gates.md` | P1/P2/P3 DoD 可执行清单（§7） + M4.5 审计 gate；挂 GitHub milestones | lead，M1 前 |
+| 5 | `/docs/§12-values.md` | OPEN 数值：列 `参数 / 影响 / 决定期限 / 占位(local-only) / owner / 日期`（§12）；CI linter 检测硬编码非默认值 | lead，M1 前 |
+| 6 | `Router.sol` V3→V4 扩展 | 5 个 net-new address 槽（V4=14）+ 公共 getter + `getAddressesV4()` + setter（§3.4 / §4 Router 段） | lead，随接口冻结 |
 
 **CI gate 总览（必须机械化，非「文档纪律」）**：
-- (a) `M0-DECISIONS.md` 13 行未全签（按行计数，含 #5b；签字以 CODEOWNERS required-review / 署名 commit 为准，不只检测 .md 里的 ✓ 字符）→ block merge to main；
+- (a) 改动 §3 已定架构（冻结的 interface/struct、Router 槽、财库权限模型 `creditG`/`reservedBackingG`、RNG 选型、World=B 边界）但无对应 ADR（§9）→ block + 评论；
 - (b) `forge test --match-contract WorldInvariants` 红 → block；
 - (c) L-B STATE 代码引用 `IWorldCheckpoint` 而 C1 未打 `frozen` tag → reject；
 - (d) **v1 旧 scope 越界 grep**（ore/build/arsenal/happiness/raid，限 v2 新合约/服务目录、diff 新增行、`// V1-REF:` 标注豁免）命中 → block + 评论；
@@ -51,19 +49,19 @@
 
 ## 2. 一眼看懂：怎么并行
 
-核心解法一句话：**锁 M0 决策 → 冻结 struct/event/interface → N 条 lane 各自对着 ABI + mock 并行 → 垂直切片合龙跑通闭环。**
+核心解法一句话：**采纳 §3 已定架构 → 冻结 struct/event/interface → N 条 lane 各自对着 ABI + mock 并行 → 垂直切片合龙跑通闭环。**
 
 接口一旦冻结，每条 lane 都对着稳定的 ABI 和 mock/stub 编码，互不踩；这才是「真并行 + 合并安全」的前提，而不是嘴上并行、合并时炸。
 
 **★ 解锁链（一行看懂关键路径，注意 STATE 是顺序非并行）**：
-`M0 决策[13签字] →[MUST FREEZE,1w]→ 接口冻结 → (🔴L-A 财库 ⇒ 🔴L-B MATH) ∥ (🔴L-C V2World ⇒ C1冻结 ⇒ 🔴L-B STATE 顺序1w) ∥ (🟡L-D RNG) → 🔴L-E 行动[⟂AP.spend+Hex+RNG（P1mock/P2real）] → 🔴L-I 集成[⟂真实切换,带4重门]`
+`§3 已定架构 →[MUST FREEZE,1w]→ 接口冻结 → (🔴L-A 财库 ⇒ 🔴L-B MATH) ∥ (🔴L-C V2World ⇒ C1冻结 ⇒ 🔴L-B STATE 顺序1w) ∥ (🟡L-D RNG) → 🔴L-E 行动[⟂AP.spend+Hex+RNG（P1mock/P2real）] → 🔴L-I 集成[⟂真实切换,带4重门]`
 🔴 = MVP 关键路径（卡它就卡 demo） · 🟡 = 支撑/旁挂（不卡关键路径）
 
 ```
                          ┌─────────────────────────────┐
-                         │  M0 决策锁定 (阻塞所有人)     │   ← 不锁=不能冻接口=不能并行
-                         │  §3 决策表 13 行须全签字      │   ← 现状 0/13 = GATE 0 未过
-                         │  落 /docs/M0-DECISIONS.md     │   ← CI: 13/13 未签则 block main
+                         │  §3 已定架构 (research 定稿)  │   ← World=B / RNG=commit-reveal
+                         │  无 GATE 0、无逐项签字        │   ← 采纳即可，改架构走 ADR(§9)
+                         │  仅 §12 数值 / M7 ORACLE 待定 │   ← 二者不阻塞冻接口
                          └──────────────┬──────────────┘
                                   [MUST FREEZE, 1w]
                          ┌──────────────▼──────────────┐
@@ -110,8 +108,8 @@
 
 | Lane | Deps（谁卡它） | Unblocks（它放开谁） | Est. |
 |---|---|---|---|
-| 🔴L-A 财库 | 仅 M0 #4/#5/#5b | L-B payout backing | ~2w |
-| 🔴L-C V2World | 仅 M0 #1/#2/#6/#10 | C1→L-B STATE、L-E hex | ~2.5w |
+| 🔴L-A 财库 | 仅 §3.2 财库（已定） | L-B payout backing | ~2w |
+| 🔴L-C V2World | 仅 §3.1 World/Hex/RNG（已定） | C1→L-B STATE、L-E hex | ~2.5w |
 | 🔴L-B MATH/STATE | L-A（payout）；**STATE 硬等 L-C C1** | AP credit → L-E 有 AP 花（STATE 市场则消费 L-E 的 checkpoint） | 1.5w+1w |
 | 🔴L-E 行动 | L-C hex/邻接 + APLedger.spend + L-D RNG（P1mock/P2real）**三齐** | L-I 真实切换；写 checkpoint 喂 STATE 市场 | ~2w |
 
@@ -120,58 +118,67 @@
 - **② L-E ⟂ APLedger.spend + Hex邻接 + RNG（P1 mock / P2 real）（M3→M4）**。**方向勿反：L-E 的 `attackWithAP` 写 battle/capture checkpoint，STATE 市场读它——STATE 是 L-E 的下游消费者，不是 L-E 的前置。**
 - **③ L-I ⟂ 真实栈（M4→M5）**：翻 flag 须 4 重门全绿（见 §6 join③）。
 
-> **依赖无环（DAG）已核 —— 两张图分开看**：(1) **运行期合约调用图**单向——`APLedger.creditFromMarket` **只**由 `PredictionMarketEngine` 调、`spendForAction` **只**由 `V2World`/`APActionAdapter` 调（Market 永不调 spend、V2World 永不调 credit）。(2) **lane 构建/排期图**无环的关键 = **L-B STATE 对着 `MockV2World` 的确定性 checkpoint 开发**（不依赖 L-E 的实时产出），故 L-E↔STATE 的运行期数据依赖不构成构建回边；按 §9 合并次序（C1 封板 → L-B STATE → L-E）做一次拓扑序即无环。
+> **依赖无环（DAG）已核 —— 两张图分开看**：(1) **运行期合约调用图**单向——`APLedger.creditFromMarket` **只**由 `PredictionMarketEngine` 调、`spendForAction` **只**由 `V2World` 调（方案 B 无 APActionAdapter；Market 永不调 spend、V2World 永不调 credit）。(2) **lane 构建/排期图**无环的关键 = **L-B STATE 对着 `MockV2World` 的确定性 checkpoint 开发**（不依赖 L-E 的实时产出），故 L-E↔STATE 的运行期数据依赖不构成构建回边；按 §9 合并次序（C1 封板 → L-B STATE → L-E）做一次拓扑序即无环。
 
 ---
 
-## 3. 第 0 步（阻塞所有人）：先锁 M0 决策 + 签字
+## 3. 已定架构（取代旧「M0 决策门」）
 
-> **M0 owner = [待指定：项目 lead，见 §4/§9]，13 项（§3 表，含 #5b）须于 [待定截止日，建议接口冻结前 1.5w] 前全部决定。未签项阻塞接口冻结。**
-> 在 README 登记：「M0 owner: [NAME]，决策截止 [DEADLINE]」，并给 M0 owner 设日历提醒。**当前签字进度：0/13。**
+> **旧稿这里是一张 13 行「逐项签字才能开工」的 M0 决策表——已删除。** 那些项**不是**真正悬而未决的业务抉择，全部能靠读真实合约 + game-design 直接定稿（已 research，依据见下）。**核心原则 = 架构干净**：单一新世界 `V2World` 自持状态、不碰旧 `GameEngine` 内部、单一发奖入口、桶隔离财库、最小合约面。**没有 GATE 0、没有逐项签字——架构既定，接口（§4）即刻可冻、lane 即刻可并行。** 仅剩 §12 数值与 M7 ORACLE 信任模型待 owner，二者都**不阻塞**结构/冻接口（§3.5）。要改下面任一架构决策，走一次 ADR（§9），不走签字门。
 
-**未锁 = 无法冻接口 = 无法并行。** M0 不是调参，是承重边界（§10.M0）。下列每一项直接决定某条 lane 的 struct/接口长什么样，必须在接口冻结前由 **owner 逐项签字**（✓ + 姓名 + 日期）才放行。**签字栏留空 = 该 lane 不得起步。**
+### 3.1 世界 / Hex / RNG
 
-**gate 流程（强约束 + CI 机械化）**：(1) 本表逐行转录进 `/docs/M0-DECISIONS.md`，加 `owner`/`日期`/`✓`/`解锁 lane` 列；(2) 13 行各由 owner review 并签字；(3) tracker 在 README/ADR 中登记为**阻塞依赖**；(4) **CI job 按行计数校验全部 13 行（含 #5b）皆有 ✓+日期，否则 block merge to main；签字以 CODEOWNERS required-review / 署名 commit 为准，不只检测 .md 里的 ✓ 字符**；(5) 关键：`#1 World A/B` 未签 → `feat/lane-C-world` 分支禁止创建；`#5b reservedBackingG` 未签 → L-A escrow 记账禁止 finalize。
+- **World = 方案 B（`V2World` 自持状态）——被逼出来的、不是偏好。** 旧 `GameEngine` 的 `hexes/agentHexKeys/hexCount` 是 `public` mapping（**只有 getter、无外部 setter**，`GameEngine.sol:76-78`），所有写入都 internal 且锁在 `canControlAgent` 后（capture `:429-437`）。所以方案 A（外部 adapter 改 GameEngine 内部状态）**根本无法实现**，除非往 GameEngine 里加特权 hook、把 v2 AP/defense 与 v1 ore/arsenal/happiness 挤进同一 UUPS proxy（存储/权限耦合）。**故 B**：`V2World` 自持 hex owner/defense/capture/checkpoint/score；旧 `GameEngine` 只作参考；唯一抽出的是无状态几何 `HexGrid` 库。**无 `APActionAdapter`**（动作直接在 `V2World` 内）。
+- **`V2World` schema（定稿）**：`hexOwner`=`agentId`(uint256，`0`=neutral，无碰撞——agentId 从 1 起 `AgentRegistry.sol:61/:81`)；`hexDefense`（上限/衰减/**capture 清零**，`game-design.md:424/486`）；spawn/respawn allocator（复用 `_findEmptyCluster` 螺旋 `GameEngine.sol:1089`，但**必须保证 0-hex agent 永能再落脚**——保留 neutral/respawn 池或 capped 回场赛）；`checkpoints` mapping 按 `bytes32 eventId`；`v2Score(agentId)`（`game-design.md:531-537`，**花掉的 AP 不计分**）。数值（`D_max/halflife/p_floor/SCORE_PER_*`）→ §12。
+- **`HexGrid` = public library**（`areAdjacent/toKey/fromKey/inBounds/hexDist/neighbor`）。⚠️ **关键改造**：旧 `toKey` 是单向 keccak（`GameEngine.sol:207`，无 `fromKey`），而 `attackWithAP(fromHexKey,targetHexKey)` 传的是 key——无法从 key 反推 `(q,r)` 做邻接校验。**故改用可逆打包键**（如 `bytes32(uint256(uint32(q))<<32 | uint32(r))`），支持 `fromKey` + 按 key 邻接。半径：代码实为 `MAP_RADIUS=100`（`GameEngine.sol:37`，**非 CLAUDE.md 旧说的 4**）；半径**值**→ §12。
+- **RNG = commit-reveal（定稿，藏在 `RNGProvider` 接口后）。** 全仓**无任何 VRF/oracle 随机源**（grep 无 chainlink/VRF/entropy/…），现状全是可 grind 的 `block.prevrandao`（`GameEngine.sol:414`、`ArenaEngine.sol:548`，后者 `:545` 自带 TODO「上线前换 VRF/commit-reveal」）。Gravity 是新链、无现成 VRF coordinator，引 Chainlink 会加外部依赖/LINK 资助——违背自包含方向。**故 commit-reveal**：`attackWithAP` 先扣押 AP + 记 `commitBlock` → `k` 块后用 `keccak(blockhash(commitBlock+k), requestId, …)` 作种 → 超时（blockhash 256 块窗）任何人可 `resolveExpired` **退还已扣 AP**。接口不变，将来 Gravity 有 VRF 直接换 adapter。
 
-| # | M0 决策 | 推荐/口径 | 解锁/卡住谁 | 签字 (owner/日期) |
-|---|---|---|---|---|
-| 1 | **World 方案 A/B**（**未决，须 owner 拍板；签字前禁建 `feat/lane-C-world`**） | **B = 新建 `V2World` 自持状态**（边界干净，邻接/RNG/defense 独立成型；A 需外部写旧 `GameEngine` 内部 mapping，存储/权限风险高，不推荐）。选 B → L-C 范围 = 完全自持 V2World、无外部 adapter 写 GameEngine；选 A → L-C = adapter hook 进旧 GameEngine（高风险，不推荐） | L-C 全部 / L-E adapter footprint / L-I 读取源；**L-B STATE 接口须等本项定** | ☐ ____ / ____ |
-| 2 | **`V2World` 最小 schema（含世界继承 Y/N）** | `hexOwner`(=agentId,`0`=neutral)/`hexCount`(agentId)/`agentHexKeys`、`hexDefense`(衰减/upkeep/capture清零)、spawn/respawn allocator、checkpoint event/mapping(含 `finalized`)、`v2Score` 公式；**+ 是否继承 v1 世界 Y/N → 决定 L-C 是否含一次性快照导入器+校验（直接左右 L-C ~2.5w 估时，并连带 §6 join③ 迁移校验范围）** | L-C 起步与估时；L-B 的 STATE 引用；join③ 迁移门 | ☐ ____ / ____ |
-| 3 | **STATE checkpoint 策略** | eventId 生成/唯一性、finalized 条件、**创建时 checkpoint 必须不存在（`exists==false`；已存在即拒绝，对齐 game-design §4）**、结算时必须存在且 finalized、时间序约束 `openAt<closeAt≤(snapshotTs OR eventFinalizableAfter)≤settleAfter≤settleDeadline`、超时 void+refund、**只能由 `V2World` 写** | L-B 的 STATE 结算分支、L-C checkpoint 写入 | ☐ ____ / ____ |
-| 4 | **G backing 来源与顺序** | losing stakes → 预存补贴池 → 协议已拨入派彩池 surplus；每来源比例/释放条件（补贴释放须满足独立 owner eligibility）；**creditG 前必须有等额具名 backing** | L-A / L-B payout 路径 | ☐ ____ / ____ |
-| 5 | **`creditG` 单一入口** | 正式奖励路径只认单一 `PredictionMarketEngine`/treasury wrapper（**禁止泛 `onlyOperator`**）；二级走独立 `SECONDARY_CARD_TRANSFER` 白名单 | L-A 权限改造、L-B 发奖 | ☐ ____ / ____ |
-| 5b | **`reservedBackingG` 边界（二选一，必须明确写下选哪个；未决，须 owner 拍板；签字前 L-A escrow 不得 finalize）** | **推荐 (a) 简单**：`GTreasury` 加 `reservedBackingG`，`surplusG = balance − totalOutstandingG − reservedBackingG`；或 (b) 市场 G 走独立 wrapper 不进 GTreasury surplus 口径。**M0 须落决策记录 + 边界注释，不写代码，只定方向**；本项定前 L-A escrow/subsidy 记账方向**不得 finalize** | L-A 记账模型、L-B payout backing | ☐ ____ / ____ |
-| 6 | **防御不变量** | `D_max`、`defenseHalfLife/upkeep`、`costToReachDefense`、`costToReachP50AttackAgainst`、`p_floor`（§6 公式锁死） | L-C defense、L-E 攻防数值 | ☐ ____ / ____ |
-| 7 | **trivial vs 非 trivial AP eligibility（两侧都须锁口径）** | **trivial**：`trivial=true` + `fixedAP=fixedTrivialAP` + **无 G payout**，受多维 throttle（§12）。**非 trivial**：≥2 独立 owner、`minIndependentLoserStakeG`、creator/resolver/subject 排除、同 owner 净风险、单边/自对冲退款无 AP/G、**真实 `losingBurnG` 硬要求**、AP throttle 锚 `realBurnedGInMarket`（非 tax/refund） | L-B 结算 eligibility | ☐ ____ / ____ |
-| 8 | **odds anti-snipe** | 早期窗口/TWAP 快照定义 `[openAt+warmup, closeAt−antiSnipeWindow]`，close 前锁定；close 瞬时 odds 不进 `uncertaintyWeight`/AP 公式 | L-B `uncertaintyWeight` | ☐ ____ / ____ |
-| 9 | **RNG 选型** | VRF 或 commit-reveal 二选一 + 请求/揭示/超时/退款规则；**禁用裸 `block.prevrandao`** 做 AP-gated 胜负 | L-D / L-E（M4 硬依赖） | ☐ ____ / ____ |
-| 10 | **HexGrid 邻接** | 落为 public/library 级 `HexGrid.areAdjacent`/`toKey`/`fromKey`/边界检查，不复用旧 location/cooldown 模型 | L-C / L-E | ☐ ____ / ____ |
-| 11 | **QuestionRegistry 独立 or 内嵌** | 独立合约 vs `PredictionMarketEngine` 内部 enum/whitelist——**必须明确二选一**；若独立则进 Router setter | L-B scope / Router 扩展 | ☐ ____ / ____ |
-| 12 | **ORACLE 定位 + M4.5 信任模型签字** | 三类盘第三类、最后上线(M7)，**deferred 非 cut**；信任模型（单签/多签/optimistic/attestation + 挑战窗 + 失败恢复）先登记；**M4.5 审计须含 1 页 ORACLE 信任模型决策 + 批准，L-O 待此签字方可实现** | L-O（不阻塞 MVP） | ☐ ____ / ____ |
+### 3.2 财库与经济（#4/#5/#5b 是**一坨耦合改造**，一起落 L-A、不可拆）
 
-> 数值（§12）可后置（`fixedTrivialAP`、各 cap、`taxBps/burnBps`、`minAttackAP` 等）——但**约束式与 struct 字段**必须现在锁，否则无法冻接口。数值跟踪见 §12 / `/docs/§12-values.md`。
+> 现状 `GTreasury` **没有**任何 backing 机制（grep `reservedBackingG/protocolTreasuryG/netTreasuryTakeG` 全空），且 `spendG` 会 `totalOutstandingG -= amount`（`GTreasury.sol:120`）——下注一进 escrow 就从「欠款」变成可提 surplus。故下面三项必须一起改、否则 (a) 的简单 surplus 公式是错的。
+
+- **#5b `reservedBackingG` = 方案 (a)（定稿）**：`GTreasury` 加 `reservedBackingG`（追加在 `_reentrancyStatus` 后保 UUPS 布局），`surplusG = balance − totalOutstandingG − reservedBackingG`（改 `:166-169`/`:158`）。**但必须配新的「市场专用」记账入口**（escrow：`totalOutstandingG-=stake; reservedBackingG+=stake`；payout：反向；burn：`reservedBackingG-=burn` 进不可回流 sink），**不能走现有 `spendG`**。`frozenG[cardId]`（M6）同样并入这套 `owed`。
+- **#5 `creditG` 单一入口（定稿）**：现状 `creditG` 是泛 `onlyOperator`（`GTreasury.sol:126`→`AgentRegistry.sol:36-38`，任何 operator/owner 都能 mint G）。改为：正式发奖只认单一不可变 `marketEngine` 地址（`onlyMarket`）；二级卖方收款走独立 `SECONDARY_CARD_TRANSFER` 白名单（守恒 `buyerSpendG==sellerCreditG+secondaryTaxG+secondaryBurnG`）。**连带迁移**：`CardLedger.buyListed`(`:132`) 与 `ArenaEngine.bootstrapMarket`(`:766`) 现走的就是那扇泛门、锁紧后会 revert，须改走二级入口或 faucet-only。
+- **#4 backing 来源/顺序（定稿）**：losing stakes → 预存补贴池 → 已拨入 surplus；creditG 前必有等额具名 backing（顺序逻辑在 `PredictionMarketEngine` 结算里、不在 GTreasury）。比例/补贴释放条件 → §12/owner。
+- **净抽水 cap（定稿）**：`netTreasuryTakeG(epoch)` 累加器 + `checkNetTakeCapAndEnforce()`（超 `treasuryTakeCapBps` 拒绝/source-neutral 回流，burn 永不回流）。**连带**：现状 `withdrawSurplus` 是 `onlyOwner` 后门（`:151`，无 epoch 记账无 cap）——必须换成多签/timelock + `TreasuryUse` 枚举的受限支出（**这是当前代码与定稿架构最大的一处分歧**）。`ProtocolTreasuryAccounting` 并入 `GTreasury`（不另起合约/槽）。
+
+### 3.3 市场 / 结算 / AP（#3/#7/#8/#11）
+
+- **#3 STATE checkpoint = 采纳 game-design §4 原文**（`exists==false` 创建、`finalized` 结算、时间序、超时 void+refund、只 `V2World` 写、键 `bytes32 eventId`=`Question.snapshotEventId`）。`eventId` 派生定为 `keccak256(abi.encode(kind, hexKey|battleId|windowId, seq))`（创建者与 `V2World` 可独立算出同一未来键）。无悬念。
+- **#7 eligibility / #8 anti-snipe = 结构采纳 §4/§5 原文**（≥2 独立 owner、真实 `losingBurnG`、单边/自对冲只退款、AP throttle 锚 `realBurnedGInMarket`；TWAP `[openAt+warmup, closeAt−antiSnipeWindow]`、close 瞬时 odds 不进公式）。只有常数 → §12。
+- **#11 QuestionRegistry = 内嵌（定稿）**：模板白名单 + `trivial/difficulty` 派生**内嵌进 `PredictionMarketEngine`**（MVP 只 3 个 MATH 模板、全强制 trivial；派生本就必须在 create 路径里跑）。**不建独立合约、不占 Router 槽**。抽出缝：内部 `_templateConfig/_deriveTrivialAndDifficulty` 边界 + `Question` 已存裸 `templateId/params`（registry-agnostic），M7/非 trivial 治理上线时可无痛抽成独立 `QuestionRegistry`。
+
+### 3.4 合约面与 Router（定稿）
+
+- **MVP 净新增合约 = 5 个，全进 Router V4**：`PredictionMarketEngine`、`MarketSettlementResolver`、`APLedger`、`V2World`、`RNGProvider`。`HexGrid`=**库**（不占槽）；`QuestionRegistry`=内嵌（不存在）；`ProtocolTreasuryAccounting`=并入 `GTreasury`（#5b=(a)，不占新槽）；**无 `APActionAdapter`**（方案 B）。
+- **Router V3→V4**：现有 9 槽（`getAddressesV3()`，`Router.sol:10-21`）+ 5 net-new = **14 槽**，加 `getAddressesV4()`；dual-read（flag=off 读 V3、on 读 V4）。可选预留 M6 卡牌 3 槽避免日后 V5 churn。
+
+### 3.5 仅剩的真·待定（**不阻塞**冻接口/结构）
+
+- **§12 数值**（`fixedTrivialAP`/各 cap/`taxBps·burnBps·treasuryTakeCapBps`/`D_max·p_floor`/`minAttackAP`/半径值/`warmup·antiSnipeWindow`/`SCORE_PER_*`）——经 setter 治理注入；约束式已锁、只缺常数。
+- **M7 ORACLE 信任模型**（单签/多签/optimistic/attestation + 挑战窗 + 失败恢复）——deferred-not-cut，独立评审通过后才上线，**只 gate M7、不 gate MVP**。
+- **M6 卡牌**：`cardTaxShareBps` 是否计入 `netTreasuryTakeG`（或视作已返还 NFT backing）——M6 细节，不阻塞 M1。
 
 ---
 
 ## 4. 并行的总开关：接口冻结（contract-first）
 
-M0 拍板后，第一件并行工作不是写实现，而是**冻结接口**。
+采纳 §3 已定架构后，第一件并行工作不是写实现，而是**冻结接口**。
 
 **冻结 owner 与流程（不可省，否则「冻结」名存实亡）**：
 - **接口冻结 owner = lead（唯一定稿人）**。`interface I*.sol`、`HexGrid.sol` 与 `Router` 只此一人可提交；这些路径写入 `CODEOWNERS`，PR 须 lead review。
-- **流程**：M0 13/13 签字后，lead 在 **3 天内**于 `/contracts/src/interfaces/` 起草全部接口 + mock → 各 lane 48h 内 review → lead 批准/驳回改动 → **封板日（freeze-board date）= M0+1w，写进 PR/tag**。
+- **流程**：采纳 §3 已定架构后，lead 在 **3 天内**于 `/contracts/src/interfaces/` 起草全部接口 + mock → 各 lane 48h 内 review → lead 批准/驳回改动 → **封板日（freeze-board date）= 冻结启动 +1w，写进 PR/tag**。
 - **封板后规则**：接口文件**只读**，任何 struct/签名改动须 lead + PM 双签经 review/approval；lane 开发期间不得擅改。
 
 **冻结工件清单（freeze 后第一周内交付，不等 M1 实现）**——目录与文件须真实落地：
 
-`/contracts/src/interfaces/`：
-- `IPredictionMarketEngine.sol`
-- `IQuestionRegistry.sol`（若 #11 选独立）
+`/contracts/src/interfaces/`（6 个 net-new MVP I*.sol；QuestionRegistry 内嵌 PME、不单列；财库扩展在 GTreasury、非新合约）：
+- `IPredictionMarketEngine.sol`（内嵌模板白名单 + `_deriveTrivialAndDifficulty`，§3.3）
 - `IMarketSettlementResolver.sol`
 - `IAPLedger.sol`
 - `IV2World.sol` + **`IWorldCheckpoint.sol`（checkpoint 读接口须最先冻结 = C1，见 §6 join①；进 CODEOWNERS，L-C/L-T 双 review）**
-- `IProtocolTreasuryAccounting.sol`
-- `IRNGProvider.sol`
+- `IRNGProvider.sol`（commit-reveal，§3.1）
+- 财库扩展（**并入 `GTreasury` 接口、非新合约**）：`onlyMarket creditG` / `reservedBackingG` / `surplusG` 改写 / `netTreasuryTakeG` cap / `SECONDARY_CARD_TRANSFER`（§3.2）
 - （Post-MVP 预留）`ICardMintEngine.sol` / `ISecondaryCardMarket.sol` / `IActionCardBonusAdapter.sol`
 
 `/contracts/src/libraries/`：
@@ -213,7 +220,7 @@ interface IWorldCheckpoint {
 - **Treasury 记账口径**：`reservedBackingG`/wrapper 二选一落地（§3#5b）、`TreasuryUse` 枚举、`netTreasuryTakeG(epoch)` 累加器签名、`creditG` 权限边界。**`netTreasuryTakeG` cap 强制为 L-A 必交项（非可选）**：累加器 + `checkNetTakeCapAndEnforce()`（cap 比较 + 超 cap 拒绝/强制 source-neutral 回流）+ 由 L-T property #5 测试。
 - **Router 扩展（V3→V4，随冻结一并完成，不等 M4，仅加地址槽+setter，无需实现）**：
   - 基线：`Router.sol`（V3，`getAddressesV3()`）**已含** 9 槽（`registry/agentLedger/locationLedger/inboxLedger/gameEngine/evaluationLedger/arenaEngine/gTreasury/cardLedger`），**缺下列全部 net-new**。
-  - 新增：为 `PredictionMarketEngine/APLedger/V2World/ProtocolTreasuryAccounting/MarketSettlementResolver/RNGProvider/HexGrid`（+ 若 #11 独立则 `QuestionRegistry`；Post-MVP 预留 `CardMintEngine/SecondaryCardMarket/ActionCardBonusAdapter`）补 address 槽 + getter + setter + `getAddressesV4()`。
+  - 新增 **5 个 net-new 槽**：`PredictionMarketEngine/APLedger/V2World/MarketSettlementResolver/RNGProvider`（`HexGrid`=库不占槽；`QuestionRegistry`=内嵌不存在；`ProtocolTreasuryAccounting`=并入 GTreasury 不占新槽；Post-MVP 可预留 `CardMintEngine/SecondaryCardMarket/ActionCardBonusAdapter`）补 address 槽 + getter + setter + `getAddressesV4()`（V4=14 槽）。
   - 向后兼容 = **dual-read（已定，见 §6/§9）**：flag=off 读 V3 getter、flag=on 读 `getAddressesV4()`；SOP 入 `/lane-PLAN.md`。
   - **漏了 = M5 翻 flag 读到 V3 旧址 → MCP 调错 APLedger/V2World/RNG → 生产静默 0-day。**
 
@@ -233,10 +240,10 @@ interface IWorldCheckpoint {
 
 | Lane | Owner（主/备） | Est. | Deps（谁卡它） |
 |---|---|---|---|
-| 🔴 L-A 财库安全层 | ☐ 主 / ☐ 备 | ~2w | M0 #4/#5/#5b（无合约依赖，可最先动） |
-| 🔴 L-B 市场+结算+AP | ☐ 主 / ☐ 备 | MATH ~1.5w + STATE ~1w | M0 #3/#7/#8/#11；L-A（escrow/payout）；**STATE 硬等 L-C C1（join①）** |
-| 🔴 L-C 世界+Hex | ☐ 主 / ☐ 备 | ~2.5w | M0 #1(B)/#2/#6/#10（独立；可选旧快照导入） |
-| 🟡 L-D RNG Provider | ☐ 主 / ☐ 备 | mock ~1w + real ~1.5w | M0 #9（独立；M4 才被 L-E 接入） |
+| 🔴 L-A 财库安全层 | ☐ 主 / ☐ 备 | ~2w | §3.2 财库已定（无合约依赖，可最先动） |
+| 🔴 L-B 市场+结算+AP | ☐ 主 / ☐ 备 | MATH ~1.5w + STATE ~1w | §3.3 市场已定；L-A（escrow/payout）；**STATE 硬等 L-C C1（join①）** |
+| 🔴 L-C 世界+Hex | ☐ 主 / ☐ 备 | ~2.5w | §3.1 已定（World=B；可选旧快照导入） |
+| 🟡 L-D RNG Provider | ☐ 主 / ☐ 备 | mock ~1w + real ~1.5w | §3.1 RNG=commit-reveal（独立；M4 才被 L-E 接入） |
 | 🔴 L-E AP-gated 行动层 | ☐ 主 / ☐ 备 | ~2w（P1 薄片可早起，full 卡 real RNG） | **L-C hex/邻接 + APLedger.spend + L-D RNG（P1mock/P2real）三齐（join②）；STATE 市场是 L-E 下游、非前置** |
 | 🔴 L-I 集成面 | ☐ 主 / ☐ 备（stub→real，1–2 人） | stub 持续 + 切换 ~2w | Market/AP/V2World 部署可调用；翻 flag 须 4 重门（join③） |
 | 🟡 L-T 测试/不变量护栏 | ☐ **专属 QA/security**（须填真实名，不借 dev lane） | 常驻 | Day 1（接口冻结即起） |
@@ -246,10 +253,10 @@ interface IWorldCheckpoint {
 **(b) 交付物与说明（按 lane）**：
 
 - **🔴 L-A 财库安全层** — 模块：`GTreasury` 权限收紧 + `ProtocolTreasuryAccounting`（`reservedBackingG`/wrapper、`TreasuryUse`、`netTreasuryTakeG` cap、burn/sink 口径）。交付：收紧的 `creditG`/`surplusG`、**`netTreasuryTakeG` 累加器 + `checkNetTakeCapAndEnforce()` 超 cap 拒绝/回流（必交，非可选，L-T #5 测）**、可查询 backing 边界 + 自带 escrow 不变量测试。并行安全：✅ 独立，可最先动。
-- **🔴 L-B 市场+结算+AP经济** — 模块：`PredictionMarketEngine`、`QuestionRegistry`（若独立）、`MarketSettlementResolver`、`APLedger`、odds TWAP 快照。交付：**M1 = MATH 盘开/押/关/结算 + binary settlement + `trivial=true` 强制 + `fixedAP=fixedTrivialAP` + AP `creditFromMarket` + throttle 测试**；**STATE 分支 M3 交付**（M1 可先码 STATE 骨架但**不测不 merge**，gate 在 C1 封板 + M3）。**结算触发（owner=L-B）：MVP `settle()` 设为 permissionless——题到期 / `settleDeadline` 后任何人或 agent-runner 可触发结算并发奖；keeper（M5.5）只做存活监控 + 超时 void+refund 兜底，不是唯一结算者（见 §10/§11）。** 并行安全：⚠️ MATH 段独立先跑；**STATE 段顺序等 L-C C1，非并行**。
+- **🔴 L-B 市场+结算+AP经济** — 模块：`PredictionMarketEngine`（内嵌模板白名单）、`MarketSettlementResolver`、`APLedger`、odds TWAP 快照。交付：**M1 = MATH 盘开/押/关/结算 + binary settlement + `trivial=true` 强制 + `fixedAP=fixedTrivialAP` + AP `creditFromMarket` + throttle 测试**；**STATE 分支 M3 交付**（M1 可先码 STATE 骨架但**不测不 merge**，gate 在 C1 封板 + M3）。**结算触发（owner=L-B）：MVP `settle()` 设为 permissionless——题到期 / `settleDeadline` 后任何人或 agent-runner 可触发结算并发奖；keeper（M5.5）只做存活监控 + 超时 void+refund 兜底，不是唯一结算者（见 §10/§11）。** 并行安全：⚠️ MATH 段独立先跑；**STATE 段顺序等 L-C C1，非并行**。
 - **🔴 L-C 世界+Hex** — 模块：`V2World`、`HexGrid` lib、spawn/respawn allocator、`hexDefense`、checkpoint 写入 + finalized gate、`v2Score`、（若继承旧世界）一次性快照导入 + 校验。交付：v2 hex 存储 + 邻接库 + 防御 + **checkpoint mapping（含 `IWorldCheckpoint` 全字段）** + score；**C1 = checkpoint event/mapping schema + `IWorldCheckpoint` 须最先交付并 M2 中旬冻结（见 §10 子里程碑 M2.a）**。并行安全：✅ 与 L-A/L-B 完全并行。
 - **🟡 L-D RNG Provider** — 模块：`RNGProvider`（VRF 或 commit-reveal）+ timeout/退款。交付：**M2 末交可用 mock RNG**（给 seed 返确定 bool，部署 testnet，带完整 request/reveal/timeout/refund 签名）供 L-E/P1；**M4 起前交真实实现**。**criticality 澄清：mock 晚交 → 卡 P1（硬 deadline）；real 晚交 → 卡 P2/L-E（非 MVP-P1 关键路径）。** 并行安全：✅ 独立。
-- **🔴 L-E AP-gated 行动层** — 模块：`V2World` 内部 hooks（方案 B）或 `APActionAdapter`（方案 A）：`attackWithAP/reinforceHex/returnFromElimination`、Tullock 结算、capture+checkpoint 写入。交付：三动作可调用 + 防御清零 + battle/capture/respawn checkpoint。并行安全：⚠️ 汇流点，**三上游（L-C hex/邻接 + APLedger.spend + L-D RNG）就绪即可整合**；P1 薄片用 mock RNG 即可跑通 attack/capture（不等 real RNG、更不等 L-B STATE——STATE 市场读 L-E 写的 checkpoint、是 L-E 的下游）；full 版本卡 real RNG（P2）。
+- **🔴 L-E AP-gated 行动层** — 模块：`V2World` 内部 hooks（方案 B，§3.1）：`attackWithAP/reinforceHex/returnFromElimination`、Tullock 结算、capture+checkpoint 写入。交付：三动作可调用 + 防御清零 + battle/capture/respawn checkpoint。并行安全：⚠️ 汇流点，**三上游（L-C hex/邻接 + APLedger.spend + L-D RNG）就绪即可整合**；P1 薄片用 mock RNG 即可跑通 attack/capture（不等 real RNG、更不等 L-B STATE——STATE 市场读 L-E 写的 checkpoint、是 L-E 的下游）；full 版本卡 real RNG（P2）。
 - **🔴 L-I 集成面** — 模块：`mcp-server/chain.ts`+`tools.ts`（换 ABI、退役 ore/build、加 market/AP/hex 工具）、`agent-runner/llm.ts`（prompt 重写：邻接攻击/AP-only/删 ore-arsenal-happiness）、`frontend/useGameEngine.ts`（读 V2World.getScore/Market/APLedger）。**L-I 还须在 M0+1w 起搭 stub 实现**（Market/AP/V2World 工具硬编码返回 + `useGameEngine` hook，带 `TODO §M5 real impl` 注释），让前端 M1–M4 对着 stub 并行迭代 UI。交付：三处经统一 feature-flag 翻到新闭环，无旧 ore/score 残留。并行安全：⚠️ stub 阶段并行；**真实切换 = 翻 flag，须 L-T 6/6 ∧ P2 gate ∧ M4.5 审计 ∧ 迁移快照校验全绿（join③）**。
 - **🟡 L-T 测试/不变量护栏** — 模块：`contracts/test/WorldInvariants.t.sol`（6 项 property test）+ **MATH/STATE 闭环集成/e2e 测试**（attack 转移所有权+清零防御、void/refund 真退、AP 只发赢家、TWAP 正确）+ CI 门禁 + v1 旧 scope 越界扫描。交付：6 项 property test（接口冻结 day1 起 stub）+ 闭环 e2e 套件 + merge gate + v1 scope grep + §12 linter；见 §8。并行安全：✅ 常驻贯穿全程。
 - **🟡 L-F 卡牌 [M6]** — 模块：`CardMintEngine`（公库出资/白板自冻、`frozenG[cardId]`）、`SecondaryCardMarket`（tax/burn 分流）、`ActionCardBonusAdapter`。交付：两条铸造路径 + 二级守恒（`sellerCreditG+secondaryTaxG+secondaryBurnG==buyerSpendG`）+ 攻防 bonus hook（不消耗卡）。并行安全：✅ 独立但晚启；**CI: `feat/lane-F-*` 在 M5 集成 tag 前 push → auto-reject**。
@@ -260,7 +267,7 @@ interface IWorldCheckpoint {
 ## 6. 依赖图与关键路径
 
 **关键路径（决定 MVP 何时能玩）**：
-`M0 决策(1.5w) → 接口冻结(1w) → L-A 财库(M1) → L-B MATH(随 L-A) → L-C V2World ⇒ C1冻结 ⇒ L-B STATE(顺序1w) → L-E AP-gated 行动(M4) → L-I 集成(M5)`。**全串行约 15 周；并行后净关键路径 ~11–12 周（最好 ~10 周）**——并行收益主要来自把 L-C(2.5w) 与 L-D 叠到骨干上、**并非砍半**（`L-A→L-B MATH→L-B STATE→L-E→M4.5→L-I` 这条骨干本就串行；逐 lane PERT 见 §10）。
+`接口冻结(1w) → L-A 财库(M1) → L-B MATH(随 L-A) → L-C V2World ⇒ C1冻结 ⇒ L-B STATE(顺序1w) → L-E AP-gated 行动(M4) → L-I 集成(M5)`。**全串行约 13.5 周；并行后净关键路径 ~10–11 周（最好 ~9 周）**——架构已定、省去旧 1.5w 决策门；并行收益主要来自把 L-C(2.5w) 与 L-D 叠到骨干上、**并非砍半**（`L-A→L-B MATH→L-B STATE→L-E→M4.5→L-I` 这条骨干本就串行；逐 lane PERT 见 §10）。
 
 三个硬汇流点（join），其余皆可并行。**每个 join 标注「谁等谁、何时齐」**：
 
@@ -327,7 +334,7 @@ L-T 从接口冻结当天起独立运行，由**专属 QA/security owner**（不
 
 1. **赌池排除 surplus**：任一时刻 `协议可提 ≤ native 余额 − 全部未结算市场 G 负债 − reservedBackingG − frozenG`；owner/治理无法把 escrow/补贴当 surplus 提走。`assert(withdrawableSurplus <= balance - totalOutstandingG - reservedBackingG - frozenG)`。
 2. **creditG 等额 backing**：每次 `creditG` 前都能指出已扣减/锁定的等额具名来源；无 backing 的 payout 被拒；`creditG` 仅单一 `PredictionMarketEngine`/wrapper 可调（泛 operator 被拒）。
-3. **AP 只能赢来**：AP 仅经 `creditFromMarket` 增发；不可买、不可泛 operator mint、不可与 G 自由兑换；`spendForAction` 仅 `V2World`/`APActionAdapter` 可调。
+3. **AP 只能赢来**：AP 仅经 `creditFromMarket` 增发；不可买、不可泛 operator mint、不可与 G 自由兑换；`spendForAction` 仅 `V2World` 可调（方案 B）。
 4. **防御不变量**：`0 ≤ effectiveDefense ≤ D_max`、半衰期/upkeep、`P(success|maxAttackAP, D_max) ≥ p_floor`、capture 后清零。
 5. **净抽水 cap**：`assert(netTreasuryTakeG[epoch] <= treasuryTakeCapBps × grossPlayerPaidG)`，超 cap 拒绝或强制 source-neutral 回流；burn 永不回流。
 6. **trivial throttle / 非 trivial eligibility**：单边/自对冲盘只退款不发 AP/G；`trivial=true ⇒ fixedAP=fixedTrivialAP ∧ 无 G payout`；trivial 多维 cap（agent/owner/epoch/global）；AP throttle 锚 `realBurnedGInMarket`（非 tax/refund）。
@@ -340,14 +347,14 @@ L-T 从接口冻结当天起独立运行，由**专属 QA/security owner**（不
 
 本节内容须落入项目根 **`/lane-PLAN.md`（或 CONTRIBUTING.md）**，作为并行隔离单一事实源（SOP）。内容须含：(1) worktree 命名 regex；(2) 文件归属矩阵；(3) 合并次序；(4) 接口冻结/只读协议；(5) Mock↔real 同步规约；(6) feature-flag SOP；(7) Router V3→V4 维护 SOP。
 
-- **lead（接口 owner）+ ☐ lead-备（deputy，须填真实名）**：拍 M0、主笔接口冻结、维护 Router setter（V3→V4 dual-read）、守三个 join 点、L-C 改 World 接口时同步 mock。接口冻结**定稿权归 lead 一人**，但 deputy 共担 Router / mock-sync / join 仲裁，避免单点。`/contracts/src/interfaces/`、`HexGrid.sol`、`Router.sol` 写入 `CODEOWNERS`。**⚠️ lead 是关键路径上最集中的单点**（M0 签字、唯一「并行总开关」冻结、Router、三 join 全过 lead）——故 (1) 必须配 deputy；(2) 接口变更周转 SLA ≤ 24h（超时 escalate）；(3) §10 PERT 须把 lead 的冻结/join/mock-sync 当**共享资源**计，不可假设 lead 同时还全职背一条 lane。
+- **lead（接口 owner）+ ☐ lead-备（deputy，须填真实名）**：采纳架构(§3)、主笔接口冻结、维护 Router setter（V3→V4 dual-read）、守三个 join 点、L-C 改 World 接口时同步 mock。接口冻结**定稿权归 lead 一人**，但 deputy 共担 Router / mock-sync / join 仲裁，避免单点。`/contracts/src/interfaces/`、`HexGrid.sol`、`Router.sol` 写入 `CODEOWNERS`。**⚠️ lead 是关键路径上最集中的单点**（架构采纳、唯一「并行总开关」冻结、Router、三 join 全过 lead）——故 (1) 必须配 deputy；(2) 接口变更周转 SLA ≤ 24h（超时 escalate）；(3) §10 PERT 须把 lead 的冻结/join/mock-sync 当**共享资源**计，不可假设 lead 同时还全职背一条 lane。
 - **每条 lane 一主一备，须填真实人/agent 名**（§5 已留签字位，禁占位）：L-A 财库、L-C V2World、L-D RNG 三条**接口冻结后即可同时开工**；L-B MATH 随 L-A，**L-B STATE 顺序等 C1**；L-E 由 L-C 或 L-B 的 owner 在三上游（AP.spend+Hex+RNG）就绪后接手汇流；L-I 由前端/集成同学在 stub 上提前起步；L-T 由一名专属 QA/security 同学常驻。
 - **worktree-per-lane 命名规约（regex `feat/lane-[A-Z]-[a-z-]+`）**：`feat/lane-A-treasury`、`feat/lane-B-market`、`feat/lane-C-world`、`feat/lane-D-rng`、`feat/lane-E-action`、`feat/lane-I-integration`、`feat/lane-T-invariants`、`feat/lane-F-cards`、`feat/lane-O-oracle`。对着冻结的 `interface I*.sol` + mock 编码，互不踩文件。
-- **文件归属矩阵（哪条 lane 碰哪些路径，详表入 `/lane-PLAN.md`）**：L-A→`ProtocolTreasuryAccounting/GTreasury`；L-B→`PredictionMarketEngine/QuestionRegistry/MarketSettlementResolver/APLedger`；L-C→`V2World/HexGrid`；L-D→`RNGProvider`；L-E→`APActionAdapter`/V2World action hooks；L-I→`mcp-server/agent-runner/frontend`；L-T→`contracts/test/`。`interfaces/`+`Router.sol` 仅 lead。
+- **文件归属矩阵（哪条 lane 碰哪些路径，详表入 `/lane-PLAN.md`）**：L-A→`GTreasury`（含 `reservedBackingG`/`netTreasuryTakeG` 记账）；L-B→`PredictionMarketEngine`（内嵌模板）/`MarketSettlementResolver`/`APLedger`；L-C→`V2World/HexGrid`；L-D→`RNGProvider`；L-E→`V2World` action hooks（方案 B 无 `APActionAdapter`）；L-I→`mcp-server/agent-runner/frontend`；L-T→`contracts/test/`。`interfaces/`+`Router.sol` 仅 lead。
 - **接口只读约束**：`/contracts/src/interfaces/I*.sol`、`/contracts/src/libraries/HexGrid.sol`、`Router.sol` **仅 lead 可改**（封板后经 lead+PM 双签 review）；任何 lane PR 触碰这些文件即被 L-T gate + CODEOWNERS 拦下。
 - **合并次序 SOP**：`L-A → L-B(MATH，依赖 A payout) → L-C/L-D(并行) → C1 封板 → L-B(STATE) → L-E(依赖 L-C hex+AP.spend+RNG 三者；STATE 在其下游) → L-I(最后)`；L-T 全程旁挂、门禁每次合并；L-F/L-O 在 M5 tag 后。合并冲突面≈接口文件，故只读约束把冲突压到最小。
 - **contract-first 防冲突**：lane 之间只通过 interface 交互，禁止跨 lane 直接引用对方内部状态（尤其禁止外部改 `GameEngine`/`V2World` 内部 mapping，§8 权限边界）。
-- **最小并行起步阵型（约 4–5 人 = 3 dev 并行 + 1 专属 QA(L-T) + 1 lead/deputy）**：L-A、L-C、L-D 立即并行 → L-B MATH 接 L-A → C1 后 L-B STATE → L-E 汇流 → L-I 收尾；L-T 全程旁挂。**人手 < 4 则并行退化为串行、净期回到 ~15 周（见 §11 风险行）；§10 的 ~11–12 周以此阵型为前提。**
+- **最小并行起步阵型（约 4–5 人 = 3 dev 并行 + 1 专属 QA(L-T) + 1 lead/deputy）**：L-A、L-C、L-D 立即并行 → L-B MATH 接 L-A → C1 后 L-B STATE → L-E 汇流 → L-I 收尾；L-T 全程旁挂。**人手 < 4 则并行退化为串行、净期回到 ~13.5 周（见 §11 风险行）；§10 的 ~10–11 周以此阵型为前提。**
 
 ---
 
@@ -355,7 +362,7 @@ L-T 从接口冻结当天起独立运行，由**专属 QA/security owner**（不
 
 PM cadence——**先锁什么、何时开闸**：
 
-1. `M0 决策锁定+签字（/docs/M0-DECISIONS.md 13/13）`
+1. `采纳 §3 已定架构（research 已定，无签字门）`
 2. `接口冻结（开并行总闸，封板 M0+1w）`
 3. `lane swarm（L-A/L-C/L-D 同步开工，L-B MATH 随 L-A）`
 4. **M2.a 子里程碑：L-C 交付 C1（`IWorldCheckpoint` 封板）→ L-B STATE 解锁**
@@ -374,8 +381,8 @@ PM cadence——**先锁什么、何时开闸**：
 
 | Lane | 估时 | 窗口 | 备注 |
 |---|---|---|---|
-| M0 决策+签字 | 1.5w | M0 | GATE 0，阻塞全员 |
-| 接口冻结 | 1w | M0+1w | lead 3 天内交 I*.sol + mock + Router V4 |
+| 采纳已定架构 | 0（已 research，§3） | M0 | 无 GATE 0；直接进接口冻结 |
+| 接口冻结 | 1w | M0 | lead 3 天内交 I*.sol + mock + Router V4 |
 | L-A 财库 | ~2w | M1 | 最先动，关键路径头节点 |
 | L-C V2World | ~2.5w | M2 | **STATE 的硬 blocker**，C1=M2.a 中旬冻 |
 | L-B MATH | ~1.5w | M1 | 随 L-A（与 L-C 并行） |
@@ -387,17 +394,17 @@ PM cadence——**先锁什么、何时开闸**：
 | M4.5 审计 | ~1w lead-time（**内审**；价值合约多模块建议追加**外审**，时长/预算另议，勿假设 1w 内审即足） | M4→M5 间 | gate：signoff 后才批 M5 merge；executor=[内审 owner + 可选外审]、scope=全部 value-bearing 合约 + 1 页 ORACLE 信任模型 |
 | M5.5 部署/调优 | ~2w | P3 后 | testnet→mainnet，非 lane 并行但卡发布 |
 
-- **全串行关键路径**（无任何并行，逐段相加）= M0 1.5 + 冻结 1 + L-A 2 + L-C 2.5 + L-B MATH 1.5 + L-B STATE 1 + L-D real 1.5 + L-E 2 + L-I 2 = **15 周**（含 M4.5 审计 1w 则全程 **16 周**，与下方并行数同口径比较）。
-- **并行后净关键路径**（forward pass，每段只计一次，含 M4.5 审计门）：M0 1.5 → 冻结 1（累计 2.5）→ 此后 L-A/L-C/L-D 并行起跑；**串行骨干** = L-A 2 → L-B MATH 1.5 → L-B STATE 1（C1 后；C1 在 L-C 中旬即出、不卡 STATE 起步）→ L-E 2 → M4.5 审计 1 → L-I 2，叠加前段 2.5 ≈ **12 周**；**最好 ~10 周**（L-B MATH 对着 `MockTreasury` 与 L-A 并行开发、省下串行的 1.5–2w）。L-C(2.5w) 与骨干前段并行、L-D real(1.5w) 在 M4 前就绪，二者均不另加净路径——**并行省的是 L-C/L-D 的串行段，不是把总长砍半**（同口径：全程串行 16 周 → 并行 12 周）。（注：骨干里 `L-B STATE → L-E` 是同一 owner 接手的**资源序、非数据依赖**——L-E 不读 STATE，见 §6 join②；若配专属 L-E owner，净路径可压到 ~10w。）部署期（M5.5–5.7，~2w，含 keeper 接入 + 性能调优 perf budget）另计，不在可玩 MVP 净路径内但卡正式发布。
+- **全串行关键路径**（无任何并行，逐段相加；架构已定、无 M0 决策段）= 冻结 1 + L-A 2 + L-C 2.5 + L-B MATH 1.5 + L-B STATE 1 + L-D real 1.5 + L-E 2 + L-I 2 = **13.5 周**（含 M4.5 审计 1w 则全程 **14.5 周**，与下方并行数同口径比较）。
+- **并行后净关键路径**（forward pass，每段只计一次，含 M4.5 审计门）：架构已定、**无 M0 决策段**——前段只剩 冻结 1 → 此后 L-A/L-C/L-D 并行起跑；**串行骨干** = L-A 2 → L-B MATH 1.5 → L-B STATE 1（C1 后；C1 在 L-C 中旬即出、不卡 STATE 起步）→ L-E 2 → M4.5 审计 1 → L-I 2 = 9.5，叠加前段 1 ≈ **10.5 周**；**最好 ~9 周**（L-B MATH 对着 `MockTreasury` 与 L-A 并行开发、省下串行的 1.5w）。L-C(2.5w) 与骨干前段并行、L-D real(1.5w) 在 M4 前就绪，二者均不另加净路径——**并行省的是 L-C/L-D 的串行段，不是把总长砍半**（同口径：全程串行 14.5 周 → 并行 10.5 周）。（注：骨干里 `L-B STATE → L-E` 是同一 owner 接手的**资源序、非数据依赖**——L-E 不读 STATE，见 §6 join②；若配专属 L-E owner，净路径可压到 ~9w。）部署期（M5.5–5.7，~2w，含 keeper 接入 + 性能调优 perf budget）另计，不在可玩 MVP 净路径内但卡正式发布。
 
 **Lane ↔ M0–M7 映射**（`●`=主力实现 ｜`◐`=支撑/join/stub ｜`—`=空闲）：
 
 | Lane | M0 | M1 | M2 | M2.a | M3 | M4 | M4.5 | M5 | M6 | M7 | 备注 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 🔴L-A 财库 | 锁 #4/#5/#5b | ● | — | — | — | — | ◐audit | — | ◐(cap供M6) | — | 最先动，~2w |
-| 🔴L-B 市场+AP | 锁 #3/#7/#8/#11 | ●MATH+trivialAP | ◐等C1 | ◐STATE解锁 | ●STATE+非trivialAP | — | ◐audit | ◐ | — | — | MATH+trivial AP 先发(P1 需)；**STATE/非trivial AP 顺序等 C1** |
-| 🔴L-C V2World | 锁 #1/#2/#6/#10 | — | ● | ●C1冻 | — | — | ◐audit | — | — | — | C1 须 M2.a 中旬冻 |
-| 🟡L-D RNG | 锁 #9 | (可实现) | ◐mock交付 | — | — | ●真实接入 | — | — | — | — | mock@M2末(供P1,旁挂) / **real@M4 实为 MVP(P2) 关键路径段**；🟡 仅标 mock |
+| 🔴L-A 财库 | §3.2 | ● | — | — | — | — | ◐audit | — | ◐(cap供M6) | — | 最先动，~2w |
+| 🔴L-B 市场+AP | §3.3 | ●MATH+trivialAP | ◐等C1 | ◐STATE解锁 | ●STATE+非trivialAP | — | ◐audit | ◐ | — | — | MATH+trivial AP 先发(P1 需)；**STATE/非trivial AP 顺序等 C1** |
+| 🔴L-C V2World | §3.1 | — | ● | ●C1冻 | — | — | ◐audit | — | — | — | C1 须 M2.a 中旬冻 |
+| 🟡L-D RNG | §3.1 | (可实现) | ◐mock交付 | — | — | ●真实接入 | — | — | — | — | mock@M2末(供P1,旁挂) / **real@M4 实为 MVP(P2) 关键路径段**；🟡 仅标 mock |
 | 🔴L-E 行动 | — | — | ◐mock骨架 | — | — | ●实现 | ◐audit | — | — | — | join② 三齐才整合 |
 | 🔴L-I 集成 | — | ◐stub | ◐stub | — | — | ◐建flag | — | ●flag切换 | — | — | feature-flag 软切（4 重门） |
 | 🟡L-T 测试 | (起) | ● | ● | ●守join① | ● | ● | ● | ● | ● | ● | 常驻门禁 + v1 scope 扫描 |
@@ -410,15 +417,13 @@ PM cadence——**先锁什么、何时开闸**：
 
 | 风险 | 影响 | 缓解 |
 |---|---|---|
-| **M0 未签字（现 0/13）= 接口冻不了 = 并行不成立** | 全员卡死，退化成串行；GATE 0 不过 | M0 当唯一前置硬阻塞，§3 表 13 行逐项 owner 签字转录进 `/docs/M0-DECISIONS.md`，**CI 按行校验 13/13 否则 block main**；指定 M0 owner + 截止日 |
-| **#1 World A/B 未决（无 owner/无期限）** | L-C 范围、L-E adapter footprint、L-I 读取源全悬空；L-B STATE 接口锁不了 | 指定 owner + 期限；二选一记 tracker #1+日期；**未签则禁建 `feat/lane-C-world`**；推荐 B |
-| **#5b reservedBackingG 边界未决（无 owner/无期限）** | L-A escrow/subsidy 记账方向、L-B payout backing 锁不了 | 指定 owner + 期限；选 (a) GTreasury 加 `reservedBackingG` / (b) wrapper，记 tracker #5b+日期；**未签则 L-A escrow 不得 finalize**；推荐 (a) |
+| **架构决策被某 lane 私自改走老路** | §3 已定架构（World=B / RNG=commit-reveal / 财库权限 / Router）被绕过，破坏「干净」前提 | 改 §3 架构须走 ADR（§9）；CI gate (a)：改架构无 ADR → block；`interfaces/`+`Router.sol`+财库权限模型只 lead 可改（CODEOWNERS） |
 | **Router V3 缺 net-new 槽 + 合约全 0 实现** | Router(V3) 已含 9 槽但**缺市场/AP/世界/RNG 等 net-new**；lane day-1 找不到 `IAPLedger` 从哪 import；M5 flag 翻转读 V3 旧址 → 调错合约 0-day | 冻结期 lead 头 3 天交 `/contracts/src/interfaces/I*.sol`+`HexGrid.sol`+`Mock*`+**Router V3→V4 扩展(槽+setter+getAddressesV4，dual-read 策略)**，不等 M1 实现（§4） |
-| **L-B STATE 误标并行（旧稿）** | 净周期被低估 1–2 周；STATE owner 不知 C1 何时好 | §6 join① + §10 PERT 已修正为顺序：C1(M2.a)→L-B STATE(1w)；净路径修正为 ~11–12w（最好 ~10w）；M2.a 子里程碑显式登记 |
+| **L-B STATE 误标并行（旧稿）** | 净周期被低估 1–2 周；STATE owner 不知 C1 何时好 | §6 join① + §10 PERT 已修正为顺序：C1(M2.a)→L-B STATE(1w)；净路径修正为 ~10–11w（最好 ~9w）；M2.a 子里程碑显式登记 |
 | **L-E↔STATE 依赖方向写反（旧稿把 STATE 列为 L-E 前置）** | L-E 被过度串行化、与 P1 薄片自相矛盾 | §2/§5/§6 join② 已改正：L-E 上游 = AP.spend+Hex+RNG **三齐**；STATE 市场读 L-E 写的 checkpoint、是 L-E 的下游、非前置 |
-| **lead 单点瓶颈（无 deputy、未计工时）** | M0 签字 / 冻结 / Router / 三 join 全过 lead，lead 病/忙则整条关键路径停摆 | §9 已补：必配 lead-deputy 共担 Router/mock-sync/join 仲裁；接口变更 SLA ≤24h；§10 PERT 把 lead 当共享资源计、不假设 lead 还全职背 lane |
-| **人手不足 → 并行退化为串行** | < 4 人时净期从 ~11–12w 退回 ~15w，并行承诺落空 | §9 阵型明确 4–5 人前提（3 dev + QA + lead/deputy）；招不齐则按串行 ~15w 排期、不对外承诺 11–12w |
-| **RNG provider 可用性**（M4 硬依赖） | VRF 不可用或 commit-reveal 超时规则没定，L-E 无法实现攻防 | M0 二选一并定 timeout/退款；L-D **M2 末交 mock、M4 起交真实**（硬 deadline，§6 join②）；**mock 晚→卡 P1；real 晚→卡 P2，非 P1 关键路径** |
+| **lead 单点瓶颈（无 deputy、未计工时）** | 架构采纳 / 冻结 / Router / 三 join 全过 lead，lead 病/忙则整条关键路径停摆 | §9 已补：必配 lead-deputy 共担 Router/mock-sync/join 仲裁；接口变更 SLA ≤24h；§10 PERT 把 lead 当共享资源计、不假设 lead 还全职背 lane |
+| **人手不足 → 并行退化为串行** | < 4 人时净期从 ~10–11w 退回 ~13.5w（含审计 14.5w），并行承诺落空 | §9 阵型明确 4–5 人前提（3 dev + QA + lead/deputy）；招不齐则按串行 ~13.5w 排期、不对外承诺 10–11w |
+| **RNG 超时/退款规则** | commit-reveal 的 reveal/timeout/refund 规则没定，L-E 无法实现攻防 | RNG=commit-reveal 已定（§3.1），仅需定 reveal 窗口/超时/退款；L-D **M2 末交 mock、M4 起交真实**（硬 deadline，§6 join②）；**mock 晚→卡 P1；real 晚→卡 P2，非 P1 关键路径** |
 | **feature-flag 提前翻（join③）** | L-T/L-E 未绿即翻 → MCP 带 stub 假设调真实合约 → 生产 0-day | 翻 flag 硬 gate = L-T 6/6 ∧ P2 ∧ M4.5 审计 ∧ 迁移快照 全绿（§6 join③）；单源三服务启动读、可回滚 |
 | **Mock≠real ABI 漂移** | L-I 对 mock 编码，flag 翻后真实返回类型不符即崩 | CI 强制 mock 与 real 跑同套测试、返回类型 bit-identical（§4），不同步则 fail |
 | **MCP/frontend 迁移成本**（L-I 三处同切） | 旧 `GAME_ENGINE_ABI`/ore/旧 score prompt 散落 chain.ts/tools.ts/llm.ts/useGameEngine.ts | M0+1w 起搭 stub 让前端并行迭代；M5 经统一 feature-flag 逐处翻 + 校验 + 可回滚（§6） |
