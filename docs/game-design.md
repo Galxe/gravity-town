@@ -1,5 +1,7 @@
 # Gravity Town v2 精简游戏设计稿: Market -> Action
 
+> ⚠️ **架构以 [`architecture.md`](architecture.md) 为准（greenfield，已定稿）。** 本文是详细字段/公式/护栏的工程稿，仍可用——但其中把 **World A/B、Treasury（`reservedBackingG` vs wrapper）、v1→v2 迁移** 写成「M0 待定二选一」的部分**已被取代**：v2 走 greenfield —— **World=B（全新 `V2World` 自持）、财库=全新 `V2Treasury`、地址=全新 `V2Router`、不改造旧合约、不迁移旧世界（新赛季空开局）**。下文凡与此冲突的「A/B 二选一 / treasury-wrapper / 快照迁移 / 改 GTreasury」措辞**均作废**，只取其字段 / 公式 / 不变量。
+
 ## 0. 产品是什么 · 去哪看全貌
 
 **一句话**: Gravity Town v2 是一个链上 AI 领土游戏——你和真人 / AI 抢一张六边形地图，但扩张要花的「行动力 AP」买不到、刷不出，**唯一来源是赢一场可验证的预测市场**（押 G 赢 AP → 花 AP 改地图 → 新局面又开成新盘）。
@@ -10,7 +12,7 @@
 
 Gravity Town v2 是一个“用可验证预测市场赢行动权，再用行动权改写链上世界”的 on-chain AI 领土游戏。**核心闭环：押 G 赢市场 → 得 AP → 花 AP 攻击/加固地块 → 世界状态改变 → 又开出新市场。** 唯一获取战力的方式是赢预测，AP 不能用钱买。
 
-> 架构岔路提示: M0 有一个最大的工程抉择——World 用方案 A（升级旧 `GameEngine`）还是方案 B（新建 `V2World` 自持状态）。**推荐 B**（边界更干净，邻接/RNG/defense 规则可独立成型），下游的状态归属、升级路径、v1→v2 迁移成本都取决于它。完整 A/B 对比表见 §6「动作 A」下的“M0 必须二选一确定 World 边界”。
+> 架构岔路提示（**已定**）: 原 M0 的 World A/B 抉择**已定为 B（全新 `V2World` 自持，greenfield，见 [`architecture.md`](architecture.md)）**——下方 §6 的 A/B 对比表仅作背景，不再是待定二选一。
 
 ## 2. 四层栈
 
@@ -88,7 +90,7 @@ G payout 铁律:
 3. 任何 G 发放点在调用 `creditG` 前必须能指出等额 backing 来源, 并在市场/补贴/协议账本中扣减或锁定该来源。
 4. `creditG` 当前只做 `onlyOperator` 校验并直接增加 `gBalance` 与 `totalOutstandingG`, 见 `contracts/src/GTreasury.sol:126` 到 `contracts/src/GTreasury.sol:129`。`onlyOperator` 又来自 `AgentRegistry.isOperator`, 会接受全局 `operator`、`operators` mapping 或 owner, 见 `contracts/src/AgentRegistry.sol:36` 到 `contracts/src/AgentRegistry.sol:37` 和 `contracts/src/AgentRegistry.sol:66` 到 `contracts/src/AgentRegistry.sol:69`。v2 价值模式不能继续把 `creditG` 暴露给泛 operator。
 5. **M1 必须把 G 市场奖励记账权限收紧为单一入口, 并单独保留二级守恒转账白名单**: `creditG` 的正式奖励路径只能接受 `PredictionMarketEngine` 或新增 treasury wrapper 的唯一地址, 不能接受任一 legacy operator/脚本。市场下注用到的 `spendG` 也应通过同一市场入口或 wrapper 进入 escrow, 避免旧系统直接制造绕过 backing 的 G 流。二级卡牌交易不是奖励 mint, 必须走独立 `SECONDARY_CARD_TRANSFER` 白名单路径: 指定 `SecondaryCardMarket` 合约或 treasury wrapper 的限定函数在同一笔交易内先执行买方 `spendG`, 再执行卖方 `creditG`, 且必须满足 `sellerCreditG + secondaryTaxG + secondaryBurnG == buyerSpendG`。当二级抽水参数为 0 时（**仅迁移兼容模式, 正式不得上线, 见本节卡牌一级/二级抽水口径**）, 该路径退化为现有 `CardLedger.buyListed` 的 `buyer spendG == seller creditG` 等额转账, 见 `contracts/src/CardLedger.sol:130` 到 `contracts/src/CardLedger.sol:132`。该白名单路径不得用于市场奖励、补贴、协议 agent 充值或任何非交易对手方发放。
-6. **Treasury 层保留边界（必须封死，否则 backing 失效）**: 现有 `spendG` 会降低 `totalOutstandingG`（`contracts/src/GTreasury.sol:109` 到 `contracts/src/GTreasury.sol:120`），押注进 escrow 的 native G 立刻表现为可提 surplus；而 `withdrawSurplus`/`surplusG` 只按 `balance - totalOutstandingG` 判断（`contracts/src/GTreasury.sol:151` 到 `contracts/src/GTreasury.sol:168`）。结果是 owner/治理可能把市场 escrow/补贴池当 surplus 提走，随后 `creditG` 仍按内部账发放 → 等额 backing 落空。**M1 必须二选一**: (a) 在 Treasury 层引入 `reservedBackingG`（= 未结算市场 escrow + 补贴池）, 并把 `surplusG`/`withdrawSurplus` 改为 `balance - totalOutstandingG - reservedBackingG`; 或 (b) 市场 G 全部走新增 treasury wrapper 持有、不进 `GTreasury` 的 surplus 口径, wrapper 禁止提取未结算 escrow/补贴。两种都要保证: 任一时刻 `Treasury 可提 surplus ≤ native 余额 − 全部未结算市场 G 负债`。
+6. **Treasury 层保留边界（必须封死，否则 backing 失效）**: 现有 `spendG` 会降低 `totalOutstandingG`（`contracts/src/GTreasury.sol:109` 到 `contracts/src/GTreasury.sol:120`），押注进 escrow 的 native G 立刻表现为可提 surplus；而 `withdrawSurplus`/`surplusG` 只按 `balance - totalOutstandingG` 判断（`contracts/src/GTreasury.sol:151` 到 `contracts/src/GTreasury.sol:168`）。结果是 owner/治理可能把市场 escrow/补贴池当 surplus 提走，随后 `creditG` 仍按内部账发放 → 等额 backing 落空。**（已定：greenfield 用全新 `V2Treasury` 从一开始就实现 (a) 的 `reservedBackingG`、不改 GTreasury；下方二选一作废，见顶部 banner / [`architecture.md`](architecture.md)）M1 原必须二选一**: (a) 在 Treasury 层引入 `reservedBackingG`（= 未结算市场 escrow + 补贴池）, 并把 `surplusG`/`withdrawSurplus` 改为 `balance - totalOutstandingG - reservedBackingG`; 或 (b) 市场 G 全部走新增 treasury wrapper 持有、不进 `GTreasury` 的 surplus 口径, wrapper 禁止提取未结算 escrow/补贴。两种都要保证: 任一时刻 `Treasury 可提 surplus ≤ native 余额 − 全部未结算市场 G 负债`。
 
 G 的基础接口复用:
 
@@ -453,7 +455,7 @@ P(success)   = attackPower / (attackPower + defensePower)
 
 现有 `GameEngine.attack` 不能原样作为 v2 攻击入口, 因为它消耗 arsenal 和 ore, 见 `contracts/src/GameEngine.sol:401` 到 `contracts/src/GameEngine.sol:407`；现有防御也来自 `target.arsenalCount * DEFENSE_PER_ARSENAL`, 见 `contracts/src/GameEngine.sol:31`, `contracts/src/GameEngine.sol:69`, `contracts/src/GameEngine.sol:410`。更关键的是 `hexes`、`agentHexKeys`、`hexCount` 是 `GameEngine` 内部状态, 旧 capture 只在 `GameEngine` 内部写入, 见 `contracts/src/GameEngine.sol:419` 到 `contracts/src/GameEngine.sol:448` 和 `contracts/src/GameEngine.sol:622` 到 `contracts/src/GameEngine.sol:695`；外部 adapter 不能“复制 capture 逻辑”去直接改 owner/hexCount。
 
-M0 必须二选一确定 World 边界:
+M0 必须二选一确定 World 边界（**已定 = B，见顶部 banner / [`architecture.md`](architecture.md)；下表仅作背景，不再是待定项**）:
 
 | 方案 | 做法 | 优点 | 代价 |
 | --- | --- | --- | --- |
