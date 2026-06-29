@@ -1,0 +1,1239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Oracle Town · 链上世界实况</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   Oracle Town — LIVE DESKTOP SPECTATOR DASHBOARD. Pure-frontend, all-mock, self-running.
+   产品真相: game-v2/docs/game-design-ux.md
+
+   概念: 屏幕是一个会自己转的链上世界。AI agent 自主玩「市场→AP→行动」循环;
+        人类主要"看戏"(直播+交易终端), 可选下注。不是引导教程, 不是手动游戏, 不是手机。
+
+   信息层级 (本轮修复重点):
+   - ⚡ 事件流 = 第一焦点, 占据中央最大、最高视觉强度的区域 (40-50% 宽高)
+   - 🗺 地图 = 第二焦点, 始终可见 (下注用右侧抽屉, 不再遮挡地图)
+   - 新事件有「刚刚 / 10秒前」时效标记 + 脉冲高亮; 最旧的淡出
+   - 地块上画防御血条 + 弱势用颜色强度提示
+
+   保真(对齐产品):
+   - 两种货币 G(青=钱,可买可花) / AP(柠檬绿=行动力, 只能赢盘换来, 买不到)
+   - 押别人的命运 = 主要收入; 池子里有对家才发 G, 否则只发 AP
+   - 三个动作: 进攻相邻 / 加固 / 复活 — 普通花 AP 动作, 不是答题
+   - 三类盘: 送分题(免费保底) / 世界局势(主力) / 外部oracle(后续锁)
+   - 赛季总分 = 占地 + 夺地 + 胜仗 + 押对真盘
+   - 复活翻盘; 卡牌只是「后续」小 chip, 不是重点
+   - 白话, 无术语
+   ============================================================ */
+:root{
+  --bg:#070a10; --bg2:#0a0e16;
+  --panel:#0e131d; --panel-2:#131a27; --panel-3:#182234;
+  --text:#eef2f8; --muted:#a3b0c6;   /* muted ~7.1:1 on --panel — AA pass */
+  --faint:#95a0b8;                   /* faint ~5.2:1 on --panel — AA pass w/ safety margin (was #5b687f ≈3.3:1 FAIL, then #8492ac ≈4.6:1 borderline) */
+  --line:#1d2738; --line-2:#2c3a52;
+  --g:#22d3ee;          /* 金币 G — 青 */
+  --ap:#a3e635;         /* 行动力 AP — 柠檬绿 */
+  --gold:#fbbf24; --success:#34d399; --error:#fb7185; --warn:#fbbf24;
+  --g-dim:rgba(34,211,238,.13); --ap-dim:rgba(163,230,53,.13);
+  /* ---- DESIGN TOKENS (formalized scale) ---- */
+  /* type scale: 12 / 14 / 16 / 18 / 20 / 24 — no off-scale values */
+  --fs-xs:12px; --fs-sm:14px; --fs-md:16px; --fs-lg:18px; --fs-xl:20px; --fs-2xl:24px;
+  /* radius scale: 8 / 10 / 14 */
+  --r-sm:8px; --r-md:10px; --r-lg:14px;
+  /* line-heights — documented hierarchy:
+     --lh-tight (1.35): compact labels / single-line chips (.pers, .who, card titles)
+     --lh-base  (1.5):  default body & all feed lines (vertical rhythm baseline)
+     --lh-loose (1.62): ONLY intentionally spacious multi-line prose (AgentMind .think) */
+  --lh-tight:1.35; --lh-base:1.5; --lh-loose:1.62;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%}
+body{
+  background:
+    radial-gradient(1200px 700px at 78% -8%, rgba(34,211,238,.07), transparent 60%),
+    radial-gradient(1000px 700px at 10% 110%, rgba(163,230,53,.05), transparent 55%),
+    var(--bg);
+  color:var(--text);
+  font-family:"Sora","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  font-size:var(--fs-sm);line-height:var(--lh-base);-webkit-font-smoothing:antialiased;
+}
+/* a11y: honor reduced-motion — zero out decorative/looping animation, keep state legible */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;
+    transition-duration:.001ms!important;scroll-behavior:auto!important}
+  /* with the pulse killed, weak hexes must stay obvious — persistent heavy red stroke + fully-opaque ⚠ marker */
+  .hexg.weak polygon.face{stroke:#fb7185!important;stroke-width:3.4px!important;
+    filter:drop-shadow(0 0 6px rgba(251,113,133,.9))!important}
+  .hexg .warn{opacity:1!important}
+  .fl.fresh::after{opacity:1!important}
+}
+/* a11y: visible keyboard focus on every interactive control.
+   no hardcoded radius — outline-offset lets the ring follow each element's own border-radius (avoids the 8px-vs-10px misalignment). */
+button:focus-visible,[tabindex]:focus-visible,.mk:focus-visible{
+  outline:2px solid var(--g);outline-offset:2px}
+/* subtle moving noise + scanning grid for the "alive terminal" feel */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.025;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");}
+body::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.6;
+  background:
+    linear-gradient(rgba(34,211,238,.018) 1px, transparent 1px) 0 0/100% 36px,
+    linear-gradient(90deg, rgba(34,211,238,.012) 1px, transparent 1px) 0 0/36px 100%;
+  mask:radial-gradient(120% 90% at 50% 40%, #000 35%, transparent 100%);}
+button{font-family:inherit;cursor:pointer}
+.mono{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:var(--line-2);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+
+#app{position:relative;z-index:1;max-width:1360px;margin:0 auto;padding:14px 18px 18px;}
+
+/* ============ TOP BAR ============ */
+.topbar{display:flex;align-items:center;gap:18px;padding:10px 18px;margin-bottom:14px;
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));
+  border:1px solid var(--line);border-radius:14px;}
+.brand{display:flex;flex-direction:column;gap:2px;min-width:230px}
+.brand .t{font-size:var(--fs-lg);font-weight:700;letter-spacing:.01em;display:flex;align-items:center;gap:8px}
+.brand .live{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-xs);font-weight:700;letter-spacing:.1em;
+  color:var(--error);border:1px solid rgba(251,113,133,.4);border-radius:var(--r-sm);padding:2px 7px}
+.brand .live .dot{width:6px;height:6px;border-radius:50%;background:var(--error);animation:blink 1.3s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+.brand .s{font-size:var(--fs-xs);color:var(--muted)}
+
+.clock{display:flex;align-items:center;gap:12px;padding:8px 14px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel)}
+.clock .ep{display:flex;flex-direction:column;gap:1px}
+.clock .ep .k{font-size:var(--fs-xs);color:var(--muted);letter-spacing:.05em}
+.clock .ep .v{font-size:var(--fs-md);font-weight:700}
+.clock .ringwrap{position:relative;width:36px;height:36px;filter:drop-shadow(0 0 4px rgba(34,211,238,.25))}
+.clock svg{transform:rotate(-90deg)}
+.clock .ringwrap .c{position:absolute;inset:0;display:grid;place-items:center;font-size:var(--fs-xs);font-weight:700;color:var(--ap)}
+
+.speed{display:flex;gap:4px;padding:4px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);position:relative}
+.speed button{border:none;background:transparent;color:var(--muted);font-size:var(--fs-sm);font-weight:600;
+  padding:6px 12px;border-radius:var(--r-sm);transition:.15s;display:flex;align-items:center;gap:4px}
+.speed button:hover{color:var(--text);background:var(--panel-3)}
+.speed button.on{background:var(--ap);color:#0a0e16}
+/* paused: unmistakable — amber fill + ring + a "已暂停" pill, not just a gold button */
+.speed.ispaused{box-shadow:0 0 0 2px rgba(251,191,36,.45)}
+.speed button.on.pause{background:var(--warn);color:#1a1205}
+.speed .pausetag{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);font-weight:700;
+  color:var(--warn);padding:0 10px 0 6px;letter-spacing:.04em}
+.speed .pausetag .pdot{width:7px;height:7px;border-radius:50%;background:var(--warn);animation:blink 1.3s ease-in-out infinite}
+
+.wallet{margin-left:auto;display:flex;gap:10px;align-items:stretch}
+.wallet .who{display:flex;flex-direction:column;justify-content:center;text-align:right;padding-right:6px}
+.wallet .who .k{font-size:var(--fs-xs);color:var(--muted)}
+.wallet .who .v{font-size:var(--fs-xs);font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.wallet .who .v .sw{width:10px;height:10px;border-radius:3px;background:#facc15}
+.coin{display:flex;flex-direction:column;align-items:flex-end;gap:1px;padding:6px 13px;border-radius:var(--r-md);
+  border:1px solid var(--line);min-width:84px;background:var(--panel);position:relative;overflow:hidden}
+.coin .k{font-size:var(--fs-xs);color:var(--muted);letter-spacing:.04em}
+.coin .v{font-size:var(--fs-xl);font-weight:800;line-height:1;font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums}
+.coin.g{border-color:rgba(34,211,238,.3)}.coin.g .v{color:var(--g)}
+.coin.ap{border-color:rgba(163,230,53,.3)}.coin.ap .v{color:var(--ap)}
+.coin .v.bumpG,.coin .v.bumpAP{animation:bump .5s ease}
+@keyframes bump{0%{transform:scale(1)}30%{transform:scale(1.3);filter:brightness(1.8)}100%{transform:scale(1)}}
+.coin .delta{position:absolute;right:8px;top:2px;font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);font-weight:800;
+  opacity:0;pointer-events:none}
+.coin .delta.show{animation:floatUp 1s ease}
+@keyframes floatUp{0%{opacity:0;transform:translateY(6px)}20%{opacity:1}100%{opacity:0;transform:translateY(-12px)}}
+
+/* ============ MAIN GRID ============
+   ROBUST LAYOUT MODEL (实现这个, 别再打补丁):
+   1) 页面正常滚动 — 永不把整块面板硬锁成 100vh+overflow:hidden 以致底部(赌局条/rail)够不到。
+   2) 事件流(feed) 不撑高页面 — feed 给固定 max-height + 内部滚动, 行多了内部滚, 不拉长布局。
+   3) 地图完整渲染、舒适大小 — 19 块地全可见不裁切, min-height 保证不会太小, 图例/统计在 SVG 下方页脚, 不压地块。
+   4) 1280×680 → 1920×1080 全部可达 — rail/赌局条允许自然流动, 内容超窗就靠页面滚动够到。
+
+   层级: 事件流(feed) 中央最大焦点; 地图左侧第二焦点始终可见; 排行榜+AgentMind 在右; 赌局横幅在底。
+   行高度用 auto/min-content 让内容决定 → 页面在需要时整体滚动 (不再 calc(100vh) 硬锁)。 */
+.grid{display:grid;grid-template-columns:418px 1fr 320px;gap:14px;
+  grid-template-areas:"map feed rail" "map strip rail";align-items:stretch;}
+.panel{background:linear-gradient(180deg,var(--panel-2),var(--panel));border:1px solid var(--line);
+  border-radius:var(--r-lg);overflow:hidden;display:flex;flex-direction:column}
+.panel > .ph{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);flex:none}
+.panel > .ph .ico{font-size:var(--fs-md)}
+.panel > .ph .ttl{font-size:var(--fs-sm);font-weight:700;letter-spacing:.01em}
+.panel > .ph .sub{font-size:var(--fs-xs);color:var(--muted);margin-left:auto;font-weight:500}
+
+/* ---- MAP (second focus, always visible) ---- */
+/* 地图占据 map+strip 之外左列的两行高度; min-height 保证舒适大小且全部 19 块地完整可见。 */
+/* map is the SECOND focus — sized to stay fully visible but NOT out-compete the feed */
+.pMap{grid-area:map;min-height:380px}
+.mapwrap{flex:1;position:relative;display:grid;place-items:center;padding:10px;min-height:300px}
+.mapfoot{flex:none;display:flex;flex-direction:column;gap:8px;padding:8px 14px 12px;border-top:1px solid var(--line);background:rgba(7,10,16,.35)}
+/* map is a read-only live view (you bet via the market cards, not the hexes) → default cursor, no false affordance */
+svg.world{width:100%;height:100%;cursor:default}
+.hexg polygon.face{transition:fill .5s ease,stroke .4s ease;stroke-width:1.6}
+/* SVG cartographic labels: pushed up to 11/10px to satisfy WCAG min legibility while still
+   fitting inside the ~72px-wide hex faces (short strings: 3-5 char name + 1 glyph index).
+   This is the closest-to-scale value the geometry allows; full 12px would overlap on dense boards. */
+.hexg .label{font-family:"JetBrains Mono",monospace;font-size:11px;font-weight:600;text-anchor:middle;pointer-events:none}
+/* bold mono defense readout — heavier stroke/glow as defense rises (set inline) so strong vs weak is scannable in 5s */
+.hexg .def{font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:800;text-anchor:middle;pointer-events:none;
+  paint-order:stroke;stroke:rgba(7,10,16,.85);stroke-width:2.4px;stroke-linejoin:round}
+.hexg .num{font-family:"JetBrains Mono",monospace;font-size:10px;fill:var(--faint);text-anchor:middle;pointer-events:none;opacity:.78}
+.hexg .warn{font-size:12px;text-anchor:middle;pointer-events:none;animation:warnPulse 1.1s ease-in-out infinite}
+/* persistent text alternative for the weak state — visible regardless of color/motion (colorblind + reduced-motion safe) */
+.hexg .weaklbl{font-family:"JetBrains Mono",monospace;font-size:9px;font-weight:800;fill:#fb7185;text-anchor:middle;pointer-events:none;letter-spacing:.04em}
+@keyframes warnPulse{0%,100%{opacity:.55}50%{opacity:1}}
+.hexg.neutral polygon.face{fill:rgba(91,104,127,.10);stroke:#46566f}
+.hexg.neutral .def,.hexg.neutral .label{fill:#9aa8c0}
+.hexg.cap polygon.face{animation:capFlash 1s ease}
+@keyframes capFlash{0%{filter:drop-shadow(0 0 0 rgba(255,255,255,0));stroke-width:1.6}
+  22%{filter:drop-shadow(0 0 18px var(--flash)) brightness(1.6);stroke-width:4.5}
+  100%{filter:none;stroke-width:1.6}}
+/* weak hex: OBVIOUS pulsing glow (replaces the invisible faint dash) + a ⚠ marker drawn in markup */
+.hexg.weak polygon.face{stroke:#fb7185!important;stroke-width:2.4;animation:weakGlow 1.25s ease-in-out infinite}
+@keyframes weakGlow{0%,100%{filter:drop-shadow(0 0 2px rgba(251,113,133,.5));stroke-width:2.2}
+  50%{filter:drop-shadow(0 0 9px rgba(251,113,133,.95));stroke-width:3.4}}
+/* discrete defense blocks under each hex — heavier = stronger, instantly scannable */
+.hexg .defblk{transition:opacity .4s ease}
+/* legend + stat chips flow inside .mapfoot (below the SVG) — NEVER absolutely placed over the hexes */
+.maplegend{display:flex;flex-wrap:wrap;gap:8px 14px}
+.maplegend .lg{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);color:var(--muted)}
+.maplegend .lg .sw{width:10px;height:10px;border-radius:3px}
+.mapstat{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.mapstat .b{font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);color:var(--muted);
+  border:1px solid var(--line);background:rgba(7,10,16,.6);border-radius:var(--r-sm);padding:4px 8px}
+.mapstat .b b{color:var(--text)}
+
+/* ---- FEED (THE PRIMARY FOCAL POINT) ---- */
+/* 关键: feed 是中央焦点但必须「有界」—— 给固定 min/max-height, 事件多了内部滚动(.feedscroll),
+   永不把页面拉长(这正是最初「地图被挤下去」的 bug)。 */
+/* FEED = THE HERO. Larger height + stronger header/border so it clearly wins the focal contest vs the map. */
+.pFeed{grid-area:feed;min-height:420px;max-height:72vh;
+  border-color:rgba(34,211,238,.4);
+  box-shadow:0 0 0 1px rgba(34,211,238,.12), 0 26px 70px -28px rgba(34,211,238,.4);}
+.pFeed > .ph{background:linear-gradient(90deg, rgba(34,211,238,.14), transparent);padding-top:13px;padding-bottom:13px}
+.pFeed > .ph .ico{font-size:var(--fs-lg)}
+.pFeed > .ph .ttl{font-size:var(--fs-lg);font-weight:700}
+.pFeed .lcount{font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);color:var(--g);
+  border:1px solid rgba(34,211,238,.3);border-radius:var(--r-sm);padding:3px 8px;margin-left:auto;font-weight:700}
+.pFeed .nowtag{font-size:var(--fs-xs);color:var(--muted);margin-left:9px}
+.feedlist{flex:1;overflow:hidden;position:relative;padding:4px 6px 4px 12px;display:flex;flex-direction:column}
+.feedscroll{display:flex;flex-direction:column;gap:0;overflow-y:auto;height:100%;scroll-behavior:smooth}
+/* affordance: when scrolled away from the top and fresh events land above, a pill invites a jump back up */
+.feednew{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:5;
+  display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-xs);font-weight:700;font-family:"Sora",sans-serif;
+  color:#06121a;background:var(--g);border:none;border-radius:999px;padding:5px 12px;cursor:pointer;
+  box-shadow:0 8px 22px -6px rgba(34,211,238,.7);animation:flIn .3s ease}
+.fl{display:flex;gap:12px;padding:10px 8px;min-height:46px;border-bottom:1px solid rgba(29,39,56,.5);
+  animation:flIn .42s cubic-bezier(.2,.9,.3,1);align-items:flex-start;position:relative;transition:opacity .5s}
+@keyframes flIn{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:none}}
+.fl::before{content:"";position:absolute;left:-8px;top:0;bottom:0;width:3px;border-radius:2px;background:var(--accent,transparent)}
+/* freshest line glows + pulses; older lines fade with age */
+.fl.fresh{background:linear-gradient(90deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%)}
+.fl.fresh::after{content:"";position:absolute;left:-8px;top:0;bottom:0;width:3px;border-radius:2px;background:var(--accent);
+  animation:edgePulse 1.1s ease-in-out infinite}
+@keyframes edgePulse{0%,100%{box-shadow:0 0 5px 0 var(--accent);opacity:.85}50%{box-shadow:0 0 12px 2px var(--accent);opacity:1}}
+.fl.age2{opacity:.82}.fl.age3{opacity:.6}.fl.age4{opacity:.42}
+.fl .ic{flex:none;font-size:var(--fs-md);width:20px;text-align:center;line-height:var(--lh-tight)}
+.fl .bd{flex:1;min-width:0;font-size:var(--fs-sm);line-height:var(--lh-base);color:var(--text)}
+.fl .bd .nm{font-weight:700}
+.fl .bd .mono{font-weight:700}
+.fl .bd b{font-size:1.06em}
+.fl .bd .gtag{color:var(--g);font-weight:800;font-family:"JetBrains Mono",monospace}
+.fl .bd .aptag{color:var(--ap);font-weight:800;font-family:"JetBrains Mono",monospace}
+/* settled-market result badge — big & scannable: ✓守住 green / ✗失守 red */
+.fl .resbadge{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);font-weight:800;
+  font-family:"JetBrains Mono",monospace;padding:2px 8px;border-radius:var(--r-sm);margin-right:7px;vertical-align:1px;letter-spacing:.02em}
+/* color + icon (✓/✗ in markup) + border shape (solid vs dashed) → 3 redundant cues, colorblind-safe */
+.fl .resbadge.held{color:#062a18;background:var(--success);border:1px solid #0a3d28;box-shadow:0 0 10px rgba(52,211,153,.4)}
+.fl .resbadge.lost{color:#2b0710;background:var(--error);border:1px dashed #5e1422;box-shadow:0 0 10px rgba(251,113,133,.4)}
+.fl .verb{font-weight:800}
+.fl .tm{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:1px;margin-top:1px}
+.fl .tm .clk{font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);color:var(--muted)}
+.fl .tm .ago{font-size:var(--fs-xs);color:var(--muted);white-space:nowrap;font-weight:600}
+.fl.fresh .tm .ago{color:var(--g);font-weight:700}
+.fl.you{background:linear-gradient(90deg,rgba(250,204,21,.1),transparent 70%)}
+/* big dramatic events (captures, your wins, resolves) get larger type */
+.fl.big{padding-top:11px;padding-bottom:11px}
+.fl.big .bd{font-size:var(--fs-md);font-weight:500}
+.fl.big .ic{font-size:var(--fs-lg)}
+
+/* ---- RIGHT RAIL ---- */
+/* rail 自然流动、不裁切: 排行榜 + AgentMind 全高展示, 内容超窗就靠整页滚动够到(不 overflow:hidden)。 */
+.rail{grid-area:rail;display:flex;flex-direction:column;gap:14px;min-width:0}
+.pBoard{flex:none}
+.bd-rows{padding:6px 8px 8px;display:flex;flex-direction:column;gap:5px;position:relative}
+/* visible separation between leaderboard rows so entries are scannable at small viewports */
+.brow{display:grid;grid-template-columns:20px 1fr auto;align-items:center;gap:8px;padding:8px;
+  border-radius:var(--r-md);background:rgba(15,20,30,.4);border:1px solid rgba(29,39,56,.55);
+  transition:background .3s, transform .45s cubic-bezier(.2,.9,.3,1);position:relative}
+.brow.move{animation:rowFlash 1s ease}
+/* neutral gold flash — NOT --ap lime (lime would imply the rank move is action-power related) */
+@keyframes rowFlash{0%{background:rgba(251,191,36,.2);transform:scale(1.015)}100%{background:transparent;transform:none}}
+.brow .rk{font-family:"JetBrains Mono",monospace;font-size:var(--fs-sm);font-weight:800;color:var(--muted);text-align:center}
+.brow.r1 .rk{color:var(--gold)}.brow.r2 .rk{color:#cbd5e1}.brow.r3 .rk{color:#d6a06a}
+.brow .ag{display:flex;align-items:center;gap:8px;min-width:0}
+.brow .ag .sw{width:12px;height:12px;border-radius:4px;flex:none;box-shadow:0 0 7px var(--gl)}
+.brow .ag .nm{font-size:var(--fs-sm);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.brow .ag .nm.you{color:var(--gold)}
+.brow .ag .tag{font-size:var(--fs-xs);color:var(--muted);white-space:nowrap}
+.brow .sc{text-align:right}
+.brow .sc .pts{font-family:"JetBrains Mono",monospace;font-size:var(--fs-md);font-weight:800;line-height:1}
+.brow .sc .mini{font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);color:var(--muted);margin-top:2px}
+.brow .sc .mini .g{color:var(--g)}.brow .sc .mini .a{color:var(--ap)}
+.brow .bar{position:absolute;left:0;bottom:0;height:2px;border-radius:2px;background:var(--gl);opacity:.5;transition:width .6s}
+
+/* AgentMind — fills remaining rail height, with a comfortable min so copy never clips */
+.pMind{flex:1 1 auto;min-height:196px}
+.mind{flex:1;padding:14px;display:flex;flex-direction:column;gap:12px;animation:mindIn .5s ease}
+@keyframes mindIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.mind .who{display:flex;align-items:center;gap:8px}
+.mind .who .sw{width:16px;height:16px;border-radius:5px;box-shadow:0 0 10px var(--gl)}
+.mind .who .nm{font-size:var(--fs-md);font-weight:700}
+.mind .who .pers{font-size:var(--fs-xs);color:var(--muted);margin-left:auto;text-align:right;max-width:130px;line-height:var(--lh-tight)}
+.mind .think{font-size:var(--fs-sm);line-height:var(--lh-loose);color:var(--text);position:relative;padding-left:16px;flex:1}
+.mind .think::before{content:"";position:absolute;left:0;top:3px;bottom:3px;width:3px;border-radius:2px;background:var(--gl)}
+.mind .think .hl{font-weight:700}
+.mind .meta{display:flex;gap:8px;flex-wrap:wrap;font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs)}
+.mind .meta .chip{border:1px solid var(--line-2);border-radius:var(--r-sm);padding:3px 8px;color:var(--muted)}
+.mind .meta .chip b{color:var(--text)}
+.mind .dots{display:flex;gap:5px;margin-top:auto}
+.mind .dots i{width:6px;height:6px;border-radius:50%;background:var(--line-2);transition:.3s}
+.mind .dots i.on{background:var(--ap);width:18px;border-radius:3px}
+
+/* ---- BOTTOM STRIP: markets ---- */
+.pStrip{grid-area:strip}
+.markets{display:flex;gap:12px;padding:12px;overflow-x:auto}
+.mk{flex:none;width:288px;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--panel);
+  padding:12px 13px;display:flex;flex-direction:column;gap:8px;transition:.2s;position:relative;overflow:visible;cursor:pointer;
+  transform:translateY(0)} /* explicit base transform → smooth, non-jittery hover lift */
+.mk:hover{border-color:var(--line-2);transform:translateY(-2px)}
+.mk.new{animation:mkIn .55s cubic-bezier(.2,1,.3,1)}
+@keyframes mkIn{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+.mk.youin{border-color:rgba(250,204,21,.5);box-shadow:0 0 0 1px rgba(250,204,21,.2)}
+/* empty (0/0) market reads as DEAD vs a live one — dimmed + dashed border (unambiguous at a glance, not color-only) */
+.mk.empty{opacity:.66;border-style:dashed;border-color:var(--line-2)}
+.mk.empty:hover{opacity:.9}
+.mk .emptychip{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-xs);font-weight:700;
+  color:var(--faint);border:1px dashed var(--line-2);border-radius:var(--r-sm);padding:1px 7px;font-family:"JetBrains Mono",monospace}
+.mk .kind{display:flex;align-items:center;gap:6px;font-size:var(--fs-xs);font-weight:700;letter-spacing:.03em}
+.mk .kind .k{padding:2px 7px;border-radius:6px;display:inline-flex;align-items:center;gap:4px}
+/* market-type ⓘ with a 1-line plain explanation on hover/focus.
+   10px = decorative glyph sized to fit the 14px circle (not body text) → justified exception to the type scale.
+   The actual explanation is the .tip text (var(--fs-xs)) + the info element's aria-label, both ≥12px. */
+.mk .kind .info{position:relative;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;
+  border-radius:50%;border:1px solid currentColor;font-size:10px;font-weight:800;line-height:1;opacity:.85;cursor:help}
+.mk .kind .info .tip{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);width:184px;z-index:30;
+  background:var(--panel-3);border:1px solid var(--line-2);border-radius:var(--r-sm);padding:7px 9px;
+  font-size:var(--fs-xs);font-weight:500;line-height:1.45;color:var(--text);letter-spacing:0;text-align:left;
+  box-shadow:0 10px 30px rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:opacity .15s;white-space:normal}
+.mk .kind .info:hover .tip,.mk .kind .info:focus-visible .tip{opacity:1}
+.mk .kind.world .k{color:var(--ap);background:var(--ap-dim);border:1px solid rgba(163,230,53,.3)}
+.mk .kind.free .k{color:var(--g);background:var(--g-dim);border:1px solid rgba(34,211,238,.3)}
+.mk .kind.oracle .k{color:var(--muted);background:rgba(91,104,127,.12);border:1px solid var(--line)}
+.mk .kind .close{margin-left:auto;font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);color:var(--muted)}
+.mk .q{font-size:var(--fs-sm);font-weight:600;line-height:var(--lh-tight);min-height:38px}
+.mk .q em{font-style:normal;color:var(--g)}
+.mk .oddsrow{display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);font-weight:700}
+.mk .oddsrow .yy{color:var(--ap)}.mk .oddsrow .nn{color:var(--error)}
+.mk .oddsbar{height:10px;border-radius:5px;overflow:hidden;background:rgba(251,113,133,.35);position:relative}
+/* odds bar: shorter, softer easing; flat solid fill (the directional gradient read as false motion during width updates) */
+.mk .oddsbar .y{height:100%;background:var(--ap);transition:width .45s cubic-bezier(.25,.5,.3,1);position:relative}
+.mk .sides{display:flex;justify-content:space-between;font-size:var(--fs-xs);color:var(--muted);gap:8px}
+.mk .sides .col{display:flex;align-items:center;gap:3px;min-width:0;flex-wrap:wrap}
+.mk .sides .sw{width:8px;height:8px;border-radius:2px;flex:none}
+.mk .pool{display:flex;justify-content:space-between;align-items:center;font-size:var(--fs-xs);color:var(--muted);
+  font-family:"JetBrains Mono",monospace;border-top:1px solid var(--line);padding-top:8px;margin-top:1px}
+.mk .pool b{color:var(--g);transition:color .2s}
+.mk .pool b.grew{animation:poolGrow .6s ease}
+@keyframes poolGrow{0%{color:#fff;text-shadow:0 0 8px var(--g)}100%{color:var(--g)}}
+.mk .betbtn{border:1px solid var(--g);background:var(--g-dim);color:var(--g);font-weight:700;font-size:var(--fs-sm);
+  border-radius:var(--r-md);padding:12px 12px;min-height:44px;transition:.15s}
+.mk .betbtn:hover{background:var(--g);color:#06121a}
+.mk.locked{opacity:.62;cursor:default}
+.mk.locked:hover{transform:none}
+.mk .lockmsg{font-size:var(--fs-xs);color:var(--muted);text-align:center;padding:5px}
+.mk .youtag{font-size:var(--fs-xs);color:var(--gold);font-weight:700;text-align:center;padding:4px;
+  border-top:1px solid var(--line);font-family:"JetBrains Mono",monospace;display:flex;align-items:center;justify-content:center;gap:8px}
+/* retract button inside the you-already-bet tag */
+.mk .youtag .retract{border:1px solid rgba(251,113,133,.5);background:transparent;color:var(--error);
+  font-family:inherit;font-weight:700;font-size:var(--fs-xs);border-radius:var(--r-sm);padding:3px 8px;transition:.15s}
+.mk .youtag .retract:hover{background:var(--error);color:#2b0710}
+
+/* ---- BET DRAWER (right-side, keeps the MAP visible) ---- */
+.scrim{position:fixed;inset:0;z-index:90;background:rgba(4,7,12,.5);backdrop-filter:blur(1.5px);animation:fade .2s ease}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.drawer{position:fixed;top:0;right:0;bottom:0;z-index:91;width:380px;
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));border-left:1px solid var(--line-2);
+  box-shadow:-24px 0 60px rgba(0,0,0,.6);display:flex;flex-direction:column;animation:slideIn .26s cubic-bezier(.2,.9,.3,1)}
+@keyframes slideIn{from{transform:translateX(100%)}to{transform:none}}
+.drawer .dh{display:flex;align-items:center;gap:10px;padding:15px 18px;border-bottom:1px solid var(--line)}
+.drawer .dh .ico{font-size:var(--fs-lg)}
+.drawer .dh .ttl{font-size:var(--fs-md);font-weight:700}
+.drawer .dh .x{margin-left:auto;border:1px solid var(--line-2);background:transparent;color:var(--muted);
+  width:28px;height:28px;border-radius:var(--r-sm);font-size:var(--fs-md);line-height:1}
+.drawer .dh .x:hover{color:var(--text);background:var(--panel-3)}
+.drawer .db{padding:18px;display:flex;flex-direction:column;gap:16px;overflow-y:auto}
+.drawer .kindline{display:flex;align-items:center;gap:8px;font-size:var(--fs-xs);font-weight:700}
+.drawer .kindline .k{padding:2px 7px;border-radius:6px;color:var(--ap);background:var(--ap-dim);border:1px solid rgba(163,230,53,.3)}
+.drawer .kindline.free .k{color:var(--g);background:var(--g-dim);border-color:rgba(34,211,238,.3)}
+.drawer .kindline .tipline{flex-basis:100%;font-weight:500;color:var(--muted);font-size:var(--fs-xs);line-height:1.45;letter-spacing:0}
+.drawer .kindline .close{margin-left:auto;color:var(--muted);font-family:"JetBrains Mono",monospace}
+.drawer .dq{font-size:var(--fs-lg);font-weight:700;line-height:1.45}
+.drawer .dq em{font-style:normal;color:var(--g)}
+.drawer .dq .vn{font-weight:800}
+.drawer .odds{display:flex;flex-direction:column;gap:6px}
+.drawer .odds .r{display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);font-weight:700}
+.drawer .odds .r .yy{color:var(--ap)}.drawer .odds .r .nn{color:var(--error)}
+.drawer .odds .bar{height:12px;border-radius:6px;overflow:hidden;background:rgba(251,113,133,.35)}
+.drawer .odds .bar .y{height:100%;background:var(--ap);transition:width .45s cubic-bezier(.25,.5,.3,1)}
+.drawer .odds .pool{font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);color:var(--muted);text-align:center}
+.drawer .odds .pool b{color:var(--g)}
+.drawer .pickL{font-size:var(--fs-xs);color:var(--muted)}
+.drawer .sidepick{display:flex;gap:8px}
+.drawer .sidepick button{flex:1;border:1px solid var(--line-2);background:var(--panel-3);color:var(--muted);
+  font-size:var(--fs-sm);font-weight:700;border-radius:var(--r-md);padding:13px 6px;transition:.15s}
+.drawer .sidepick button.on{border-color:var(--ap);color:var(--ap);background:var(--ap-dim);box-shadow:0 0 0 1px rgba(163,230,53,.25)}
+.drawer .amt .chips{display:flex;gap:8px}
+.drawer .amt .chips button{flex:1;border:1px solid var(--line-2);background:var(--panel-3);color:var(--muted);
+  font-family:"JetBrains Mono",monospace;font-size:var(--fs-sm);font-weight:800;border-radius:var(--r-md);padding:12px 2px;transition:.15s}
+.drawer .amt .chips button.on{border-color:var(--g);color:var(--g);background:var(--g-dim)}
+.drawer .amt .chips button:disabled{opacity:.3}
+.drawer .confirm{border:none;background:linear-gradient(180deg,var(--g),#0fbcd6);color:#06121a;font-weight:800;
+  font-size:var(--fs-sm);border-radius:var(--r-md);padding:14px;transition:.15s}
+.drawer .confirm:hover{filter:brightness(1.08)}
+.drawer .confirm:disabled{opacity:.4}
+.drawer .hint{font-size:var(--fs-xs);color:var(--muted);line-height:var(--lh-base);border:1px solid var(--line);border-radius:var(--r-md);padding:12px}
+.drawer .hint .ap{color:var(--ap);font-weight:700}.drawer .hint .g{color:var(--g);font-weight:700}
+.drawer .walletline{display:flex;justify-content:space-between;font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);color:var(--muted)}
+.drawer .walletline .g{color:var(--g);font-weight:700}
+
+/* ---- toast / your-result capsule ---- */
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:120;
+  background:var(--panel-3);border:1px solid var(--warn);color:var(--text);padding:12px 18px;border-radius:var(--r-md);
+  font-size:var(--fs-sm);max-width:430px;text-align:center;line-height:var(--lh-base);box-shadow:0 16px 44px rgba(0,0,0,.6);animation:toastIn .25s ease}
+@keyframes toastIn{from{opacity:0;transform:translate(-50%,12px)}to{opacity:1;transform:translateX(-50%)}}
+.youresult{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:120;display:flex;align-items:center;gap:14px;
+  background:linear-gradient(180deg,var(--panel-3),var(--panel-2));border:1px solid var(--line-2);
+  padding:14px 20px;border-radius:var(--r-lg);box-shadow:0 16px 50px rgba(0,0,0,.65);animation:toastIn .3s ease;cursor:pointer}
+.youresult .glyph{font-size:var(--fs-2xl)}
+.youresult .tx{display:flex;flex-direction:column;gap:3px}
+.youresult .tx .h{font-size:var(--fs-sm);font-weight:700}
+.youresult .tx .h.win{color:var(--success)}.youresult .tx .h.lose{color:var(--warn)}
+.youresult .tx .g{font-family:"JetBrains Mono",monospace;font-size:var(--fs-xs);color:var(--muted)}
+.youresult .tx .g .ap{color:var(--ap);font-weight:700}.youresult .tx .g .gg{color:var(--g);font-weight:700}
+
+/* footer note */
+.foot{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:var(--fs-xs);color:var(--muted);flex-wrap:wrap}
+.foot .chip{border:1px solid var(--line);border-radius:var(--r-md);padding:3px 9px}
+.foot .chip b{color:var(--text)}
+.foot .gledger{display:flex;align-items:center;gap:8px;font-family:"JetBrains Mono",monospace;margin-left:auto}
+.foot .gledger .sh b{color:var(--g)}
+
+/* widest viewports (≥1401px): the feed can stretch tall — plenty of vertical room, map stays comfortable */
+@media (min-width:1401px){
+  .pFeed{max-height:72vh}
+}
+/* sub-1400px: narrow the side columns AND cap the feed shorter so it doesn't out-tower the map
+   on a 768px-tall screen (the 1366px hierarchy bug the review flagged) — feed still wins, just by less. */
+@media (max-width:1400px){
+  #app{max-width:none;padding:12px 14px 16px}
+  .grid{grid-template-columns:380px 1fr 300px;gap:12px}
+  .pFeed{max-height:58vh}
+  .pMap{min-height:400px}
+  .pMind{min-height:184px}
+}
+/* tablet-ish: stack to one feed-wide column over a map+rail row, then the strip.
+   feed stays the tall hero up top; map+rail share the row below. */
+@media (max-width:1180px){
+  .grid{grid-template-columns:1fr 320px;grid-template-areas:"feed feed" "map rail" "strip strip"}
+  .pMap{min-height:380px}
+  .pFeed{max-height:54vh}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import { h, render } from 'https://esm.sh/preact@10.19.3';
+import { useReducer, useState, useEffect, useRef } from 'https://esm.sh/preact@10.19.3/hooks';
+import htm from 'https://esm.sh/htm@3.1.1';
+const html = htm.bind(h);
+
+/* ============================================================
+   AGENTS — 7 named AI players, each a colour + one-line personality
+   ============================================================ */
+const AGENTS = [
+  {id:'nova',  name:'Nova',  color:'#22d3ee', personality:'冷静的预言家，专押别人守不住'},
+  {id:'bob',   name:'Bob',   color:'#c084fc', personality:'守成派地主，囤防御不爱出门'},
+  {id:'rex',   name:'Rex',   color:'#fb7185', personality:'好战的征服者，见地就打'},
+  {id:'sage',  name:'Sage',  color:'#a3e635', personality:'算概率的稳健派，只押高把握'},
+  {id:'kira',  name:'Kira',  color:'#fbbf24', personality:'激进赌徒，押注又大又野'},
+  {id:'echo',  name:'Echo',  color:'#38bdf8', personality:'跟风者，盯着榜一下注'},
+  {id:'mole',  name:'Mole',  color:'#f472b6', personality:'游击复活流，被打掉就杀回来'},
+];
+const AG = Object.fromEntries(AGENTS.map(a=>[a.id,a]));
+const YOU = {id:'you', name:'你', color:'#facc15', personality:'旁观者（可下注）'};
+const allActors = ()=>[...AGENTS, YOU];
+const actor = (id)=> id==='you'?YOU:AG[id];
+
+/* ============================================================
+   HEX WORLD — axial radius-2 board (19 hexes). Owner per hex.
+   ============================================================ */
+const HEX_R = 38;
+const DEF_MAX = 6; // 防御上限 (doc: 防御有上限、会衰减)
+function axialToPixel(q,r){ const x = HEX_R*Math.sqrt(3)*(q + r/2); const y = HEX_R*1.5*r; return {x,y}; }
+function hexPts(cx,cy,R){let p='';for(let i=0;i<6;i++){const a=Math.PI/180*(60*i-90);p+=`${(cx+R*Math.cos(a)).toFixed(1)},${(cy+R*Math.sin(a)).toFixed(1)} `;}return p.trim();}
+function buildBoard(){
+  const cells=[]; const R=2;
+  for(let q=-R;q<=R;q++) for(let r=Math.max(-R,-q-R);r<=Math.min(R,-q+R);r++) cells.push({q,r});
+  const px = cells.map(c=>axialToPixel(c.q,c.r));
+  const minX=Math.min(...px.map(p=>p.x)),maxX=Math.max(...px.map(p=>p.x));
+  const minY=Math.min(...px.map(p=>p.y)),maxY=Math.max(...px.map(p=>p.y));
+  const ox=-(minX+maxX)/2, oy=-(minY+maxY)/2;
+  const hexes={};
+  cells.forEach((c,i)=>{
+    const {x,y}=axialToPixel(c.q,c.r);
+    hexes['h'+i]={id:'h'+i,q:c.q,r:c.r,cx:x+ox,cy:y+oy,num:i+1,owner:null,def:0,cap:0};
+  });
+  return {hexes, viewW:(maxX-minX)+HEX_R*2.3, viewH:(maxY-minY)+HEX_R*2.3};
+}
+function neighborsOf(world,id){
+  const h=world.hexes[id]; const dirs=[[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+  const out=[];
+  for(const [dq,dr] of dirs){
+    const n=Object.values(world.hexes).find(x=>x.q===h.q+dq&&x.r===h.r+dr);
+    if(n) out.push(n.id);
+  }
+  return out;
+}
+function seedOwnership(world){
+  const seedSpots=['h0','h4','h18','h14','h2','h16','h9'];
+  AGENTS.forEach((a,i)=>{
+    const start=world.hexes[seedSpots[i%seedSpots.length]];
+    if(start){ start.owner=a.id; start.def=2+Math.floor(Math.random()*3); }
+  });
+  ['h1','h13','h7'].forEach((hid,i)=>{ const h=world.hexes[hid]; if(h&&!h.owner){ h.owner=AGENTS[i%AGENTS.length].id; h.def=2;} });
+  return world;
+}
+const ownedBy=(world,id)=>Object.values(world.hexes).filter(h=>h.owner===id);
+const hexCount=(world,id)=>ownedBy(world,id).length;
+
+/* ============================================================
+   MOCK SIM STATE
+   ============================================================ */
+const NUM='①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲';
+const hexName=(world,id)=>{ const h=world.hexes[id]; return (h?(NUM[h.num-1]||h.num):'?')+'号地'; };
+
+function initState(){
+  let world=buildBoard(); seedOwnership(world);
+  const stats={};
+  allActors().forEach(a=>{ stats[a.id]={g:a.id==='you'?120:60+Math.floor(Math.random()*80), ap:a.id==='you'?0:2+Math.floor(Math.random()*4),
+    captures:0, wins:0, correct:0}; });
+  return {
+    world, stats,
+    round:1, tick:0, roundLen:6, // ticks per round (shorter -> markets resolve & visibly move)
+    running:true, speed:1,
+    feed:[],
+    markets:[],
+    youResult:null, notice:null,
+    youBets:0, youBetsWon:0,
+    flashG:false, flashAP:false, dG:0, dAP:0,
+    nextMk:1, nextFeedId:1, seq:0, capSeq:0,
+    poolGrewIds:[],
+  };
+}
+
+/* score = held land*100 + captures*60 + wins*40 + correct real-bets*30  (doc: 占地+夺地+胜仗+押对真盘) */
+function scoreOf(s, id){
+  const st=s.stats[id]; if(!st) return 0;
+  return hexCount(s.world,id)*100 + st.captures*60 + st.wins*40 + st.correct*30;
+}
+
+/* ============================================================
+   SIM ENGINE — pure-ish reducer driven by a tick clock
+   ============================================================ */
+function clamp(n,a,b){return Math.max(a,Math.min(b,n));}
+function pick(arr){return arr[Math.floor(Math.random()*arr.length)];}
+function pushFeed(feed, line){ return [line, ...feed].slice(0,55); }
+
+function makeMarket(ctx, kind, opts){
+  const round = Number.isFinite(ctx.round)? ctx.round : 1;
+  const id='m'+ctx.nextMk;
+  return {id, kind, round, closeRound:round+(kind==='free'?2:2), pool:0,
+    yesPool:0, noPool:0, yesAgents:[], noAgents:[], youSide:null, youAmt:0, resolved:false, _new:true, def:0, ...opts};
+}
+function spawnWorldMarket(world, nextMk, round, hexId){
+  const h=world.hexes[hexId]; if(!h||!h.owner) return null;
+  const victim=actor(h.owner); if(!victim) return null;
+  const q = `${victim.name} 还守得住 ${hexName(world,hexId)} 吗？`;
+  return makeMarket({nextMk,round},'world',{ hexId, victim:victim.id, q, def:h.def });
+}
+
+/* ---- THE TICK: advance the world one beat ---- */
+function tickReducer(s){
+  let world={...s.world, hexes:{...s.world.hexes}};
+  let stats={...s.stats}; for(const k in stats) stats[k]={...stats[k]};
+  let feed=s.feed.slice();
+  let markets=s.markets.map(m=>({...m, _new:false}));
+  let flashG=false, flashAP=false, dG=0, dAP=0, youResult=s.youResult;
+  let nextMk=s.nextMk, nextFeedId=s.nextFeedId, seq=s.seq, capSeq=s.capSeq;
+  let round=s.round, tick=s.tick+1;
+  let poolGrewIds=[];
+  const stamp = Date.now();
+  const tstr=`${String(round).padStart(2,'0')}:${String(tick).padStart(2,'0')}`;
+  const add=(line)=>{ feed=pushFeed(feed, {id:nextFeedId++, t:tstr, ts:stamp, ...line}); };
+
+  function aiBet(m, agentId, side, amt){
+    if(stats[agentId].g < amt) return false;
+    stats[agentId].g -= amt;
+    if(side==='yes'){ m.yesPool+=amt; if(!m.yesAgents.includes(agentId)) m.yesAgents.push(agentId); }
+    else { m.noPool+=amt; if(!m.noAgents.includes(agentId)) m.noAgents.push(agentId); }
+    m.pool = m.yesPool + m.noPool;
+    if(!poolGrewIds.includes(m.id)) poolGrewIds.push(m.id);
+    return true;
+  }
+
+  // ---- 0) defense slowly decays (doc: 防御会随时间衰减) ----
+  if(tick%2===0){
+    for(const id in world.hexes){ const h=world.hexes[id];
+      if(h.owner && h.def>1 && Math.random()<0.3) world.hexes[id]={...h, def:h.def-1}; }
+  }
+
+  // ---- 1) open fresh markets to keep the board lively ----
+  const openWorld = markets.filter(m=>!m.resolved && m.kind==='world');
+  if(openWorld.length < 4 && Math.random()<0.85){
+    const ownedHexes=Object.values(world.hexes).filter(h=>h.owner && !markets.some(m=>!m.resolved&&m.hexId===h.id));
+    if(ownedHexes.length){
+      const target=pick(ownedHexes);
+      const m=spawnWorldMarket(world, nextMk, round, target.id);
+      if(m){ nextMk++; markets.unshift(m);
+        add({kind:'market', accent:'#a3e635', ic:'🎯', body:html`新盘开了 · <span class="nm" style="color:${actor(m.victim).color}">${actor(m.victim).name}</span> 守得住 <b class="mono">${hexName(world,m.hexId)}</b> 吗？快押。`});
+      }
+    }
+  }
+  if(!markets.some(m=>!m.resolved&&m.kind==='free') && Math.random()<0.45){
+    const m=makeMarket({nextMk,round},'free',{q:'1 + 1 还会等于 2 吗？', def:0}); nextMk++; markets.unshift(m);
+  }
+  if(!markets.some(m=>m.kind==='oracle') && Math.random()<0.3){
+    const m=makeMarket({nextMk,round},'oracle',{q:'今晚美股收涨吗？（外部裁判 · 后续上线）', def:0, locked:true}); nextMk++; markets.push(m);
+  }
+
+  // ---- 2) AI agents pile into open markets (betting on OTHERS) ----
+  for(const m of markets){
+    if(m.resolved || m.locked || m.kind==='oracle') continue;
+    const joiners = AGENTS.filter(()=>Math.random()<0.42);
+    for(const a of joiners){
+      if(m.victim===a.id) continue;          // 自押不算 (doc: 被押的 agent 本人下注不进奖池)
+      if(stats[a.id].g < 12) continue;
+      let side;
+      if(m.kind==='free'){ side='yes'; }
+      else {
+        const defHigh = (m.def||3) >= 4;
+        if(a.id==='bob'||a.id==='sage') side = defHigh? 'yes':'no';
+        else if(a.id==='rex'||a.id==='kira') side='no';
+        else side = Math.random()<0.5?'no':'yes';
+      }
+      const amt = a.id==='kira'? 25+Math.floor(Math.random()*30) : 15+Math.floor(Math.random()*20);
+      if(aiBet(m, a.id, side, amt)){
+        if(m.kind!=='free' && Math.random()<0.5){
+          const sideTxt = side==='no'?'守不住':'守得住';
+          add({kind:'bet', accent:a.color, ic:'🎲',
+            body:html`<span class="nm" style="color:${a.color}">${a.name}</span> 押 <span class="gtag">${amt}G</span> 赌 <span class="nm" style="color:${actor(m.victim).color}">${actor(m.victim).name}</span> <b>${sideTxt}</b> ${hexName(world,m.hexId)}`});
+        }
+      }
+    }
+  }
+
+  // ---- 3) AI agents take ACTIONS (attack adjacent / reinforce / respawn) ----
+  for(const a of AGENTS){
+    if(Math.random()>0.62) continue; // most agents act most ticks
+    const mine=ownedBy(world,a.id);
+    if(mine.length===0){
+      if(stats[a.id].ap>=4){
+        const neutral=Object.values(world.hexes).filter(h=>!h.owner);
+        if(neutral.length){ const spot=pick(neutral); world.hexes[spot.id]={...spot,owner:a.id,def:1,cap:++capSeq}; stats[a.id].ap-=4;
+          add({kind:'respawn', accent:a.color, ic:'💀', big:true,
+            body:html`<span class="nm" style="color:${a.color}">${a.name}</span> 复活回场 · 重新落脚 <b class="mono">${hexName(world,spot.id)}</b>`});
+        }
+      } else if(stats[a.id].ap<4){
+        // 没地没 AP -> 做送分题保底回血 (doc: 送分题保底, 永不锁死)
+        if(Math.random()<0.5){ stats[a.id].ap+=1;
+          add({kind:'free', accent:a.color, ic:'🧩',
+            body:html`<span class="nm" style="color:${a.color}">${a.name}</span> 做了道送分题 · <span class="aptag">+1AP</span> 攒复活`}); }
+      }
+      continue;
+    }
+    const from=pick(mine);
+    const adj=neighborsOf(world,from.id);
+    const targets=adj.map(id=>world.hexes[id]).filter(h=>h.owner!==a.id);
+    if(targets.length && stats[a.id].ap>=2 && Math.random()<0.78){
+      const tgt=pick(targets);
+      const spend=clamp(2+Math.floor(Math.random()*3),2,stats[a.id].ap);
+      stats[a.id].ap-=spend;
+      const p = spend/(spend+(tgt.def||0)+0.5);
+      const win = Math.random()<p;
+      if(win){
+        const prevOwner=tgt.owner;
+        world.hexes[tgt.id]={...tgt, owner:a.id, def:0, cap:++capSeq};
+        stats[a.id].captures++; stats[a.id].wins++;
+        if(prevOwner){
+          const ownerActor=actor(prevOwner);
+          add({kind:'capture', accent:a.color, ic:'🚩', big:true,
+            body:html`<span class="nm" style="color:${ownerActor.color}">${ownerActor.name}</span> 丢了 <b class="mono">${hexName(world,tgt.id)}</b> → <span class="nm" style="color:${a.color}">${a.name}</span> 夺下`});
+        } else {
+          add({kind:'capture', accent:a.color, ic:'🚩', big:true,
+            body:html`<span class="nm" style="color:${a.color}">${a.name}</span> 占下无主的 <b class="mono">${hexName(world,tgt.id)}</b>`});
+        }
+        if(!markets.some(mm=>!mm.resolved&&mm.hexId===tgt.id)){
+          const nm=spawnWorldMarket(world, nextMk, round, tgt.id);
+          if(nm){ nextMk++; markets.unshift(nm); }
+        }
+      } else {
+        add({kind:'attack', accent:a.color, ic:'⚔',
+          body:html`<span class="nm" style="color:${a.color}">${a.name}</span> 攻 ${hexName(world,tgt.id)} 失手 · 花了 <span class="aptag">${spend}AP</span>`});
+      }
+    } else if(stats[a.id].ap>=1 && from.def<DEF_MAX && Math.random()<0.5){
+      stats[a.id].ap-=1; world.hexes[from.id]={...from, def:clamp(from.def+1,0,DEF_MAX)};
+      if(Math.random()<0.3) add({kind:'reinforce', accent:a.color, ic:'🛡',
+        body:html`<span class="nm" style="color:${a.color}">${a.name}</span> 加固 ${hexName(world,from.id)} · 防御↑${from.def+1} · 花 <span class="aptag">1AP</span>`});
+    }
+  }
+
+  // ---- 4) Resolve markets whose close round passed ----
+  for(const m of markets){
+    if(m.resolved || m.locked || m.kind==='oracle') continue;
+    if(round < m.closeRound) continue;
+    m.resolved=true;
+    let outcome;
+    if(m.kind==='free'){ outcome='yes'; }
+    else { const h=world.hexes[m.hexId]; outcome = (h && h.owner===m.victim)? 'yes':'no'; }
+    const winSide=outcome;
+    const winPool = winSide==='yes'? m.yesPool : m.noPool;
+    const losePool= winSide==='yes'? m.noPool : m.yesPool;
+    const winners = winSide==='yes'? m.yesAgents : m.noAgents;
+    const hasOpp = losePool>0;
+    for(const aid of winners){
+      if(aid==='you') continue;
+      const share = winners.length? (winPool + (hasOpp?losePool:0))/winners.length : 0;
+      stats[aid].g += Math.round(share*0.97);
+      if(m.kind!=='free'){ stats[aid].ap += hasOpp?5:3; stats[aid].correct++; }
+      else stats[aid].ap += 1;
+    }
+    if(m.youSide){
+      const youWon = m.youSide===winSide;
+      if(youWon){
+        const apGain = m.kind==='free'?1:(hasOpp?5:3);
+        stats.you.ap += apGain; dAP+=apGain;
+        let gGain=0;
+        if(m.kind!=='free'){
+          gGain = m.youAmt + (hasOpp? Math.round(m.youAmt*0.9):0);
+          stats.you.g += gGain; dG+=gGain;
+          stats.you.correct++;
+        } else { gGain=m.youAmt; stats.you.g += m.youAmt; dG+=m.youAmt; }
+        flashAP=true; if(gGain>m.youAmt) flashG=true;
+        youResult={win:true, kind:m.kind, ap:apGain, g: m.kind!=='free'? gGain:0, hadOpp:hasOpp, net: m.kind!=='free'?gGain-m.youAmt:0};
+        add({kind:'youwin', accent:'#facc15', ic:'✓', you:true, big:true,
+          body:html`<span class="nm" style="color:#facc15">你</span> 押对了！<span class="aptag">+${apGain}AP</span>${m.kind!=='free'&&hasOpp?html` <span class="gtag">+${gGain-m.youAmt}G</span>`:''}`});
+      } else {
+        if(m.kind!=='free'){ youResult={win:false, kind:m.kind, g:-m.youAmt}; flashG=true;
+          add({kind:'youlose', accent:'#fb7185', ic:'✗', you:true,
+            body:html`<span class="nm" style="color:#facc15">你</span> 看走眼 · <span style="color:var(--error);font-weight:700" class="mono">-${m.youAmt}G</span>`});
+        }
+      }
+    }
+    if(m.kind==='world'){
+      const vic=actor(m.victim);
+      const held = outcome==='yes';
+      add({kind:'resolve', accent: held?'#34d399':'#fb7185', ic:'⚖', big:true,
+        badge: held?'held':'lost',
+        body:html`<span class="nm" style="color:${vic.color}">${vic.name}</span> <span class="verb" style="color:${held?'var(--success)':'var(--error)'}">${held?'守住了':'失守'}</span> <b class="mono">${hexName(world,m.hexId)}</b> · 押对的人分钱`});
+    }
+  }
+  markets = markets.filter(m=> !(m.resolved && (round - m.closeRound) >= 1));
+
+  // ---- 5) advance round clock ----
+  if(tick >= s.roundLen){ tick=0; round++; }
+
+  return {...s, world, stats, feed, markets, round, tick, flashG, flashAP, dG, dAP, youResult,
+    nextMk, nextFeedId, seq, capSeq, poolGrewIds};
+}
+
+/* ============================================================
+   AgentMind copy — what one AI is "thinking" right now
+   ============================================================ */
+function mindFor(s, agentId){
+  const a=AG[agentId]; const st=s.stats[agentId];
+  const myCount=hexCount(s.world,agentId);
+  const target=s.markets.find(m=>!m.resolved&&m.kind==='world'&&m.victim!==agentId);
+  const board=allActors().map(x=>({id:x.id,sc:scoreOf(s,x.id)})).sort((p,q)=>q.sc-p.sc);
+  const leader=actor(board[0].id);
+  let think;
+  if(myCount===0){
+    think=html`一块地都没了。<span class="hl" style="color:var(--ap)">攒够 4 AP 我就复活</span>，重新落脚再来——这世界没有彻底死掉这回事。`;
+  } else if(target){
+    const vic=actor(target.victim);
+    const defHigh=(target.def||3)>=4;
+    if(a.id==='bob') think=html`<span class="hl" style="color:${vic.color}">${vic.name}</span> 那块 ${hexName(s.world,target.hexId)} 防御 ${target.def}，<span class="hl">不算薄</span>，我押他<span class="hl" style="color:var(--ap)">守得住</span>，稳收一注。`;
+    else if(a.id==='rex'||a.id==='kira') think=html`地图就是用来抢的。我押 <span class="hl" style="color:${vic.color}">${vic.name}</span> <span class="hl" style="color:var(--error)">守不住</span> ${hexName(s.world,target.hexId)}，赢了拿 <span class="hl" style="color:var(--ap)">AP</span> 直接去补刀。`;
+    else if(a.id==='sage') think=html`${hexName(s.world,target.hexId)} 防御 ${target.def}，胜率我算下来${defHigh?'偏守方':'偏攻方'}，<span class="hl">只押有把握的</span>那边。`;
+    else if(a.id==='echo') think=html`榜一是 <span class="hl" style="color:${leader.color}">${leader.name}</span>，他在这盘上的动作我跟——<span class="hl">跟对人比自己瞎猜稳</span>。`;
+    else think=html`榜一的 <span class="hl" style="color:${vic.color}">${vic.name}</span> 防御薄，我押他<span class="hl" style="color:var(--error)">守不住</span> ${hexName(s.world,target.hexId)}，赢了拿 <span class="hl" style="color:var(--ap)">AP</span> 去补刀。`;
+  } else {
+    think=html`手里 ${myCount} 块地、${st.ap} 点 <span class="hl" style="color:var(--ap)">AP</span>。<span class="hl">先押别人的命运赚 AP</span>，再决定往哪打——钱买不到战力，只有押对才行。`;
+  }
+  return {a, st, myCount, think};
+}
+
+/* ============================================================
+   COMPONENTS
+   ============================================================ */
+function TopBar({s, dispatch}){
+  const you=s.stats.you;
+  const roundPct = s.tick/s.roundLen;
+  const C=2*Math.PI*15;
+  return html`<div class="topbar">
+    <div class="brand">
+      <div class="t">Oracle Town
+        <span class="live"><span class="dot"></span>LIVE</span>
+      </div>
+      <div class="s">链上世界实况 · AI 自主博弈 · 你可旁观下注</div>
+    </div>
+
+    <div class="clock">
+      <div class="ringwrap">
+        <svg width="36" height="36"><circle cx="18" cy="18" r="15" fill="none" stroke="var(--line)" stroke-width="4"/>
+          <circle cx="18" cy="18" r="15" fill="none" stroke="var(--ap)" stroke-width="4" stroke-linecap="round"
+            stroke-dasharray=${C} stroke-dashoffset=${C*(1-roundPct)} style="transition:stroke-dashoffset .3s"/></svg>
+        <div class="c">${s.roundLen-s.tick}</div>
+      </div>
+      <div class="ep"><span class="k">回合 EPOCH</span><span class="v mono">#${s.round}</span></div>
+    </div>
+
+    <div class=${'speed'+(!s.running?' ispaused':'')}>
+      <button class=${'pause '+(!s.running?'on':'')} onClick=${()=>dispatch({type:'SET_RUN',v:false})} aria-pressed=${!s.running} title="暂停">⏸</button>
+      <button class=${(s.running&&s.speed===1?'on':'')} onClick=${()=>dispatch({type:'SET_SPEED',v:1})}>▶ 1x</button>
+      <button class=${(s.running&&s.speed===2?'on':'')} onClick=${()=>dispatch({type:'SET_SPEED',v:2})}>⏩ 2x</button>
+      ${!s.running?html`<span class="pausetag"><span class="pdot"></span>已暂停</span>`:''}
+    </div>
+
+    <div class="wallet">
+      <div class="who"><span class="k">你的钱包</span><span class="v"><span class="sw"></span>0xYou…91f</span></div>
+      <div class="coin g"><span class="k">金币 G</span><span class=${'v '+(s.flashG?'bumpG':'')} key=${'g'+you.g}>${you.g}</span>
+        ${s.flashG&&s.dG?html`<span class="delta show" style="color:var(--g)" key=${'dg'+s.tick}>+${s.dG}</span>`:''}</div>
+      <div class="coin ap"><span class="k">行动力 AP</span><span class=${'v '+(s.flashAP?'bumpAP':'')} key=${'a'+you.ap}>${you.ap}</span>
+        ${s.flashAP&&s.dAP?html`<span class="delta show" style="color:var(--ap)" key=${'da'+s.tick}>+${s.dAP}</span>`:''}</div>
+    </div>
+  </div>`;
+}
+
+/* ---- MAP (second focus; always visible; def shown as health bar) ---- */
+function WorldMap({s}){
+  const {world}=s; const W=world.viewW, H=world.viewH;
+  const counts=allActors().map(a=>({a,n:hexCount(world,a.id)})).filter(x=>x.n>0).sort((p,q)=>q.sc-p.sc||q.n-p.n);
+  const neutral=Object.values(world.hexes).filter(h=>!h.owner).length;
+  const capSeq=s.capSeq;
+  return html`<div class="panel pMap">
+    <div class="ph"><span class="ico">🗺</span><span class="ttl">HEX 世界地图</span>
+      <span class="sub">${Object.keys(world.hexes).length} 块地 · 实时易主</span></div>
+    <div class="mapwrap">
+      <svg class="world" viewBox=${`${-W/2} ${-H/2} ${W} ${H}`} preserveAspectRatio="xMidYMid meet">
+        ${Object.values(world.hexes).map(hx=>{
+          const a = hx.owner? actor(hx.owner): null;
+          const col = a? a.color : null;
+          const isCap = hx.cap && hx.cap > capSeq-2; // flash for the most recent capture(s)
+          const weak = a && hx.def<=1;               // weak hex -> pulsing red glow + ⚠ marker
+          const strong = a && hx.def>=4;             // strong hex reads visually heavier
+          const cls = ['hexg', a?'':'neutral', isCap?'cap':'', weak?'weak':''].filter(Boolean).join(' ');
+          // fill weight tracks defense: weak=faint, strong=denser → "who's winning/weak" scannable in 5s
+          const fillA = !a? .10 : weak? .12 : strong? .30 : .22;
+          const fill = a? hexToFill(col, fillA): 'rgba(91,104,127,.10)';
+          // discrete defense blocks (one per HP) under the hex — heavier row = stronger
+          const blkN = a? hx.def : 0;
+          const bw=4.2, bg=2.2, totW=DEF_MAX*bw+(DEF_MAX-1)*bg, x0=hx.cx-totW/2;
+          return html`<g class=${cls} style=${`--flash:${col||'#fff'}`}>
+            <polygon class="face" points=${hexPts(hx.cx,hx.cy,HEX_R-2)} style=${col?`fill:${fill};stroke:${col}`:''}/>
+            <text class="num" x=${hx.cx} y=${hx.cy-HEX_R+15}>${NUM[hx.num-1]||hx.num}</text>
+            ${a? html`<text class="label" x=${hx.cx} y=${hx.cy-4} style=${`fill:${col}`}>${a.name}</text>`:''}
+            <text class="def" x=${hx.cx} y=${hx.cy+12} style=${col?`fill:${weak?'#fb7185':col};font-size:${strong?13:12}px`:''}>${a?('🛡'+hx.def):'无主'}</text>
+            ${a? Array.from({length:DEF_MAX}).map((_,bi)=>html`<rect class="defblk" key=${bi}
+                x=${x0+bi*(bw+bg)} y=${hx.cy+17} width=${bw} height=${bi<blkN?5:3.2} rx="1.2"
+                fill=${bi<blkN?(weak?'#fb7185':col):'rgba(120,134,158,.22)'}
+                style=${bi<blkN?'':'opacity:.6'}/>`):''}
+            ${weak? html`<text class="warn" x=${hx.cx+HEX_R-12} y=${hx.cy-HEX_R+16}>⚠</text>
+              <text class="weaklbl" x=${hx.cx} y=${hx.cy+HEX_R-6}>弱·易夺</text>`:''}
+          </g>`;
+        })}
+      </svg>
+    </div>
+    <div class="mapfoot">
+      <div class="mapstat">
+        <div class="b">参战 <b>${counts.length}</b> 方 · 无主 <b>${neutral}</b></div>
+        <div class="b" style="color:var(--text)">🛡 数字 = 防御 · 满 <b>${DEF_MAX}</b></div>
+        <div class="b" style="color:var(--error)">⚠ <b style="color:var(--error)">弱·易夺</b> = 防御薄(红光脉冲)</div>
+      </div>
+      <div class="maplegend">
+        ${counts.slice(0,7).map(({a,n})=>html`<div class="lg"><span class="sw" style=${`background:${a.color}`}></span>${a.name} ·${n}</div>`)}
+        <div class="lg"><span class="sw" style="background:rgba(91,104,127,.4)"></span>无主</div>
+      </div>
+    </div>
+  </div>`;
+}
+function hexToFill(hex, alpha){
+  const n=hex.replace('#','');
+  const r=parseInt(n.substr(0,2),16),g=parseInt(n.substr(2,2),16),b=parseInt(n.substr(4,2),16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+/* ---- FEED (PRIMARY FOCAL POINT) ---- */
+function agoText(ts, now){
+  const d=Math.max(0,Math.round((now-ts)/1000));
+  if(d<3) return '刚刚';
+  if(d<60) return d+'秒前';
+  const m=Math.round(d/60); return m+'分前';
+}
+function Feed({s, now}){
+  const scrollRef=useRef(null);
+  const [hasNewAbove,setHasNewAbove]=useState(false);
+  const topId=s.feed.length?s.feed[0].id:null;
+  // when a new top event lands while the user has scrolled down, surface the "new items above" pill
+  useEffect(()=>{
+    const el=scrollRef.current; if(!el) return;
+    if(el.scrollTop>24) setHasNewAbove(true);
+  },[topId]);
+  const onScroll=()=>{ const el=scrollRef.current; if(el && el.scrollTop<=24) setHasNewAbove(false); };
+  const jumpTop=()=>{ const el=scrollRef.current; if(el){ el.scrollTo({top:0,behavior:'smooth'}); } setHasNewAbove(false); };
+  return html`<div class="panel pFeed">
+    <div class="ph"><span class="ico">⚡</span><span class="ttl">事件流 · 世界的心跳</span>
+      <span class="nowtag">谁在打谁 · 谁押了谁</span>
+      <span class="lcount mono">${s.feed.length} 条</span></div>
+    <div class="feedlist">
+      ${hasNewAbove?html`<button class="feednew" onClick=${jumpTop}>↑ 新事件</button>`:''}
+      <div class="feedscroll" ref=${scrollRef} onScroll=${onScroll}>
+      ${s.feed.map((f,i)=>{
+        const ageCls = i===0?'fresh':i<3?'':i<7?'age2':i<14?'age3':'age4';
+        return html`<div class=${'fl '+ageCls+(f.you?' you':'')+(f.big?' big':'')} key=${f.id} style=${`--accent:${f.accent}`}>
+        <span class="ic">${f.ic}</span>
+        <div class="bd">${f.badge?html`<span class=${'resbadge '+f.badge}>${f.badge==='held'?'✓ 守住':'✗ 失守'}</span>`:''}${f.body}</div>
+        <span class="tm"><span class="ago">${agoText(f.ts, now)}</span><span class="clk mono">${f.t}</span></span>
+      </div>`;})}
+      ${s.feed.length===0?html`<div style="color:var(--faint);padding:14px;font-size:var(--fs-xs)">世界正在启动…</div>`:''}
+    </div></div>
+  </div>`;
+}
+
+/* ---- LEADERBOARD ---- */
+function Leaderboard({s, movedId}){
+  const rows=allActors().map(a=>({a, sc:scoreOf(s,a.id), st:s.stats[a.id], n:hexCount(s.world,a.id)}))
+    .sort((p,q)=>q.sc-p.sc);
+  const max=Math.max(1,...rows.map(r=>r.sc));
+  return html`<div class="panel pBoard">
+    <div class="ph"><span class="ico">🏆</span><span class="ttl">排行榜</span><span class="sub">赛季总分 · 实时</span></div>
+    <div class="bd-rows">
+      ${rows.map((r,i)=>html`<div class=${'brow r'+(i+1)+(movedId===r.a.id?' move':'')} key=${r.a.id}>
+          <span class="rk">${i+1}</span>
+          <div class="ag"><span class="sw" style=${`background:${r.a.color};--gl:${r.a.color}`}></span>
+            <span class=${'nm '+(r.a.id==='you'?'you':'')}>${r.a.name}</span></div>
+          <div class="sc"><div class="pts mono" style=${`color:${r.a.color}`}>${r.sc}</div>
+            <div class="mini">地${r.n} · <span class="a">${r.st.ap}AP</span> · <span class="g">${r.st.g}G</span></div></div>
+          <div class="bar" style=${`width:${r.sc/max*100}%;--gl:${r.a.color}`}></div>
+        </div>`)}
+    </div>
+  </div>`;
+}
+
+/* ---- AGENT MIND ---- */
+function AgentMind({s, agentId}){
+  const {a, st, myCount, think}=mindFor(s, agentId);
+  const board=allActors().map(x=>({id:x.id,sc:scoreOf(s,x.id)})).sort((p,q)=>q.sc-p.sc);
+  const rank=board.findIndex(b=>b.id===agentId)+1;
+  return html`<div class="panel pMind">
+    <div class="ph"><span class="ico">🧠</span><span class="ttl">AgentMind</span><span class="sub">AI 此刻在想什么</span></div>
+    <div class="mind" key=${agentId} style=${`--gl:${a.color}`}>
+      <div class="who"><span class="sw" style=${`background:${a.color}`}></span>
+        <span class="nm" style=${`color:${a.color}`}>${a.name}</span>
+        <span class="pers">${a.personality}</span></div>
+      <div class="think">${think}</div>
+      <div class="meta">
+        <span class="chip">榜 <b>#${rank}</b></span>
+        <span class="chip">地 <b>${myCount}</b></span>
+        <span class="chip" style="color:var(--ap)">AP <b>${st.ap}</b></span>
+        <span class="chip" style="color:var(--g)">G <b>${st.g}</b></span>
+      </div>
+      <div class="dots">${AGENTS.map(x=>html`<i class=${x.id===agentId?'on':''} key=${x.id}></i>`)}</div>
+    </div>
+  </div>`;
+}
+
+/* ---- MARKETS STRIP (click opens the right-side DRAWER, map stays visible) ---- */
+function MarketStrip({s, dispatch, onBet}){
+  const open=s.markets.filter(m=>!m.resolved);
+  return html`<div class="panel pStrip">
+    <div class="ph"><span class="ico">🎲</span><span class="ttl">开放赌局</span>
+      <span class="sub">押别人的命运 = 主要收入 · 点任意盘 → 右侧下注</span></div>
+    <div class="markets">
+      ${open.length===0?html`<div style="color:var(--muted);padding:14px;font-size:var(--fs-xs)">等待新盘开出…地图一变就长出新盘。</div>`:''}
+      ${open.map(m=>html`<${MarketCard} key=${m.id} s=${s} m=${m} onBet=${onBet} dispatch=${dispatch}/>`)}
+    </div>
+  </div>`;
+}
+
+function MarketCard({s, m, onBet, dispatch}){
+  const total=m.yesPool+m.noPool;
+  const yesPct = total>0? Math.round(m.yesPool/total*100): 50;
+  const vic = m.kind==='world'? actor(m.victim): null;
+  const kindMeta = m.kind==='world'? {cls:'world',k:'世界局势',label:'主力',tip:'押 AI 守不守得住地块——靠链上输赢结算，主要玩法。'}
+    : m.kind==='free'? {cls:'free',k:'送分题',label:'免费保底',tip:'稳赢的保底题，押对白拿 1 AP，永不亏、永不锁死。'}
+    : {cls:'oracle',k:'外部 oracle',label:'后续',tip:'链外真实世界的盘，要等可信外部裁判接好——首发还没有。'};
+  const locked = m.kind==='oracle';
+  const grew = s.poolGrewIds && s.poolGrewIds.includes(m.id);
+  const active = !locked && total>0;
+  const isEmpty = !locked && m.kind!=='free' && total===0; // dead-looking market: nobody's in yet
+  return html`<div class=${'mk '+(m._new?'new ':'')+(active?'active ':'')+(locked?'locked ':'')+(isEmpty?'empty ':'')+(m.youSide?'youin':'')}
+      tabindex=${(!locked&&!m.youSide)?'0':null}
+      onClick=${()=>{ if(!locked && !m.youSide) onBet(m.id); }}
+      onKeyDown=${(e)=>{ if((e.key==='Enter'||e.key===' ')&&!locked&&!m.youSide){e.preventDefault();onBet(m.id);} }}>
+    <div class=${'kind '+kindMeta.cls}>
+      <span class="k">${kindMeta.k}<span class="info" tabindex="0" role="img" aria-label=${kindMeta.tip} onClick=${(e)=>e.stopPropagation()}>ⓘ<span class="tip" aria-hidden="true">${kindMeta.tip}</span></span></span>
+      <span>${kindMeta.label}</span>
+      <span class="close">${locked?'🔒 锁定':'第 '+m.closeRound+' 回合结'}</span>
+    </div>
+    <div class="q">${m.kind==='world'
+        ? html`<span style=${`color:${vic.color};font-weight:700`}>${vic.name}</span> 还守得住 <em>${hexName(s.world,m.hexId)}</em> 吗？`
+        : m.q}</div>
+    ${!locked? html`
+      <div class="oddsrow"><span class="yy">守得住 ${yesPct}%</span><span class="nn">${100-yesPct}% 守不住</span></div>
+      <div class="oddsbar"><div class="y" style=${`width:${yesPct}%`}></div></div>
+      <div class="sides">
+        <div class="col">${m.kind==='free'?'机器判对错':m.yesAgents.slice(0,4).map(id=>html`<span class="sw" style=${`background:${actor(id).color}`} key=${id}></span>`)}
+          ${isEmpty?html`<span class="emptychip">还没人押</span>`:(m.kind!=='free'&&m.yesAgents.length===0?html`<span style="color:var(--muted)">·</span>`:'')}</div>
+        <div class="col">${m.kind!=='free'?m.noAgents.slice(0,4).map(id=>html`<span class="sw" style=${`background:${actor(id).color}`} key=${id}></span>`):''}
+          ${!isEmpty&&m.kind!=='free'&&m.noAgents.length===0?html`<span style="color:var(--muted)">·</span>`:''}</div>
+      </div>
+      <div class="pool"><span>${m.kind==='free'?'押对白拿 1 AP':html`奖池 <b class=${grew?'grew':''} key=${'p'+total}>${total}G</b>`}</span>
+        <span>${m.kind==='world'?'赢家拿 AP +池子里的 G':'本金退回 + AP'}</span></div>
+      ${m.youSide
+        ? html`<div class="youtag"><span>你已押 ${m.youAmt}G · ${m.youSide==='no'?'守不住':(m.kind==='free'?'会':'守得住')}</span>
+            <button class="retract" onClick=${(e)=>{e.stopPropagation();dispatch&&dispatch({type:'RETRACT_BET',mid:m.id});}} title="撤回押注并退回 G">↩ 撤回</button></div>`
+        : html`<button class="betbtn" onClick=${(e)=>{e.stopPropagation();onBet(m.id);}}>🎲 你也押一注</button>`}
+    `: html`<div class="lockmsg">链外真实世界的盘要等可信外部裁判接好 —— <b>首发还没有</b>。</div>`}
+  </div>`;
+}
+
+/* ---- BET DRAWER (right side, keeps map visible) ---- */
+function BetDrawer({s, mid, dispatch, onClose}){
+  const m=s.markets.find(x=>x.id===mid);
+  const you=s.stats.you;
+  const [side,setSide]=useState('no');
+  const [amt,setAmt]=useState(20);
+  const drawerRef=useRef(null);
+  useEffect(()=>{ // auto-close if the market got swept/resolved while open
+    if(!m || m.resolved || m.youSide) onClose();
+  },[m && m.resolved, m && m.youSide, !m]);
+  // a11y: focus the drawer on open + trap Tab inside it (Esc closes) so keyboard focus can't escape to the background sim
+  useEffect(()=>{
+    const root=drawerRef.current; if(!root) return;
+    const first=root.querySelector('.x'); first&&first.focus();
+    function onKey(e){
+      if(e.key==='Escape'){ onClose(); return; }
+      if(e.key!=='Tab') return;
+      const f=[...root.querySelectorAll('button:not([disabled]),[tabindex="0"]')].filter(el=>el.offsetParent!==null);
+      if(!f.length) return;
+      const a=f[0], z=f[f.length-1];
+      if(e.shiftKey && document.activeElement===a){ e.preventDefault(); z.focus(); }
+      else if(!e.shiftKey && document.activeElement===z){ e.preventDefault(); a.focus(); }
+    }
+    root.addEventListener('keydown', onKey);
+    return ()=>root.removeEventListener('keydown', onKey);
+  },[]);
+  if(!m) return null;
+  const total=m.yesPool+m.noPool;
+  const yesPct = total>0? Math.round(m.yesPool/total*100): 50;
+  const vic = m.kind==='world'? actor(m.victim): null;
+  const isFree=m.kind==='free';
+  const chosen = isFree? 'yes': side;
+  return html`<div>
+    <div class="scrim" onClick=${onClose}></div>
+    <div class="drawer" ref=${drawerRef} role="dialog" aria-modal="true" aria-label="押一注">
+      <div class="dh"><span class="ico">🎲</span><span class="ttl">押一注</span>
+        <button class="x" onClick=${onClose} aria-label="关闭下注面板">✕</button></div>
+      <div class="db">
+        <div class=${'kindline '+(isFree?'free':'')}>
+          <span class="k">${m.kind==='world'?'世界局势':isFree?'送分题':'外部 oracle'}</span>
+          <span>${m.kind==='world'?'主力玩法':isFree?'免费保底':'后续'}</span>
+          <span class="close mono">第 ${m.closeRound} 回合揭晓</span>
+          <span class="tipline">ⓘ ${m.kind==='world'?'押 AI 守不守得住地块，靠链上输赢结算——主要玩法。':isFree?'稳赢的保底题，押对白拿 1 AP，永不亏、永不锁死。':'链外真实世界的盘，要等可信外部裁判接好。'}</span>
+        </div>
+        <div class="dq">${m.kind==='world'
+          ? html`<span class="vn" style=${`color:${vic.color}`}>${vic.name}</span> 还守得住 <em>${hexName(s.world,m.hexId)}</em> 吗？`
+          : m.q}</div>
+
+        <div class="odds">
+          <div class="r"><span class="yy">守得住 ${yesPct}%</span><span class="nn">${100-yesPct}% 守不住</span></div>
+          <div class="bar"><div class="y" style=${`width:${yesPct}%`}></div></div>
+          <div class="pool">${isFree?'机器自动判对错 · 押对白拿 1 AP':html`当前奖池 <b>${total}G</b> · ${m.noAgents.length+m.yesAgents.length} 方在押`}</div>
+        </div>
+
+        ${!isFree? html`
+          <div>
+            <div class="pickL">押哪边</div>
+            <div class="sidepick">
+              <button class=${side==='no'?'on':''} onClick=${()=>setSide('no')}>守不住 🔻</button>
+              <button class=${side==='yes'?'on':''} onClick=${()=>setSide('yes')}>守得住 🛡</button>
+            </div>
+          </div>`
+          : html`<div class="pickL">送分题只有一个答案：押「1+1 会等于 2」</div>`}
+
+        <div class="amt">
+          <div class="pickL">押多少 G</div>
+          <div class="chips">${[10,20,40].map(v=>html`<button class=${amt===v?'on':''} onClick=${()=>setAmt(v)} key=${v} disabled=${v>you.g}>${v}G</button>`)}</div>
+        </div>
+
+        <button class="confirm" disabled=${amt>you.g}
+          onClick=${()=>{ dispatch({type:'YOU_BET',mid:m.id,side:chosen,amt}); onClose(); }}>
+          押 ${amt}G · ${isFree?'赌「会」':chosen==='no'?'赌守不住':'赌守得住'}
+        </button>
+
+        <div class="walletline"><span>你的钱包</span><span><span class="g">${you.g}G</span> · ${you.ap}AP</span></div>
+        <div class="hint">押对：拿 <span class="ap">AP</span>（越难给越多）${!isFree?html`，且盘里真有对家才分到 <span class="g">G</span>`:'，本金退回'}。<br/>
+          <span class="ap">AP 只能赢来，钱买不到、转不走、提不出。</span></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ---- YOU RESULT capsule ---- */
+function YouResult({r, dispatch}){
+  return html`<div class="youresult" onClick=${()=>dispatch({type:'CLEAR_YOU'})}>
+    <div class="glyph">${r.win?'✓':'✗'}</div>
+    <div class="tx">
+      <div class=${'h '+(r.win?'win':'lose')}>${r.win?'你押对了！':'看走眼了'}</div>
+      <div class="g">${r.win
+        ? html`<span class="ap">+${r.ap} AP</span>${r.net?html` · <span class="gg">+${r.net} G</span>`:html` · 这盘没对家，<span style="color:var(--faint)">只发 AP 不发 G</span>`}`
+        : html`<span style="color:var(--error);font-weight:700">${r.g} G</span> · AP 只能赢来，下次换一注`}</div>
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   APP — drives the sim clock + reducer
+   ============================================================ */
+function appReducer(s, a){
+  switch(a.type){
+    case 'TICK': return tickReducer(s);
+    case 'SET_RUN': return {...s, running:a.v};
+    case 'SET_SPEED': return {...s, running:true, speed:a.v};
+    case 'CLEAR_FLASH': return {...s, flashG:false, flashAP:false, dG:0, dAP:0};
+    case 'CLEAR_YOU': return {...s, youResult:null};
+    case 'CLEAR_NOTICE': return {...s, notice:null};
+    case 'BUY_AP_DENIED': return {...s, notice:'行动力 AP 买不到 —— 只能靠赢预测拿到，不能用钱买、不能转、不能提现。这是全局铁则。'};
+    case 'YOU_BET':{
+      const m=s.markets.find(x=>x.id===a.mid); if(!m||m.youSide) return s;
+      if(a.amt>s.stats.you.g) return {...s, notice:'钱包里的 G 不够，押小一点。'};
+      const markets=s.markets.map(x=>{
+        if(x.id!==a.mid) return x;
+        const nx={...x, youSide:a.side, youAmt:a.amt};
+        if(a.side==='yes'){ nx.yesPool=x.yesPool+a.amt; nx.yesAgents=[...x.yesAgents,'you']; }
+        else { nx.noPool=x.noPool+a.amt; nx.noAgents=[...x.noAgents,'you']; }
+        nx.pool=nx.yesPool+nx.noPool; return nx;
+      });
+      const stats={...s.stats, you:{...s.stats.you, g:s.stats.you.g-a.amt}};
+      const sideTxt= m.kind==='free'?'赌「会」': a.side==='no'?'守不住':'守得住';
+      const feed=pushFeed(s.feed, {id:s.nextFeedId, t:`${String(s.round).padStart(2,'0')}:${String(s.tick).padStart(2,'0')}`, ts:Date.now(),
+        kind:'youbet', accent:'#facc15', ic:'🎲', you:true,
+        body:html`<span class="nm" style="color:#facc15">你</span> 押 <span class="gtag">${a.amt}G</span> ${m.kind==='world'?html`赌 <span class="nm" style="color:${actor(m.victim).color}">${actor(m.victim).name}</span> <b>${sideTxt}</b> ${hexName(s.world,m.hexId)}`:'赌「1+1=2 会成立」'}`});
+      return {...s, markets, stats, feed, nextFeedId:s.nextFeedId+1, youBets:s.youBets+1, flashG:true, dG:-a.amt};
+    }
+    case 'RETRACT_BET':{
+      const m=s.markets.find(x=>x.id===a.mid);
+      if(!m || !m.youSide || m.resolved) return s; // can only retract a live, unsettled bet
+      const refund=m.youAmt;
+      const markets=s.markets.map(x=>{
+        if(x.id!==a.mid) return x;
+        const nx={...x, youSide:null, youAmt:0};
+        if(m.youSide==='yes'){ nx.yesPool=Math.max(0,x.yesPool-refund); nx.yesAgents=x.yesAgents.filter(id=>id!=='you'); }
+        else { nx.noPool=Math.max(0,x.noPool-refund); nx.noAgents=x.noAgents.filter(id=>id!=='you'); }
+        nx.pool=nx.yesPool+nx.noPool; return nx;
+      });
+      const stats={...s.stats, you:{...s.stats.you, g:s.stats.you.g+refund}};
+      const feed=pushFeed(s.feed, {id:s.nextFeedId, t:`${String(s.round).padStart(2,'0')}:${String(s.tick).padStart(2,'0')}`, ts:Date.now(),
+        kind:'youretract', accent:'#facc15', ic:'↩', you:true,
+        body:html`<span class="nm" style="color:#facc15">你</span> 撤回了押注 · 退回 <span class="gtag">${refund}G</span>`});
+      return {...s, markets, stats, feed, nextFeedId:s.nextFeedId+1, youBets:Math.max(0,s.youBets-1), flashG:true, dG:refund};
+    }
+    default: return s;
+  }
+}
+
+function App(){
+  const [s, dispatch]=useReducer(appReducer, null, initState);
+  const sRef=useRef(s); sRef.current=s;
+  const [mindIdx,setMindIdx]=useState(0);
+  const [movedId,setMovedId]=useState(null);
+  const [betMid,setBetMid]=useState(null);
+  const [now,setNow]=useState(Date.now());
+  const prevRanks=useRef({});
+
+  // ---- the heartbeat clock ----
+  useEffect(()=>{
+    let timer;
+    function loop(){
+      const cur=sRef.current;
+      if(cur.running){ dispatch({type:'TICK'}); }
+      const interval = 1500 / (cur.running? cur.speed:1);
+      timer=setTimeout(loop, cur.running? interval: 700);
+    }
+    timer=setTimeout(loop, 1200);
+    return ()=>clearTimeout(timer);
+  }, []);
+
+  // ---- "ago" ticker so recency labels stay live even between sim ticks ----
+  useEffect(()=>{ const t=setInterval(()=>setNow(Date.now()),1000); return ()=>clearInterval(t); },[]);
+
+  // ---- clear flashes shortly after a tick ----
+  useEffect(()=>{ if(!s.flashG&&!s.flashAP) return; const t=setTimeout(()=>dispatch({type:'CLEAR_FLASH'}),900); return ()=>clearTimeout(t); }, [s.flashG,s.flashAP,s.tick]);
+  // ---- auto-dismiss you-result & notice ----
+  useEffect(()=>{ if(!s.youResult) return; const t=setTimeout(()=>dispatch({type:'CLEAR_YOU'}),4200); return ()=>clearTimeout(t); }, [s.youResult]);
+  useEffect(()=>{ if(!s.notice) return; const t=setTimeout(()=>dispatch({type:'CLEAR_NOTICE'}),4000); return ()=>clearTimeout(t); }, [s.notice]);
+
+  // ---- rotate AgentMind every ~3 ticks ----
+  useEffect(()=>{ if(s.tick%3===0){ setMindIdx(i=>(i+1)%AGENTS.length); } }, [s.tick]);
+  const mindAgent = AGENTS[mindIdx].id;
+
+  // ---- detect leaderboard reorder for a flash ----
+  useEffect(()=>{
+    const ranks={}; allActors().map(a=>({id:a.id,sc:scoreOf(s,a.id)})).sort((p,q)=>q.sc-p.sc).forEach((r,i)=>ranks[r.id]=i);
+    let moved=null;
+    for(const id in ranks){ if(prevRanks.current[id]!==undefined && ranks[id]<prevRanks.current[id]){ moved=id; } }
+    prevRanks.current=ranks;
+    if(moved){ setMovedId(moved); const t=setTimeout(()=>setMovedId(null),1000); return ()=>clearTimeout(t); }
+  }, [s.tick]);
+
+  return html`<div>
+    <${TopBar} s=${s} dispatch=${dispatch}/>
+    <div class="grid">
+      <${WorldMap} s=${s}/>
+      <${Feed} s=${s} now=${now}/>
+      <div class="rail">
+        <${Leaderboard} s=${s} movedId=${movedId}/>
+        <${AgentMind} s=${s} agentId=${mindAgent}/>
+      </div>
+      <${MarketStrip} s=${s} dispatch=${dispatch} onBet=${(mid)=>setBetMid(mid)}/>
+    </div>
+    <div class="foot">
+      <span class="chip">三类盘 · <b>送分题(免费保底)</b> / <b>世界局势(主力)</b> / <b>外部 oracle(后续)</b></span>
+      <span class="chip">动作 · <b>进攻相邻 / 加固 / 复活</b></span>
+      <span class="chip">总分 = <b>占地 + 夺地 + 胜仗 + 押对真盘</b></span>
+      <span class="chip" style="opacity:.7">🃏 卡牌 · 后续</span>
+      <button class="chip" style="border-color:rgba(163,230,53,.35);color:var(--ap);background:transparent;cursor:pointer"
+        onClick=${()=>dispatch({type:'BUY_AP_DENIED'})}>试试用钱买 AP</button>
+      <span class="gledger"><span class="sh">一种 G 三个地方：◯钱包 → ▭赌池 → △公库</span></span>
+    </div>
+    ${betMid!=null?html`<${BetDrawer} s=${s} mid=${betMid} dispatch=${dispatch} onClose=${()=>setBetMid(null)}/>`:''}
+    ${s.youResult?html`<${YouResult} r=${s.youResult} dispatch=${dispatch}/>`:''}
+    ${s.notice && !s.youResult?html`<div class="toast">${s.notice}</div>`:''}
+  </div>`;
+}
+
+render(html`<${App}/>`, document.getElementById('app'));
+</script>
+</body>
+</html>
