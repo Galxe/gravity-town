@@ -24,7 +24,7 @@ contracts/src/v2/
   V2Router.sol                 记住上面这些合约的地址                            [步0,6]
   HexGrid.sol                  坐标 / 相邻判断（纯工具库，不占地址）              [步3]
 
-mcp-server(给 AI 调的工具层) / agent-runner(AI 玩家) / frontend(玩家界面)  →  切到新合约  [步6]
+mcp-server(给 AI 调的工具层) / agent-runner(AI 玩家) / frontend(玩家界面，基于现有改 v2)  →  切到新合约  [步6]
 ```
 （右侧 `[步N]` = 在「B. 分几步」的哪一步建。）
 
@@ -41,16 +41,17 @@ mcp-server(给 AI 调的工具层) / agent-runner(AI 玩家) / frontend(玩家�
 | 2 | **市场 + AP**（先只做「数学题」盘） | 押一道数学题 → 押对 → 拿到 AP | ~1.5 周 |
 | 3 | **地图** `V2World`（+ 坐标库，**只搭地图、不含打架**） | 能在空地图落地、每块地有归属/防御值/相邻判断、**预留并能写一条战斗记录槽位**（实际战斗由步 4 写入、步 5 读）、算得出分数 | ~2.5 周 |
 | 4 | **花 AP 攻击**（打架在这步） | 花 AP 打隔壁地 → 赢了地块翻成自己颜色、防御清零、记下这一仗（**输了 AP 照扣、不能重摇**） | ~2 周 |
-| 5 | **地图事件盘**（市场再开一类盘：押地块归属/某仗谁赢） | 一块地被打下来后，押「它还归不归原主」的盘能**读步 4 的战斗记录、自动判对错发奖**；夺地 → 自动开出这种新盘 | ~1 周 |
-| 6 | **接线**（前端/MCP/agent 指向新合约） | 三端都指向新合约、不再读旧合约，能端到端跑通「押注→打地→新盘」一圈 | ~2 周 |
+| 5 | **地图盘**（市场再开一类盘：押地块归属/某仗谁赢） | 一块地被打下来后，押「它还归不归原主」的盘能**读步 4 的战斗记录、自动判对错发奖**；夺地 → 自动开出这种新盘 | ~1 周 |
+| **前端** | **玩家界面**（**基于现有 `frontend/` 改 v2，不是另起**）：可下注市场 / 下注 / 我的 G / AP / 领取奖金(claim) / 地图上攻击·防守·回场 / 引导式下一步 | 玩家能在界面上完整跑通「押注→赢 AP→打地→看地图变→再押」一圈 | ~3–4 周（**从第 1 步起对 mock 并行**、需 1 名前端；具体屏由前端负责人细化） |
+| 6 | **接线 + 切换**（前端/MCP/agent **对接真实合约**、翻 flag） | 三端都指向新合约、不再读旧合约，前端接真实后端到端跑通一圈 | ~2 周 |
 | 7 | **审计 → 测试网 → 主网** | 安全审计通过、测试网完整试跑一遍不报错、可回滚，再上主网 | 审计~1周（内部审计；管钱的合约建议另排外部审计）+ 部署~2周 |
 
-> 「约需」是**单步耗时**；步骤**部分可并行、但有硬先后**（先金库才有市场、先地图才能打架、先夺地才有地图盘、最后才接线），相加 ≠ 工期；并行后净工期见下。
+> 「约需」是**单步耗时**；步骤**部分可并行、但有硬先后**（先金库才有市场、先地图才能打架、先夺地才有地图盘、最后才接线；**前端从第 1 步起对 mock 并行、不占合约关键路径**），相加 ≠ 工期；并行后净工期见下。
 
 > **两个里程碑别混**：
 > - **最早能跑起来的一小条闭环（P1）** ＝ 只做步 0–4（押数学题→赢 AP→打地→夺地），合约层用**脚本/测试**就能演示——**还没接前端、也先不做步 5 地图盘**；它也是兜底：万一步 5/步 6 拖了，先有这条能跑的闭环。
 > - **完整首发 MVP（最小可玩版本，≈10–11 周到「可玩 + 内审通过」）** ＝ 全部步骤、含**步 5 地图事件盘 + 步 6 接线**（真人/AI 经界面玩；押地块归属、夺地后自动长出新盘——这才是本游戏的核心循环）。**只有**「外部事件盘（押链外真事）」和「卡牌」留到 MVP 之后。
-> - **这 10–11 周以 ~4–5 人并行为前提**（3 个开发 + 1 个 QA/安全常驻全程 + 1 个 lead/副手）；**人手 < 4 就退化成串行、约 13.5 周**。上主网部署另计 ~2 周；管钱的合约外部审计时长另议。
+> - **这 10–11 周以 ~5–6 人并行为前提**（3 合约开发 + 1 前端 + 1 QA/安全常驻全程 + 1 lead/副手）；**合约开发 < 3 就退化成串行、约 13.5 周**。上主网部署另计 ~2 周；管钱的合约外部审计时长另议。
 
 ### C. 全做完算成功（总验收）
 
@@ -317,6 +318,7 @@ interface IWorldCheckpoint {
 | 🟡 L-D RNG Provider | ☐ 主 / ☐ 备 | mock ~1w + real ~1.5w | §3.1 RNG=future-blockhash（独立；M4 才被 L-E 接入） |
 | 🔴 L-E AP-gated 行动层 | ☐ 主 / ☐ 备 | ~2w（P1 薄片可早起，full 卡 real RNG） | **L-C hex/邻接 + APLedger.spend + L-D RNG（P1mock/P2real）三齐（join②）；STATE 市场是 L-E 下游、非前置** |
 | 🔴 L-I 集成面 | ☐ 主 / ☐ 备（stub→real，1–2 人） | stub 持续 + 切换 ~2w | Market/AP/V2World 部署可调用；翻 flag 须 4 重门（join③） |
+| 🔴 L-FE 前端（玩家界面）| ☐ 主 / ☐ 备 | ~3–4w（并行） | 基于现有 `frontend/`；M1 起对 stub 并行、M5 接真实；**具体屏/组件由前端负责人细化** |
 | 🟡 L-T 测试/不变量护栏 | ☐ **专属 QA/security**（须填真实名，不借 dev lane） | 常驻 | Day 1（接口冻结即起） |
 | 🟡 L-F 卡牌 [M6] | ☐ 主 / ☐ 备 | ~2–3w | **M5 集成 tag 后**；L-A `netTreasuryTakeG`/`cardTaxShareBps`；成就白名单（§12 OPEN） |
 | 🟡 L-O ORACLE [M7] | ☐ 主 / ☐ 备 + ☐ security | ~2–3w | **M4.5 信任模型签字 + 独立评审后**；M6 之后 |
@@ -329,6 +331,7 @@ interface IWorldCheckpoint {
 - **🟡 L-D RNG Provider** — 模块：`RNGProvider`（commit + future-blockhash，§3.1：permissionless `resolve`、**判负与 expire 均没收 AP（不退）杜绝免费 re-roll**、RNG-resolve keeper 为 MVP 承重活性）。交付：**M2 末交可用 mock RNG**（给 seed 返确定 bool，部署 testnet，带 `request/resolve/expire` 签名）供 L-E/P1；**M4 起前交真实实现 + RNG-resolve keeper（不推迟到部署期）**。**criticality 澄清：mock 晚交 → 卡 P1（硬 deadline）；real 晚交 → 卡 P2/L-E（非 MVP-P1 关键路径）。** 并行安全：✅ 独立。
 - **🔴 L-E AP-gated 行动层** — 模块：`V2World` 内部 hooks（方案 B，§3.1）：`attackWithAP/reinforceHex/returnFromElimination`、Tullock 结算、capture+checkpoint 写入。交付：三动作可调用 + 防御清零 + battle/capture/respawn checkpoint。并行安全：⚠️ 汇流点，**三上游（L-C hex/邻接 + APLedger.spend + L-D RNG）就绪即可整合**；P1 薄片用 mock RNG 即可跑通 attack/capture（不等 real RNG、更不等 L-B STATE——STATE 市场读 L-E 写的 checkpoint、是 L-E 的下游）；full 版本卡 real RNG（P2）。
 - **🔴 L-I 集成面** — 模块：`mcp-server/chain.ts`+`tools.ts`（换 ABI、退役 ore/build、加 market/AP/hex 工具）、`agent-runner/llm.ts`（prompt 重写：邻接攻击/AP-only/删 ore-arsenal-happiness）、`frontend/useGameEngine.ts`（读 V2World.getScore/Market/APLedger）。**L-I 还须在 M0+1w 起搭 stub 实现**（Market/AP/V2World 工具硬编码返回 + `useGameEngine` hook，带 `TODO §M5 real impl` 注释），让前端 M1–M4 对着 stub 并行迭代 UI。交付：三处经统一 feature-flag 翻到新闭环（指向全新 `V2Router`），无旧 ore/score 残留。并行安全：⚠️ stub 阶段并行；**真实切换 = 翻 flag，须 L-T 6/6 ∧ P2 gate ∧ M4.5 审计 ∧ v2 部署冒烟全绿（join③）**。
+- **🔴 L-FE 前端玩家界面** — 在**现有 `frontend/` 基础上**做 v2 玩家界面：可下注市场列表 / 下注 / 我的 G·AP·claim / 六边形地图上攻击·防守·回场 / 引导式下一步（参考 `demo-v2/` 的面板方向）。M1 起对 stub 并行迭代、M5 接真实合约。交付：玩家能在界面上完整跑通一圈闭环（押注→赢 AP→打地→看地图变→再押）。**本计划只排期 + 验收；具体屏/组件由前端负责人细化。** 并行安全：✅ 对 stub 编码、与合约 lane 并行，不在合约关键路径上。
 - **🟡 L-T 测试/不变量护栏** — 模块：`contracts/test/WorldInvariants.t.sol`（6 项 property test）+ **MATH/STATE 闭环集成/e2e 测试**（attack 转移所有权+清零防御、void/refund 真退、AP 只发赢家、TWAP 正确）+ CI 门禁 + v1 旧 scope 越界扫描。交付：6 项 property test（接口冻结 day1 起 stub）+ 闭环 e2e 套件 + merge gate + v1 scope grep + §12 linter；见 §8。并行安全：✅ 常驻贯穿全程。
 - **🟡 L-F 卡牌 [M6]** — 模块：`CardMintEngine`（公库出资/白板自冻、`frozenG[cardId]`）、`SecondaryCardMarket`（tax/burn 分流）、`ActionCardBonusAdapter`。交付：两条铸造路径 + 二级守恒（`sellerCreditG+secondaryTaxG+secondaryBurnG==buyerSpendG`）+ 攻防 bonus hook（不消耗卡）。并行安全：✅ 独立但晚启；**CI: `feat/lane-F-*` 在 M5 集成 tag 前 push → auto-reject**。
 - **🟡 L-O ORACLE [M7]** — 模块：ORACLE 信任模型文档 + resolver 接口 + challenge/attestation + 失败恢复。交付：`IMarketOracle` 实现 + 挑战流程。并行安全：✅ 最后；**待 M4.5 信任模型签字 + 独立安全评审；CI: `feat/lane-O-*` 在 M5 tag 前 push → auto-reject**。
@@ -425,7 +428,7 @@ L-T 从接口冻结当天起独立运行，由**专属 QA/security owner**（不
 - **接口只读约束**：`/contracts/src/interfaces/I*.sol`、`/contracts/src/libraries/HexGrid.sol`、`V2Router.sol` **仅 lead 可改**（封板后经 lead+PM 双签 review）；任何 lane PR 触碰这些文件即被 L-T gate + CODEOWNERS 拦下。
 - **合并次序 SOP**：`L-A → L-B(MATH，依赖 A payout) → L-C/L-D(并行) → C1 封板 → L-B(STATE) → L-E(依赖 L-C hex+AP.spend+RNG 三者；STATE 在其下游) → L-I(最后)`；L-T 全程旁挂、门禁每次合并；L-F/L-O 在 M5 tag 后。合并冲突面≈接口文件，故只读约束把冲突压到最小。
 - **contract-first 防冲突**：lane 之间只通过 interface 交互，禁止跨 lane 直接引用对方内部状态（尤其禁止外部改 `GameEngine`/`V2World` 内部 mapping，§8 权限边界）。
-- **最小并行起步阵型（约 4–5 人 = 3 dev 并行 + 1 专属 QA(L-T) + 1 lead/deputy）**：L-A、L-C、L-D 立即并行 → L-B MATH 接 L-A → C1 后 L-B STATE → L-E 汇流 → L-I 收尾；L-T 全程旁挂。**人手 < 4 则并行退化为串行、净期回到 ~13.5 周（见 §11 风险行）；§10 的 ~10–11 周以此阵型为前提。**
+- **最小并行起步阵型（约 5–6 人 = 3 合约 dev 并行 + 1 前端(L-FE) + 1 专属 QA(L-T) + 1 lead/deputy）**：L-A、L-C、L-D 立即并行 → L-B MATH 接 L-A → C1 后 L-B STATE → L-E 汇流 → L-I 收尾；L-FE 从 M1 起对 stub 并行、L-T 全程旁挂。**合约 dev < 3 则并行退化为串行、净期回到 ~13.5 周（见 §11 风险行）；§10 的 ~10–11 周以此阵型为前提。**
 
 ---
 
@@ -493,7 +496,7 @@ PM cadence——**先锁什么、何时开闸**：
 | **L-B STATE 误标并行（旧稿）** | 净周期被低估 1–2 周；STATE owner 不知 C1 何时好 | §6 join① + §10 PERT 已修正为顺序：C1(M2.a)→L-B STATE(1w)；净路径修正为 ~10–11w（最好 ~9w）；M2.a 子里程碑显式登记 |
 | **L-E↔STATE 依赖方向写反（旧稿把 STATE 列为 L-E 前置）** | L-E 被过度串行化、与 P1 薄片自相矛盾 | §2/§5/§6 join② 已改正：L-E 上游 = AP.spend+Hex+RNG **三齐**；STATE 市场读 L-E 写的 checkpoint、是 L-E 的下游、非前置 |
 | **lead 单点瓶颈（无 deputy、未计工时）** | 架构采纳 / 冻结 / Router / 三 join 全过 lead，lead 病/忙则整条关键路径停摆 | §9 已补：必配 lead-deputy 共担 Router/mock-sync/join 仲裁；接口变更 SLA ≤24h；§10 PERT 把 lead 当共享资源计、不假设 lead 还全职背 lane |
-| **人手不足 → 并行退化为串行** | < 4 人时净期从 ~10–11w 退回 ~13.5w（含审计 14.5w），并行承诺落空 | §9 阵型明确 4–5 人前提（3 dev + QA + lead/deputy）；招不齐则按串行 ~13.5w 排期、不对外承诺 10–11w |
+| **人手不足 → 并行退化为串行** | 合约 dev < 3 时净期从 ~10–11w 退回 ~13.5w（含审计 14.5w），并行承诺落空 | §9 阵型明确 ~5–6 人前提（3 合约 dev + 前端 + QA + lead/deputy）；招不齐则按串行 ~13.5w 排期、不对外承诺 10–11w |
 | **RNG 免费 re-roll（seed 公开后输盘放任超时退款）** | future-blockhash 的 seed 在 commit+k 出块后即可算胜负；若 expire 退还 AP，攻击者赢则结算、输则放任 expire 拿回 AP=免费 re-roll | **已定堵法（§3.1）：判负与 expire 均没收 AP（绝不退还）→ 放弃≡判负 → 无 re-roll**；RNG-resolve keeper 列 MVP 承重（只清 pending 占用，非防 re-roll）；仅 `k`/窗口→§12；caveat：256 块全网停摆罕见误没收，VRF 上线即除 |
 | **feature-flag 提前翻（join③）** | L-T/L-E 未绿即翻 → MCP 带 stub 假设调真实合约 → 生产 0-day | 翻 flag 硬 gate = L-T 6/6 ∧ P2 ∧ M4.5 审计 ∧ v2 部署冒烟 全绿（§6 join③）；单源三服务启动读、可回滚（指回 v1） |
 | **Mock≠real ABI 漂移** | L-I 对 mock 编码，flag 翻后真实返回类型不符即崩 | CI 强制 mock 与 real 跑同套测试、返回类型 bit-identical（§4），不同步则 fail |
