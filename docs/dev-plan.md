@@ -106,9 +106,9 @@ mcp-server(给 AI 调的工具层) / agent-runner(AI 玩家) / frontend(玩家�
 ## 1. 怎么并行（30 秒版）
 
 > ### ✅ 架构已定稿（无 GATE 0）
-> **旧稿的「13 项 M0 决策签字门」已删除**——那些项已 research 定稿为 §2 已定架构（World 自持、future-blockhash RNG、全新 `V2Treasury`、QuestionRegistry 内嵌、全新 `V2Router`…）。**接口（§3）即刻可冻、lane 即刻可并行**，不再等任何签字。仅剩 §11 数值与 M7 ORACLE 信任模型待 owner，均**不阻塞**冻接口（§2.5）。
+> 架构已 research 定稿为 §2（World 自持、future-blockhash RNG、全新 `V2Treasury`、QuestionRegistry 内嵌、全新 `V2Router`…）。**无逐项签字门——接口（§3）即刻可冻、lane 即刻可并行。** 仅剩 §11 数值与 M7 ORACLE 信任模型待 owner，均**不阻塞**冻接口（§2.5）。
 
-- **关键路径（全串行 ~13.5 周；并行后净 ~10–11 周、最好 ~9 周到可玩 MVP——架构已定稿、省去旧 1.5w 决策门；并行主要把 L-C/L-D 叠到骨干上、并非砍半，详见 §9）**：`接口冻结(1w) → [L-A 财库 ∥ L-C 世界 ∥ L-D RNG] → L-B MATH(随 L-A) → C1 冻结后 L-B STATE(顺序,1w) → L-E 行动汇流 → L-I 集成切换`。逐 lane 周数与 PERT 见 §9。
+- **关键路径（全串行 ~13.5 周；并行后净 ~10–11 周、最好 ~9 周到可玩 MVP——并行主要把 L-C/L-D 叠到骨干上、并非砍半，详见 §9）**：`接口冻结(1w) → [L-A 财库 ∥ L-C 世界 ∥ L-D RNG] → L-B MATH(随 L-A) → C1 冻结后 L-B STATE(顺序,1w) → L-E 行动汇流 → L-I 集成切换`。逐 lane 周数与 PERT 见 §9。
 - **唯一并行总开关 = 接口冻结**；冻结的前置 = **采纳 §2 已定架构**（已 research 定稿，无签字门）。
 - **能最早 demo 的切片 = MATH-only**（P1），不依赖 STATE / V2World checkpoint，先转起来。
 - **承重护栏 = L-T**：接口冻结当天起常驻，`contracts/test/WorldInvariants.t.sol`（6 项 property test）+ CI 门禁所有 lane 合并，不变量红则不准 merge。
@@ -120,7 +120,7 @@ mcp-server(给 AI 调的工具层) / agent-runner(AI 玩家) / frontend(玩家�
 
 ### 这份文档怎么读
 
-旧工程稿把里程碑写成一条线性链（M0→M1→…→M7）。但其中很多模块**没有真实依赖**，只是被排成了一串。本文把它拆成**可并行的 lane**：采纳 §2 已定架构、冻结接口，然后多人/多 agent 各占一条 lane 同时开工，最后按垂直切片合龙到可玩 MVP。读者是项目 lead、工程师和并行 coding agent——你只需要知道**什么能并行、什么顺序、怎么推到能 demo**。合约字段细节一律回查 game-design.md，不在这里复述。
+本文把里程碑拆成**可并行的 lane**：采纳 §2 已定架构、冻结接口，然后多人/多 agent 各占一条 lane 同时开工，最后按垂直切片合龙到可玩 MVP。读者是项目 lead、工程师和并行 coding agent——你只需要知道**什么能并行、什么顺序、怎么推到能 demo**。合约字段细节一律回查 game-design.md，不在这里复述。
 
 **阅读顺序建议**：本节并行图 → §2 已定架构 → §3 接口冻结 → §4 lane 总表（认领 lane）→ §6 切片（看怎么合龙）。其余按需查。
 
@@ -221,9 +221,9 @@ mcp-server(给 AI 调的工具层) / agent-runner(AI 玩家) / frontend(玩家�
 
 ---
 
-## 2. 已定架构（取代旧「M0 决策门」）
+## 2. 已定架构
 
-> **旧稿这里是一张 13 行「逐项签字才能开工」的 M0 决策表——已删除。** 那些项**不是**真正悬而未决的业务抉择，全部能靠读真实合约 + game-design 直接定稿（已 research，依据见下）。**核心原则 = 架构干净**：单一新世界 `V2World` 自持状态、不碰旧 `GameEngine` 内部、单一发奖入口、桶隔离财库、最小合约面。**没有 GATE 0、没有逐项签字——架构既定，接口（§3）即刻可冻、lane 即刻可并行。** 仅剩 §11 数值与 M7 ORACLE 信任模型待 owner，二者都**不阻塞**结构/冻接口（§2.5）。要改下面任一架构决策，走一次 ADR（§8），不走签字门。
+> 下列架构决策**不是**悬而未决的业务抉择，全部靠读真实合约 + game-design 直接定稿（已 research，依据见下）。**核心原则 = 架构干净**：单一新世界 `V2World` 自持状态、不碰旧 `GameEngine` 内部、单一发奖入口、桶隔离财库、最小合约面。**没有 GATE 0、没有逐项签字——架构既定，接口（§3）即刻可冻、lane 即刻可并行。** 仅剩 §11 数值与 M7 ORACLE 信任模型待 owner，二者都**不阻塞**结构/冻接口（§2.5）。要改下面任一架构决策，走一次 ADR（§8）。
 
 ### 2.1 世界 / Hex / RNG
 
@@ -520,8 +520,6 @@ PM cadence——**先锁什么、何时开闸**：
 |---|---|---|
 | **架构决策被某 lane 私自改走老路** | §2 已定架构（World=B / RNG=future-blockhash / 财库权限 / Router）被绕过，破坏「干净」前提 | 改 §2 架构须走 ADR（§8）；CI gate (a)：改架构无 ADR → block；`interfaces/`+`Router.sol`+财库权限模型只 lead 可改（CODEOWNERS） |
 | **v2 合约 + V2Router 全 0 实现** | lane day-1 找不到 `IAPLedger`/`IV2Treasury` 从哪 import；切换时 V2Router 槽没填 → 三服务找不到 v2 地址 | 冻结期 lead 头 3 天交 `/contracts/src/interfaces/I*.sol`+`HexGrid.sol`+`Mock*`+**全新 `V2Router`(槽+setter)**，不等 M1 实现（§3）；旧 Router 不碰，无 dual-read 0-day 风险 |
-| **L-B STATE 误标并行（旧稿）** | 净周期被低估 1–2 周；STATE owner 不知 C1 何时好 | §5 join① + §9 PERT 已修正为顺序：C1(M2.a)→L-B STATE(1w)；净路径修正为 ~10–11w（最好 ~9w）；M2.a 子里程碑显式登记 |
-| **L-E↔STATE 依赖方向写反（旧稿把 STATE 列为 L-E 前置）** | L-E 被过度串行化、与 P1 薄片自相矛盾 | §2/§5 join②/§6 已改正：L-E 上游 = AP.spend+Hex+RNG **三齐**；STATE 市场读 L-E 写的 checkpoint、是 L-E 的下游、非前置 |
 | **lead 单点瓶颈（无 deputy、未计工时）** | 架构采纳 / 冻结 / Router / 三 join 全过 lead，lead 病/忙则整条关键路径停摆 | §8 已补：必配 lead-deputy 共担 Router/mock-sync/join 仲裁；接口变更 SLA ≤24h；§9 PERT 把 lead 当共享资源计、不假设 lead 还全职背 lane |
 | **人手不足 → 并行退化为串行** | 合约 dev < 3 时净期从 ~10–11w 退回 ~13.5w（含审计 14.5w），并行承诺落空 | §8 阵型明确 ~5–6 人前提（3 合约 dev + 前端 + QA + lead/deputy）；招不齐则按串行 ~13.5w 排期、不对外承诺 10–11w |
 | **RNG 免费 re-roll（seed 公开后输盘放任超时退款）** | future-blockhash 的 seed 在 commit+k 出块后即可算胜负；若 expire 退还 AP，攻击者赢则结算、输则放任 expire 拿回 AP=免费 re-roll | **已定堵法（§2.1）：判负与 expire 均没收 AP（绝不退还）→ 放弃≡判负 → 无 re-roll**；RNG-resolve keeper 列 MVP 承重（只清 pending 占用，非防 re-roll）；仅 `k`/窗口→§11；caveat：256 块全网停摆罕见误没收，VRF 上线即除 |
